@@ -289,14 +289,28 @@ async function main() {
       descriptionAr: "القماش في المخزن قبل القص رأس مال محبوس.",
     },
     {
-      key: "vat.rate",
-      value: "0.14",
-      type: "PERCENT" as const,
+      // Decision D-001: the business is not VAT-registered, so no output VAT
+      // is recognised. Switching this on is a settings change, not a rewrite —
+      // TaxRate rows are effective-dated and historical postings keep the rate
+      // they were posted with.
+      key: "vat.registered",
+      value: "false",
+      type: "BOOLEAN" as const,
       group: "Tax",
-      labelEn: "VAT rate",
-      labelAr: "نسبة ضريبة القيمة المضافة",
-      descriptionEn: "All stored amounts are VAT-exclusive; this is applied at reporting.",
-      descriptionAr: "كل المبالغ المخزنة بدون ضريبة؛ تُطبَّق عند العرض والتقارير.",
+      labelEn: "VAT registered",
+      labelAr: "مسجل في ضريبة القيمة المضافة",
+      descriptionEn: "Off: sales post with no output VAT. Turn on after registration.",
+      descriptionAr: "مغلق: المبيعات تُسجَّل بدون ضريبة. فعّله بعد التسجيل.",
+    },
+    {
+      key: "vat.defaultRateCode",
+      value: "VAT-EXEMPT",
+      type: "STRING" as const,
+      group: "Tax",
+      labelEn: "Default tax rate code",
+      labelAr: "كود الضريبة الافتراضي",
+      descriptionEn: "Which TaxRate new transactions use. Set to VAT-EG after registration.",
+      descriptionAr: "الضريبة المطبقة على المعاملات الجديدة. غيّره إلى VAT-EG بعد التسجيل.",
     },
     {
       key: "capacity.defaultWorkingDays",

@@ -271,7 +271,7 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 
 ### Seeded sample data
 
-2 entities · 12 fiscal periods · 15 settings · 10 colours · 5 sizes · 19 cost categories · 3 production lines · 40 operators · 12 capacity configurations · 6 suppliers · 15 materials · 3 collections · 8 styles · 60 BOM lines · 66 operations · 165 variants · 5 sales channels · 11 alert rules.
+2 entities · 12 fiscal periods · 16 settings · 85 accounts · 6 cost centres · 2 tax rates · 10 colours · 5 sizes · 19 cost categories · 3 production lines · 40 operators · 12 capacity configurations · 6 suppliers · 15 materials · 3 collections · 8 styles · 60 BOM lines · 66 operations · 165 variants · 5 sales channels · 11 alert rules.
 
 Prices are at 2026 Egyptian levels: cotton jersey at 168 EGP/m, linen blend at 318 EGP/m, factory payroll at 268,000 EGP/month, factory rent at 55,000 EGP/month.
 
