@@ -49,6 +49,8 @@ model User {
   auditLogs        AuditLog[]
   scenarios        Scenario[]
   acknowledgedById Alert[]    @relation("AlertAcknowledgedBy")
+  journalsCreated  JournalEntry[] @relation("JournalCreatedBy")
+  journalsPosted   JournalEntry[] @relation("JournalPostedBy")
 
   @@map("users")
 }
@@ -121,6 +123,9 @@ model Entity {
   minuteRatePeriods  MinuteRatePeriod[]
   capacityConfigs    CapacityConfig[]
   scheduledCashItems ScheduledCashItem[]
+  costCenters        CostCenter[]
+  journalEntries     JournalEntry[]
+  journalLines       JournalLine[]
 
   @@map("entities")
 }
@@ -144,10 +149,248 @@ model FiscalPeriod {
   capacityConfigs   CapacityConfig[]
   expenses          Expense[]
   supplierScores    SupplierScorecard[]
+  journalEntries    JournalEntry[]
 
   @@unique([year, month])
   @@index([startDate])
   @@map("fiscal_periods")
+}
+
+// ===========================================================================
+// GENERAL LEDGER — chart of accounts, journals, tax
+//
+// The double-entry ledger is the accounting source of truth. `Expense`,
+// `SalesOrder`, inventory movements and payroll are subledger documents that
+// POST to this ledger; they never replace it.
+//
+// Two invariants are enforced by database triggers, not only application code
+// (see migration `accounting_core_invariants`):
+//   1. a journal entry may only reach POSTED if Σ debits = Σ credits
+//   2. a POSTED entry and its lines can never be updated or deleted
+// ===========================================================================
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  COGS
+  EXPENSE
+  OTHER_INCOME
+  OTHER_EXPENSE
+}
+
+enum NormalBalance {
+  DEBIT
+  CREDIT
+}
+
+/// Which entity's books an account belongs to. `BOTH` means the same account
+/// code is used in the Factory and Brand ledgers; the journal line's own
+/// entityId is what actually attributes the amount.
+enum AccountScope {
+  FACTORY
+  BRAND
+  BOTH
+}
+
+/// Chart of accounts. No business calculation may hardcode an account number —
+/// code looks up accounts by their semantic flags or by a `settings` key.
+model Account {
+  id       String        @id @default(cuid())
+  code     String        @unique
+  nameEn   String
+  nameAr   String
+  type     AccountType
+  normalBalance NormalBalance
+  scope    AccountScope  @default(BOTH)
+
+  parentId String?
+  parent   Account?  @relation("AccountTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Account[] @relation("AccountTree")
+
+  /// Only leaf accounts may be posted to; parents exist for reporting rollup.
+  isPostable Boolean @default(true)
+  isActive   Boolean @default(true)
+
+  /// Reporting classification, e.g. "CURRENT_ASSET", "FACTORY_CONVERSION",
+  /// "BRAND_VARIABLE_SELLING". Drives statement grouping without inventing an
+  /// account number convention that code would then depend on.
+  reportingCategory String?
+
+  /// Mirrors the flags already on CostCategory so the ledger, not just the
+  /// expense subledger, can answer "what is in the minute-rate numerator" and
+  /// "what is in the brand fixed-cost pool" — the two pools the specs warn
+  /// must never double-count factory overhead.
+  includeInMinuteRate     Boolean @default(false)
+  includeInBrandFixedPool Boolean @default(false)
+
+  /// Marks the intercompany receivable/payable and intercompany revenue/COGS
+  /// accounts that Group consolidation eliminates.
+  isIntercompany Boolean @default(false)
+
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  journalLines JournalLine[]
+
+  @@index([type, isActive])
+  @@index([parentId])
+  @@map("accounts")
+}
+
+/// Departments/cost centres. Required by the spec so a transaction is
+/// traceable beyond entity alone (Factory, Brand, Showroom Alexandria,
+/// Cairo store, Marketing, Corporate).
+model CostCenter {
+  id       String  @id @default(cuid())
+  code     String  @unique
+  nameEn   String
+  nameAr   String
+  entityId String?
+  entity   Entity? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  isActive Boolean @default(true)
+  sortOrder Int    @default(0)
+
+  journalLines JournalLine[]
+
+  @@map("cost_centers")
+}
+
+/// Versioned by effective date. A posted transaction keeps the rate that was
+/// in force when it posted — changing VAT next year must not restate history.
+model TaxRate {
+  id            String    @id @default(cuid())
+  code          String
+  nameEn        String
+  nameAr        String
+  /// Stored as a fraction: 0.14, not 14.
+  rate          Decimal   @db.Decimal(9, 6)
+  effectiveFrom DateTime  @db.Date
+  effectiveTo   DateTime? @db.Date
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  @@unique([code, effectiveFrom])
+  @@index([code, effectiveFrom, effectiveTo])
+  @@map("tax_rates")
+}
+
+/// There is deliberately no REVERSED state. Marking an original entry as
+/// reversed would mean updating a posted entry, which the immutability trigger
+/// forbids. "Has been reversed" is derived from the `reversedBy` back-relation.
+enum JournalStatus {
+  DRAFT
+  PENDING_REVIEW
+  POSTED
+}
+
+/// What produced this entry. Manual entries are the exception; almost every
+/// journal is the ledger shadow of a subledger document.
+enum JournalSourceType {
+  MANUAL
+  EXPENSE
+  EXPENSE_PAYMENT
+  SUPPLIER_INVOICE
+  GOODS_RECEIPT
+  MATERIAL_ISSUE
+  PRODUCTION_OUTPUT
+  TRANSFER_INVOICE
+  SALES_ORDER
+  SALES_RETURN
+  PAYMENT
+  PAYROLL
+  DEPRECIATION
+  ACCRUAL
+  OPENING_BALANCE
+  ADJUSTMENT
+}
+
+model JournalEntry {
+  id          String        @id @default(cuid())
+  entryNumber String        @unique
+  entityId    String
+  entity      Entity        @relation(fields: [entityId], references: [id])
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod @relation(fields: [fiscalPeriodId], references: [id])
+  status      JournalStatus @default(DRAFT)
+
+  postingDate DateTime @db.Date
+  memo        String?
+  currency    String   @default("EGP")
+
+  /// Which subledger document this entry records.
+  sourceType JournalSourceType @default(MANUAL)
+  sourceId   String?
+
+  /// Corrections never edit a posted entry — they post a reversal that points
+  /// back at the original, and the original points forward at its reversal.
+  reversesEntryId String?       @unique
+  reversesEntry   JournalEntry? @relation("JournalReversal", fields: [reversesEntryId], references: [id])
+  reversedBy      JournalEntry? @relation("JournalReversal")
+  reversalReason  String?
+
+  createdByUserId String?
+  createdBy       User?     @relation("JournalCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  postedByUserId  String?
+  postedBy        User?     @relation("JournalPostedBy", fields: [postedByUserId], references: [id], onDelete: SetNull)
+  postedAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines JournalLine[]
+
+  @@index([entityId, postingDate])
+  @@index([fiscalPeriodId, status])
+  @@index([sourceType, sourceId])
+  @@map("journal_entries")
+}
+
+/// One side of an entry. `debit` and `credit` are separate columns rather than
+/// one signed amount: a CHECK constraint then guarantees exactly one of them
+/// is non-zero and neither is negative, which a signed column cannot express.
+///
+/// The dimension columns exist so drilldown works without exploding the chart
+/// of accounts into thousands of near-duplicate codes.
+model JournalLine {
+  id             String       @id @default(cuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  lineNumber     Int
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+
+  debit  Decimal @default(0) @db.Decimal(18, 4)
+  credit Decimal @default(0) @db.Decimal(18, 4)
+
+  // --- dimensions ---
+  entityId     String
+  entity       Entity      @relation(fields: [entityId], references: [id])
+  costCenterId String?
+  costCenter   CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+  supplierId   String?
+  supplier     Supplier?   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  customerId   String?
+  customer     Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  styleId      String?
+  style        Style?      @relation(fields: [styleId], references: [id], onDelete: SetNull)
+  variantId    String?
+  variant      Variant?    @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  /// The tax rate actually applied when this line posted, frozen here so a
+  /// later VAT change cannot restate it.
+  appliedTaxRate Decimal? @db.Decimal(9, 6)
+
+  description String?
+
+  @@unique([journalEntryId, lineNumber])
+  @@index([accountId])
+  @@index([entityId])
+  @@index([supplierId])
+  @@index([customerId])
+  @@map("journal_lines")
 }
 
 // ===========================================================================
@@ -479,6 +722,7 @@ model Supplier {
   purchaseOrders  PurchaseOrder[]
   expenses        Expense[]
   scorecards      SupplierScorecard[]
+  journalLines    JournalLine[]
 
   @@map("suppliers")
 }
@@ -719,6 +963,7 @@ model Style {
   variants         Variant[]
   costSnapshots    CostSnapshot[]
   productionOrders ProductionOrder[]
+  journalLines     JournalLine[]
 
   @@index([collectionId])
   @@map("styles")
@@ -777,6 +1022,7 @@ model Variant {
   salesOrderLines      SalesOrderLine[]
   inventoryLots        InventoryLot[]
   returns              Return[]
+  journalLines         JournalLine[]
 
   @@unique([styleId, colorCodeId, sizeCodeId])
   @@index([sku])
@@ -1242,7 +1488,8 @@ model Customer {
   isActive  Boolean       @default(true)
   createdAt DateTime      @default(now())
 
-  salesOrders SalesOrder[]
+  salesOrders  SalesOrder[]
+  journalLines JournalLine[]
 
   @@map("customers")
 }

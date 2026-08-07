@@ -15,6 +15,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
+import { CHART_OF_ACCOUNTS, COST_CENTERS, TAX_RATES } from "./chart-of-accounts";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const db = new PrismaClient({ adapter });
@@ -95,6 +96,73 @@ async function main() {
     periods.push(p);
   }
   console.log(`  fiscal periods: ${periods.length}`);
+
+  // -------------------------------------------------------------------------
+  // Chart of accounts, cost centres and tax rates
+  //
+  // Parents are inserted before children so the self-referencing FK resolves;
+  // CHART_OF_ACCOUNTS is authored in that order.
+  // -------------------------------------------------------------------------
+  const accountIdByCode = new Map<string, string>();
+  for (const [i, a] of CHART_OF_ACCOUNTS.entries()) {
+    const parentId = a.parent ? accountIdByCode.get(a.parent) : undefined;
+    if (a.parent && !parentId) {
+      throw new Error(`Account ${a.code} references parent ${a.parent}, which is not defined before it`);
+    }
+    const row = await db.account.upsert({
+      where: { code: a.code },
+      update: {},
+      create: {
+        code: a.code,
+        nameEn: a.nameEn,
+        nameAr: a.nameAr,
+        type: a.type,
+        normalBalance: a.normalBalance,
+        scope: a.scope ?? "BOTH",
+        parentId: parentId ?? null,
+        isPostable: a.isPostable ?? true,
+        reportingCategory: a.reportingCategory ?? null,
+        includeInMinuteRate: a.includeInMinuteRate ?? false,
+        includeInBrandFixedPool: a.includeInBrandFixedPool ?? false,
+        isIntercompany: a.isIntercompany ?? false,
+        sortOrder: i,
+      },
+    });
+    accountIdByCode.set(a.code, row.id);
+  }
+  console.log(`  accounts: ${CHART_OF_ACCOUNTS.length}`);
+
+  for (const [i, c] of COST_CENTERS.entries()) {
+    const entityId =
+      c.entityKind === "FACTORY" ? factory.id : c.entityKind === "BRAND" ? brand.id : null;
+    await db.costCenter.upsert({
+      where: { code: c.code },
+      update: {},
+      create: {
+        code: c.code,
+        nameEn: c.nameEn,
+        nameAr: c.nameAr,
+        entityId,
+        sortOrder: i,
+      },
+    });
+  }
+  console.log(`  cost centres: ${COST_CENTERS.length}`);
+
+  for (const t of TAX_RATES) {
+    await db.taxRate.upsert({
+      where: { code_effectiveFrom: { code: t.code, effectiveFrom: d(t.effectiveFrom) } },
+      update: {},
+      create: {
+        code: t.code,
+        nameEn: t.nameEn,
+        nameAr: t.nameAr,
+        rate: t.rate,
+        effectiveFrom: d(t.effectiveFrom),
+      },
+    });
+  }
+  console.log(`  tax rates: ${TAX_RATES.length}`);
 
   // -------------------------------------------------------------------------
   // Settings — every configurable number lives here, never in code
