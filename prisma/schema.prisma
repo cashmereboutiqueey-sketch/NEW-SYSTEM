@@ -1,0 +1,1602 @@
+// ---------------------------------------------------------------------------
+// Cashmere OS — data model
+//
+// Two legal-ish entities (FACTORY, BRAND) that transact with each other at an
+// arm's-length transfer price. Accrual accounting throughout. Every monetary
+// and quantity field is Decimal — never Float. Percentages are stored as
+// fractions (0.14, not 14).
+//
+// Precision conventions:
+//   money      Decimal(18, 4)   EGP, rounded to 2dp only at display
+//   rate       Decimal(18, 8)   minute rates and other small per-unit rates
+//   quantity   Decimal(18, 4)   metres, pieces, kilograms
+//   percent    Decimal(9, 6)    stored as a fraction
+//   minutes    Decimal(18, 4)   SMV and capacity minutes
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===========================================================================
+// SYSTEM / AUTH / CONFIG
+// ===========================================================================
+
+enum UserRole {
+  OWNER
+  ACCOUNTANT
+  PRODUCTION
+  VIEWER
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         UserRole  @default(VIEWER)
+  locale       String    @default("ar")
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  auditLogs        AuditLog[]
+  scenarios        Scenario[]
+  acknowledgedById Alert[]    @relation("AlertAcknowledgedBy")
+
+  @@map("users")
+}
+
+/// Append-only record of who changed what. Never mutate historical records —
+/// correct forward with adjusting entries and let this explain why.
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityName String
+  entityId   String
+  before     Json?
+  after      Json?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityName, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+enum SettingType {
+  DECIMAL
+  INTEGER
+  PERCENT
+  STRING
+  BOOLEAN
+  JSON
+}
+
+/// Every configurable number in the system lives here. Rule: no hardcoded
+/// rates or magic numbers anywhere in application code.
+model Setting {
+  id           String      @id @default(cuid())
+  key          String      @unique
+  value        String
+  type         SettingType
+  group        String
+  labelEn      String
+  labelAr      String
+  descriptionEn String?
+  descriptionAr String?
+  updatedAt    DateTime    @updatedAt
+
+  @@index([group])
+  @@map("settings")
+}
+
+// ===========================================================================
+// ENTITIES & FISCAL CALENDAR
+// ===========================================================================
+
+enum EntityKind {
+  FACTORY
+  BRAND
+}
+
+model Entity {
+  id            String     @id @default(cuid())
+  kind          EntityKind @unique
+  nameEn        String
+  nameAr        String
+  baseCurrency  String     @default("EGP")
+  createdAt     DateTime   @default(now())
+
+  costCategories     CostCategory[]
+  expenses           Expense[]
+  minuteRatePeriods  MinuteRatePeriod[]
+  capacityConfigs    CapacityConfig[]
+  scheduledCashItems ScheduledCashItem[]
+
+  @@map("entities")
+}
+
+enum PeriodStatus {
+  OPEN
+  CLOSED
+}
+
+/// Calendar month. Fiscal year starts in January. Timezone Africa/Cairo.
+model FiscalPeriod {
+  id        String       @id @default(cuid())
+  year      Int
+  month     Int
+  startDate DateTime     @db.Date
+  endDate   DateTime     @db.Date
+  status    PeriodStatus @default(OPEN)
+  closedAt  DateTime?
+
+  minuteRatePeriods MinuteRatePeriod[]
+  capacityConfigs   CapacityConfig[]
+  expenses          Expense[]
+  supplierScores    SupplierScorecard[]
+
+  @@unique([year, month])
+  @@index([startDate])
+  @@map("fiscal_periods")
+}
+
+// ===========================================================================
+// REFERENCE DATA — seeded, editable, never enums in code
+// ===========================================================================
+
+/// SKU convention: [STYLENAME]-[COLORCODE]-[SIZE]
+model ColorCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  nameEn    String
+  nameAr    String
+  hex       String?
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+
+  variants Variant[]
+
+  @@map("color_codes")
+}
+
+model SizeCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  nameEn    String
+  nameAr    String
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  /// Consumption multiplier relative to the BOM base size (base = 1.0).
+  consumptionFactor Decimal @default(1.0) @db.Decimal(9, 6)
+
+  variants Variant[]
+
+  @@map("size_codes")
+}
+
+enum UomKind {
+  LENGTH
+  MASS
+  PIECE
+  AREA
+}
+
+model UnitOfMeasure {
+  id     String  @id @default(cuid())
+  code   String  @unique
+  nameEn String
+  nameAr String
+  kind   UomKind
+
+  materials Material[]
+
+  @@map("units_of_measure")
+}
+
+// ===========================================================================
+// ACCRUAL ACCOUNTING — expenses, payables
+// ===========================================================================
+
+enum CostBehaviour {
+  FIXED
+  VARIABLE
+  SEMI_VARIABLE
+}
+
+/// The `includeInMinuteRate` flag is critical: it decides what lands in the
+/// numerator of the minute rate. Materials, financing costs and brand-side
+/// costs must be excluded or fabric gets counted twice.
+model CostCategory {
+  id                  String        @id @default(cuid())
+  entityId            String
+  entity              Entity        @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  code                String
+  nameEn              String
+  nameAr              String
+  behaviour           CostBehaviour @default(FIXED)
+  /// Feeds `total_factory_monthly_cost` (the minute-rate numerator).
+  includeInMinuteRate Boolean       @default(false)
+  /// Feeds the brand-side fixed cost pool used by break-even.
+  includeInBrandFixedPool Boolean   @default(false)
+  isActive            Boolean       @default(true)
+  sortOrder           Int           @default(0)
+
+  expenses           Expense[]
+  scheduledCashItems ScheduledCashItem[]
+
+  @@unique([entityId, code])
+  @@map("cost_categories")
+}
+
+enum ExpenseStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+/// Accrual: the expense exists from `incurredDate`, regardless of payment.
+/// `paidAmount` is maintained from ExpensePayment rows.
+model Expense {
+  id             String        @id @default(cuid())
+  entityId       String
+  entity         Entity        @relation(fields: [entityId], references: [id])
+  costCategoryId String
+  costCategory   CostCategory  @relation(fields: [costCategoryId], references: [id])
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod  @relation(fields: [fiscalPeriodId], references: [id])
+  supplierId     String?
+  supplier       Supplier?     @relation(fields: [supplierId], references: [id])
+
+  description    String
+  reference      String?
+  amount         Decimal       @db.Decimal(18, 4)
+  vatAmount      Decimal       @default(0) @db.Decimal(18, 4)
+  incurredDate   DateTime      @db.Date
+  dueDate        DateTime      @db.Date
+  paidAmount     Decimal       @default(0) @db.Decimal(18, 4)
+  status         ExpenseStatus @default(UNPAID)
+
+  /// Adjusting entries reference the original instead of editing it.
+  adjustsExpenseId String?
+  adjustsExpense   Expense?  @relation("ExpenseAdjustment", fields: [adjustsExpenseId], references: [id])
+  adjustments      Expense[] @relation("ExpenseAdjustment")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments ExpensePayment[]
+
+  @@index([entityId, incurredDate])
+  @@index([dueDate, status])
+  @@index([fiscalPeriodId])
+  @@map("expenses")
+}
+
+model ExpensePayment {
+  id        String   @id @default(cuid())
+  expenseId String
+  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  amount    Decimal  @db.Decimal(18, 4)
+  paidDate  DateTime @db.Date
+  method    String?
+  reference String?
+  createdAt DateTime @default(now())
+
+  @@index([expenseId])
+  @@index([paidDate])
+  @@map("expense_payments")
+}
+
+// ===========================================================================
+// CAPACITY & THE MINUTE RATE — the spine
+// ===========================================================================
+
+model ProductionLine {
+  id        String  @id @default(cuid())
+  code      String  @unique
+  nameEn    String
+  nameAr    String
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  operators        Operator[]
+  capacityConfigs  CapacityConfig[]
+  styleOperations  StyleOperation[]
+  stageLogs        ProductionStageLog[]
+  reworkRecords    ReworkRecord[]
+
+  @@map("production_lines")
+}
+
+model Operator {
+  id         String          @id @default(cuid())
+  code       String          @unique
+  name       String
+  lineId     String?
+  line       ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  hiredAt    DateTime?       @db.Date
+  isActive   Boolean         @default(true)
+
+  productivity OperatorProductivity[]
+
+  @@index([lineId])
+  @@map("operators")
+}
+
+/// Capacity inputs, versioned per period. Utilisation and efficiency are kept
+/// SEPARATE on purpose:
+///   utilisation = share of available minutes actually booked with orders
+///                 (a sales problem)
+///   efficiency  = earned SMV minutes / clocked minutes when working
+///                 (a shop-floor problem)
+///   productive_minutes = gross × utilisation × efficiency
+model CapacityConfig {
+  id             String          @id @default(cuid())
+  entityId       String
+  entity         Entity          @relation(fields: [entityId], references: [id])
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod    @relation(fields: [fiscalPeriodId], references: [id])
+  lineId         String?
+  line           ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+
+  operators      Int
+  workingDays    Decimal @db.Decimal(9, 4)
+  hoursPerDay    Decimal @db.Decimal(9, 4)
+  utilisationRate Decimal @db.Decimal(9, 6)
+  efficiencyRate  Decimal @db.Decimal(9, 6)
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Uniqueness is enforced by two PARTIAL indexes added in the migration,
+  /// because a plain UNIQUE(entity, period, line) does not constrain the
+  /// factory-wide row: in Postgres NULL never equals NULL, so unlimited
+  /// duplicate factory-wide configs would slip through.
+  ///   - one row per (entity, period) where line_id IS NULL   → factory-wide
+  ///   - one row per (entity, period, line) where NOT NULL    → per line
+  @@index([entityId, fiscalPeriodId])
+  @@map("capacity_configs")
+}
+
+enum MinuteRateStatus {
+  /// Budgeted, month still open. Marked provisional in the UI.
+  PROVISIONAL
+  /// Month closed on actuals. Immutable — never recompute a locked period.
+  LOCKED
+}
+
+/// One row per entity per month. Historical production orders point at the
+/// row that was in effect when they were costed, so recalculating this month
+/// can never retroactively change last quarter's margins.
+model MinuteRatePeriod {
+  id             String           @id @default(cuid())
+  entityId       String
+  entity         Entity           @relation(fields: [entityId], references: [id])
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod     @relation(fields: [fiscalPeriodId], references: [id])
+  status         MinuteRateStatus @default(PROVISIONAL)
+
+  // --- inputs (copied in, not referenced, so the row is self-contained) ---
+  operators             Int
+  workingDays           Decimal @db.Decimal(9, 4)
+  hoursPerDay           Decimal @db.Decimal(9, 4)
+  utilisationRate       Decimal @db.Decimal(9, 6)
+  efficiencyRate        Decimal @db.Decimal(9, 6)
+  totalConversionCost   Decimal @db.Decimal(18, 4)
+  /// External CMT revenue credited against the factory cost pool, so selling
+  /// idle minutes visibly lowers the rate the brand pays.
+  cmtRevenueCredit      Decimal @default(0) @db.Decimal(18, 4)
+
+  // --- outputs (stored, not recomputed on read — traceability) ---
+  netCostPool             Decimal @db.Decimal(18, 4)
+  grossAvailableMinutes   Decimal @db.Decimal(18, 4)
+  productiveMinutes       Decimal @db.Decimal(18, 4)
+  actualMinuteRate        Decimal @db.Decimal(18, 8)
+  fullCapacityMinuteRate  Decimal @db.Decimal(18, 8)
+  idlePenaltyPerMinute    Decimal @db.Decimal(18, 8)
+  idleMinutes             Decimal @db.Decimal(18, 4)
+
+  calculatedAt DateTime  @default(now())
+  lockedAt     DateTime?
+
+  components       MinuteRateComponent[]
+  productionOrders ProductionOrder[]
+  costSnapshots    CostSnapshot[]
+  cmtQuotes        CMTQuote[]
+
+  @@unique([entityId, fiscalPeriodId])
+  @@map("minute_rate_periods")
+}
+
+/// Drill-down for the minute rate: which cost categories contributed what.
+model MinuteRateComponent {
+  id                 String           @id @default(cuid())
+  minuteRatePeriodId String
+  minuteRatePeriod   MinuteRatePeriod @relation(fields: [minuteRatePeriodId], references: [id], onDelete: Cascade)
+  costCategoryCode   String
+  costCategoryName   String
+  amount             Decimal          @db.Decimal(18, 4)
+  expenseCount       Int              @default(0)
+
+  @@index([minuteRatePeriodId])
+  @@map("minute_rate_components")
+}
+
+/// Forward-looking capacity: minutes booked against a period before it starts,
+/// so idle capacity is visible in advance and can be sold as CMT.
+enum BookingSource {
+  PRODUCTION_ORDER
+  CMT_ORDER
+  MAINTENANCE
+  SAMPLING
+}
+
+model CapacityBooking {
+  id                String        @id @default(cuid())
+  fiscalPeriodId    String
+  source            BookingSource
+  productionOrderId String?
+  productionOrder   ProductionOrder? @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  cmtOrderId        String?
+  cmtOrder          CMTOrder?     @relation(fields: [cmtOrderId], references: [id], onDelete: Cascade)
+  minutes           Decimal       @db.Decimal(18, 4)
+  bookedAt          DateTime      @default(now())
+  notes             String?
+
+  @@index([fiscalPeriodId])
+  @@map("capacity_bookings")
+}
+
+// ===========================================================================
+// SUPPLIERS & MATERIALS
+// ===========================================================================
+
+model Supplier {
+  id            String  @id @default(cuid())
+  code          String  @unique
+  nameEn        String
+  nameAr        String
+  contactPerson String?
+  phone         String?
+  email         String?
+  /// Days of credit granted. Feeds the CCC's supplier_credit_days.
+  creditDays    Int     @default(0)
+  isActive      Boolean @default(true)
+  notes         String?
+
+  materials       Material[]
+  purchaseOrders  PurchaseOrder[]
+  expenses        Expense[]
+  scorecards      SupplierScorecard[]
+
+  @@map("suppliers")
+}
+
+/// Rated per period so a supplier's record is a trend, not an opinion.
+/// Scores are 1–5. Delivery and price scores can be computed from data;
+/// quality is entered from QC outcomes.
+model SupplierScorecard {
+  id             String       @id @default(cuid())
+  supplierId     String
+  supplier       Supplier     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod @relation(fields: [fiscalPeriodId], references: [id])
+
+  priceScore     Decimal @db.Decimal(4, 2)
+  qualityScore   Decimal @db.Decimal(4, 2)
+  deliveryScore  Decimal @db.Decimal(4, 2)
+  overallScore   Decimal @db.Decimal(4, 2)
+
+  /// Supporting evidence for the scores.
+  onTimeDeliveryRate Decimal? @db.Decimal(9, 6)
+  defectRate         Decimal? @db.Decimal(9, 6)
+  avgPriceVariance   Decimal? @db.Decimal(9, 6)
+  notes              String?
+  createdAt          DateTime @default(now())
+
+  @@unique([supplierId, fiscalPeriodId])
+  @@map("supplier_scorecards")
+}
+
+enum MaterialType {
+  FABRIC
+  TRIM
+  PACKAGING
+  CONSUMABLE
+}
+
+model Material {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  nameEn       String
+  nameAr       String
+  type         MaterialType
+  uomId        String
+  uom          UnitOfMeasure @relation(fields: [uomId], references: [id])
+  supplierId   String?
+  supplier     Supplier?     @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  /// Current purchase price, ex-VAT, before freight and duty.
+  basePrice    Decimal @db.Decimal(18, 4)
+  freightPct   Decimal @default(0) @db.Decimal(9, 6)
+  dutyPct      Decimal @default(0) @db.Decimal(9, 6)
+
+  /// Minimum order quantity and roll/pack size — drives the MOQ warning when
+  /// a production order needs less than the smallest purchasable quantity.
+  moq          Decimal? @db.Decimal(18, 4)
+  packSize     Decimal? @db.Decimal(18, 4)
+  leadTimeDays Int      @default(0)
+
+  /// Reorder point for the low-stock alert.
+  reorderPoint Decimal? @db.Decimal(18, 4)
+
+  colorCode    String?
+  composition  String?
+  gsm          Decimal? @db.Decimal(9, 2)
+  widthCm      Decimal? @db.Decimal(9, 2)
+  isActive     Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceHistory   MaterialPriceHistory[]
+  bomLines       StyleBomLine[]
+  poLines        PurchaseOrderLine[]
+  issues         MaterialIssue[]
+  scrapRecords   ScrapRecord[]
+  inventoryLots  InventoryLot[]
+
+  @@index([type])
+  @@map("materials")
+}
+
+/// Append-only. Changing a price today must not change any historical order.
+model MaterialPriceHistory {
+  id            String   @id @default(cuid())
+  materialId    String
+  material      Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  basePrice     Decimal  @db.Decimal(18, 4)
+  freightPct    Decimal  @db.Decimal(9, 6)
+  dutyPct       Decimal  @db.Decimal(9, 6)
+  effectiveCost Decimal  @db.Decimal(18, 4)
+  effectiveFrom DateTime @db.Date
+  source        String?
+  createdAt     DateTime @default(now())
+
+  @@index([materialId, effectiveFrom])
+  @@map("material_price_history")
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  poNumber     String              @unique
+  supplierId   String
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  status       PurchaseOrderStatus @default(DRAFT)
+  orderDate    DateTime            @db.Date
+  expectedDate DateTime?           @db.Date
+  creditDays   Int                 @default(0)
+  dueDate      DateTime?           @db.Date
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  lines    PurchaseOrderLine[]
+  receipts GoodsReceipt[]
+
+  @@index([status, expectedDate])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  materialId      String
+  material        Material      @relation(fields: [materialId], references: [id])
+  quantity        Decimal       @db.Decimal(18, 4)
+  unitPrice       Decimal       @db.Decimal(18, 4)
+  freightPct      Decimal       @default(0) @db.Decimal(9, 6)
+  dutyPct         Decimal       @default(0) @db.Decimal(9, 6)
+  effectiveCost   Decimal       @db.Decimal(18, 4)
+  receivedQty     Decimal       @default(0) @db.Decimal(18, 4)
+
+  receiptLines GoodsReceiptLine[]
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_lines")
+}
+
+model GoodsReceipt {
+  id              String        @id @default(cuid())
+  receiptNumber   String        @unique
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  receivedDate    DateTime      @db.Date
+  invoiceRef      String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  lines GoodsReceiptLine[]
+
+  @@index([receivedDate])
+  @@map("goods_receipts")
+}
+
+/// Purchase price variance is captured here: the PO said one price, the
+/// invoice said another. `priceVariance` = (actual − ordered) × quantity.
+model GoodsReceiptLine {
+  id                  String            @id @default(cuid())
+  goodsReceiptId      String
+  goodsReceipt        GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLineId String
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id])
+
+  quantity            Decimal @db.Decimal(18, 4)
+  acceptedQty         Decimal @db.Decimal(18, 4)
+  rejectedQty         Decimal @default(0) @db.Decimal(18, 4)
+  orderedUnitPrice    Decimal @db.Decimal(18, 4)
+  actualUnitPrice     Decimal @db.Decimal(18, 4)
+  actualEffectiveCost Decimal @db.Decimal(18, 4)
+  priceVariance       Decimal @db.Decimal(18, 4)
+  priceVariancePct    Decimal @db.Decimal(9, 6)
+
+  inventoryLot InventoryLot?
+
+  @@index([goodsReceiptId])
+  @@map("goods_receipt_lines")
+}
+
+// ===========================================================================
+// PRODUCT — collections, styles, BOM, SMV, variants
+// ===========================================================================
+
+model Collection {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  nameEn    String
+  nameAr    String
+  season    String
+  year      Int
+  startDate DateTime? @db.Date
+  endDate   DateTime? @db.Date
+  isActive  Boolean   @default(true)
+
+  styles Style[]
+
+  @@map("collections")
+}
+
+model Style {
+  id           String     @id @default(cuid())
+  /// The STYLENAME part of the SKU. Uppercase, no dashes.
+  code         String     @unique
+  nameEn       String
+  nameAr       String
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id])
+
+  /// Waste is measured, not assumed. `plannedWasteRate` is used for costing;
+  /// `actualWasteRateTrailing` is computed from real cutting tickets and
+  /// compared against it to flag drift.
+  plannedWasteRate        Decimal  @default(0) @db.Decimal(9, 6)
+  actualWasteRateTrailing Decimal? @db.Decimal(9, 6)
+  wasteVarianceFlagged    Boolean  @default(false)
+  wasteLastComputedAt     DateTime?
+
+  /// Sum of StyleOperation.smvMinutes — stored for query speed, always
+  /// reconcilable against the operation breakdown.
+  totalSmvMinutes Decimal @default(0) @db.Decimal(18, 4)
+
+  retailPrice     Decimal? @db.Decimal(18, 4)
+  targetMarginPct Decimal? @db.Decimal(9, 6)
+  isActive        Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bomLines         StyleBomLine[]
+  operations       StyleOperation[]
+  variants         Variant[]
+  costSnapshots    CostSnapshot[]
+  productionOrders ProductionOrder[]
+
+  @@index([collectionId])
+  @@map("styles")
+}
+
+model StyleBomLine {
+  id         String   @id @default(cuid())
+  styleId    String
+  style      Style    @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+
+  /// Per garment, at the base size, before waste.
+  standardConsumption Decimal @db.Decimal(18, 4)
+  /// Optional per-line waste override; falls back to the style's rate.
+  wasteRateOverride   Decimal? @db.Decimal(9, 6)
+  notes               String?
+  sortOrder           Int      @default(0)
+
+  @@unique([styleId, materialId])
+  @@map("style_bom_lines")
+}
+
+/// SMV built bottom-up from operations, so the minute count is drillable.
+model StyleOperation {
+  id         String          @id @default(cuid())
+  styleId    String
+  style      Style           @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  lineId     String?
+  line       ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  sequence   Int
+  nameEn     String
+  nameAr     String
+  smvMinutes Decimal         @db.Decimal(18, 4)
+  machineType String?
+
+  @@unique([styleId, sequence])
+  @@map("style_operations")
+}
+
+/// SKU = [STYLE.code]-[ColorCode.code]-[SizeCode.code]
+model Variant {
+  id          String    @id @default(cuid())
+  styleId     String
+  style       Style     @relation(fields: [styleId], references: [id], onDelete: Cascade)
+  colorCodeId String
+  colorCode   ColorCode @relation(fields: [colorCodeId], references: [id])
+  sizeCodeId  String
+  sizeCode    SizeCode  @relation(fields: [sizeCodeId], references: [id])
+  sku         String    @unique
+  barcode     String?
+  shopifyVariantId String?
+  isActive    Boolean   @default(true)
+
+  productionOrderLines ProductionOrderLine[]
+  salesOrderLines      SalesOrderLine[]
+  inventoryLots        InventoryLot[]
+  returns              Return[]
+
+  @@unique([styleId, colorCodeId, sizeCodeId])
+  @@index([sku])
+  @@map("variants")
+}
+
+// ===========================================================================
+// COST SNAPSHOTS — immutable
+// ===========================================================================
+
+/// Frozen at production-order confirmation. Append-only: later changes to
+/// fabric prices, the minute rate or the SMV create a NEW snapshot and never
+/// mutate this one. This is the record that keeps historical margins honest.
+model CostSnapshot {
+  id                 String           @id @default(cuid())
+  styleId            String
+  style              Style            @relation(fields: [styleId], references: [id])
+  minuteRatePeriodId String
+  minuteRatePeriod   MinuteRatePeriod @relation(fields: [minuteRatePeriodId], references: [id])
+
+  /// Frozen inputs.
+  minuteRate       Decimal @db.Decimal(18, 8)
+  fullCapacityRate Decimal @db.Decimal(18, 8)
+  smvMinutes       Decimal @db.Decimal(18, 4)
+  wasteRate        Decimal @db.Decimal(9, 6)
+  factoryMarginPct Decimal @db.Decimal(9, 6)
+
+  /// Frozen outputs.
+  fabricCost         Decimal @db.Decimal(18, 4)
+  trimCost           Decimal @db.Decimal(18, 4)
+  materialCost       Decimal @db.Decimal(18, 4)
+  cmtCost            Decimal @db.Decimal(18, 4)
+  factoryTotalCost   Decimal @db.Decimal(18, 4)
+  transferPrice      Decimal @db.Decimal(18, 4)
+  /// (actualMinuteRate − fullCapacityMinuteRate) × smvMinutes
+  idleCapacityPenalty Decimal @db.Decimal(18, 4)
+
+  marginBelowArmsLength Boolean @default(false)
+  approvedByUserId      String?
+  approvalNote          String?
+
+  reason    String?
+  createdAt DateTime @default(now())
+
+  lines            CostSnapshotLine[]
+  productionOrders ProductionOrder[]
+
+  @@index([styleId, createdAt])
+  @@map("cost_snapshots")
+}
+
+model CostSnapshotLine {
+  id             String       @id @default(cuid())
+  costSnapshotId String
+  costSnapshot   CostSnapshot @relation(fields: [costSnapshotId], references: [id], onDelete: Cascade)
+
+  materialId          String
+  materialCode        String
+  materialNameEn      String
+  materialNameAr      String
+  materialType        MaterialType
+  standardConsumption Decimal      @db.Decimal(18, 4)
+  wasteRate           Decimal      @db.Decimal(9, 6)
+  effectiveConsumption Decimal     @db.Decimal(18, 4)
+  unitCost            Decimal      @db.Decimal(18, 4)
+  lineCost            Decimal      @db.Decimal(18, 4)
+
+  @@index([costSnapshotId])
+  @@map("cost_snapshot_lines")
+}
+
+// ===========================================================================
+// PRODUCTION — orders, cutting, stages, QC, rework, scrap
+// ===========================================================================
+
+enum ProductionOrderStatus {
+  DRAFT
+  CONFIRMED
+  IN_PRODUCTION
+  COMPLETED
+  CANCELLED
+}
+
+enum ProductionStage {
+  CUTTING
+  SEWING
+  FINISHING
+  QC
+  PACKING
+}
+
+/// Planned vs actual is carried on the order itself so the system can answer
+/// "why did this cost more than we said it would", not just "what did it cost".
+model ProductionOrder {
+  id          String                @id @default(cuid())
+  orderNumber String                @unique
+  styleId     String
+  style       Style                 @relation(fields: [styleId], references: [id])
+  status      ProductionOrderStatus @default(DRAFT)
+
+  costSnapshotId String?
+  costSnapshot   CostSnapshot? @relation(fields: [costSnapshotId], references: [id])
+  minuteRatePeriodId String?
+  minuteRatePeriod   MinuteRatePeriod? @relation(fields: [minuteRatePeriodId], references: [id])
+
+  plannedQty  Int
+  actualQty   Int?
+  rejectedQty Int  @default(0)
+
+  orderDate     DateTime  @db.Date
+  plannedStart  DateTime? @db.Date
+  plannedFinish DateTime? @db.Date
+  actualStart   DateTime? @db.Date
+  actualFinish  DateTime? @db.Date
+  confirmedAt   DateTime?
+
+  // --- planned vs actual: materials ---
+  plannedFabricQty Decimal? @db.Decimal(18, 4)
+  actualFabricQty  Decimal? @db.Decimal(18, 4)
+  fabricVariance   Decimal? @db.Decimal(18, 4)
+
+  // --- planned vs actual: minutes ---
+  plannedSmvPerUnit Decimal? @db.Decimal(18, 4)
+  actualSmvPerUnit  Decimal? @db.Decimal(18, 4)
+  plannedTotalMinutes Decimal? @db.Decimal(18, 4)
+  actualTotalMinutes  Decimal? @db.Decimal(18, 4)
+
+  // --- planned vs actual: money ---
+  plannedTotalCost Decimal? @db.Decimal(18, 4)
+  actualTotalCost  Decimal? @db.Decimal(18, 4)
+  costVariance     Decimal? @db.Decimal(18, 4)
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines            ProductionOrderLine[]
+  cuttingTickets   CuttingTicket[]
+  materialIssues   MaterialIssue[]
+  stageLogs        ProductionStageLog[]
+  qcRecords        QCRecord[]
+  reworkRecords    ReworkRecord[]
+  scrapRecords     ScrapRecord[]
+  capacityBookings CapacityBooking[]
+  inventoryLots    InventoryLot[]
+
+  @@index([status, orderDate])
+  @@index([styleId])
+  @@map("production_orders")
+}
+
+model ProductionOrderLine {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  variantId         String
+  variant           Variant         @relation(fields: [variantId], references: [id])
+  plannedQty        Int
+  actualQty         Int             @default(0)
+
+  @@unique([productionOrderId, variantId])
+  @@map("production_order_lines")
+}
+
+model CuttingTicket {
+  id                String          @id @default(cuid())
+  ticketNumber      String          @unique
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  cutDate           DateTime        @db.Date
+  markerLengthM     Decimal?        @db.Decimal(18, 4)
+  plies              Int?
+  piecesCut         Int
+  notes             String?
+  createdAt         DateTime        @default(now())
+
+  issues MaterialIssue[]
+
+  @@index([productionOrderId])
+  @@map("cutting_tickets")
+}
+
+/// Where waste is measured:
+///   actualWasteRate = (actualQty / standardQty) − 1
+model MaterialIssue {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  cuttingTicketId   String?
+  cuttingTicket     CuttingTicket?  @relation(fields: [cuttingTicketId], references: [id], onDelete: SetNull)
+  materialId        String
+  material          Material        @relation(fields: [materialId], references: [id])
+
+  issueDate       DateTime @db.Date
+  /// What the BOM said this quantity of garments should need.
+  standardQty     Decimal  @db.Decimal(18, 4)
+  /// What the storeroom actually issued.
+  actualQty       Decimal  @db.Decimal(18, 4)
+  varianceQty     Decimal  @db.Decimal(18, 4)
+  actualWasteRate Decimal  @db.Decimal(9, 6)
+  /// Frozen at issue time from the FIFO lots consumed.
+  unitCost        Decimal  @db.Decimal(18, 4)
+  varianceValue   Decimal  @db.Decimal(18, 4)
+
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([productionOrderId])
+  @@index([materialId, issueDate])
+  @@map("material_issues")
+}
+
+enum ScrapDisposition {
+  SOLD
+  DISCARDED
+  USED_FOR_SAMPLING
+  RETURNED_TO_STOCK
+}
+
+/// Offcuts and leftovers. Often a material sum of money — tracked, valued and
+/// reconciled against fabric utilisation rather than quietly disappearing.
+model ScrapRecord {
+  id                String            @id @default(cuid())
+  productionOrderId String?
+  productionOrder   ProductionOrder?  @relation(fields: [productionOrderId], references: [id], onDelete: SetNull)
+  materialId        String
+  material          Material          @relation(fields: [materialId], references: [id])
+  disposition       ScrapDisposition
+  quantity          Decimal           @db.Decimal(18, 4)
+  /// Book value of the scrapped material at FIFO cost.
+  bookValue         Decimal           @db.Decimal(18, 4)
+  /// Cash recovered if sold. Recovery rate = salvageValue / bookValue.
+  salvageValue      Decimal           @default(0) @db.Decimal(18, 4)
+  netLoss           Decimal           @db.Decimal(18, 4)
+  scrapDate         DateTime          @db.Date
+  notes             String?
+  createdAt         DateTime          @default(now())
+
+  @@index([materialId, scrapDate])
+  @@index([productionOrderId])
+  @@map("scrap_records")
+}
+
+/// Per-line, per-day throughput. Line efficiency = earnedMinutes / clockedMinutes.
+model ProductionStageLog {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  lineId            String?
+  line              ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  stage             ProductionStage
+  logDate           DateTime        @db.Date
+
+  qtyIn          Int
+  qtyOut         Int
+  operatorsCount Int?
+  /// Minutes actually paid for on the line.
+  clockedMinutes Decimal @db.Decimal(18, 4)
+  /// qtyOut × SMV for this stage — minutes genuinely earned.
+  earnedMinutes  Decimal @db.Decimal(18, 4)
+  efficiencyRate Decimal @db.Decimal(9, 6)
+
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([productionOrderId, stage])
+  @@index([lineId, logDate])
+  @@map("production_stage_logs")
+}
+
+model OperatorProductivity {
+  id             String   @id @default(cuid())
+  operatorId     String
+  operator       Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  logDate        DateTime @db.Date
+  smvProduced    Decimal  @db.Decimal(18, 4)
+  clockedMinutes Decimal  @db.Decimal(18, 4)
+  efficiencyRate Decimal  @db.Decimal(9, 6)
+  notes          String?
+
+  @@unique([operatorId, logDate])
+  @@index([logDate])
+  @@map("operator_productivity")
+}
+
+model QCRecord {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  stage             ProductionStage @default(QC)
+  inspectedQty      Int
+  passedQty         Int
+  reworkQty         Int             @default(0)
+  rejectedQty       Int             @default(0)
+  defectRate        Decimal         @db.Decimal(9, 6)
+  defectNotes       String?
+  inspectionDate    DateTime        @db.Date
+  createdAt         DateTime        @default(now())
+
+  @@index([productionOrderId])
+  @@map("qc_records")
+}
+
+enum ReworkType {
+  RESEWING
+  REPRESSING
+  REPACKING
+  RECUTTING
+  WASHING
+}
+
+/// Rework is real cost: extra minutes at the minute rate, plus any material.
+model ReworkRecord {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  lineId            String?
+  line              ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  type              ReworkType
+  quantity          Int
+  minutesPerUnit    Decimal         @db.Decimal(18, 4)
+  totalMinutes      Decimal         @db.Decimal(18, 4)
+  /// Frozen minute rate at the time of rework.
+  minuteRate        Decimal         @db.Decimal(18, 8)
+  labourCost        Decimal         @db.Decimal(18, 4)
+  materialCost      Decimal         @default(0) @db.Decimal(18, 4)
+  totalCost         Decimal         @db.Decimal(18, 4)
+  reworkDate        DateTime        @db.Date
+  reason            String?
+  createdAt         DateTime        @default(now())
+
+  @@index([productionOrderId])
+  @@map("rework_records")
+}
+
+// ===========================================================================
+// INVENTORY — FIFO lots across raw / WIP / finished goods
+// ===========================================================================
+
+enum InventoryState {
+  RAW_MATERIAL
+  WIP
+  FINISHED_GOODS
+}
+
+enum MovementType {
+  RECEIPT
+  ISSUE_TO_PRODUCTION
+  PRODUCTION_OUTPUT
+  SALE
+  RETURN_IN
+  SCRAP
+  ADJUSTMENT
+  TRANSFER
+}
+
+/// FIFO lot. Raw lots come from goods receipts; finished-goods lots come from
+/// production output and carry the frozen transfer price as their unit cost.
+model InventoryLot {
+  id        String         @id @default(cuid())
+  lotNumber String         @unique
+  state     InventoryState
+
+  materialId String?
+  material   Material? @relation(fields: [materialId], references: [id])
+  variantId  String?
+  variant    Variant?  @relation(fields: [variantId], references: [id])
+
+  goodsReceiptLineId String?           @unique
+  goodsReceiptLine   GoodsReceiptLine? @relation(fields: [goodsReceiptLineId], references: [id])
+  productionOrderId  String?
+  productionOrder    ProductionOrder?  @relation(fields: [productionOrderId], references: [id])
+
+  originalQty  Decimal @db.Decimal(18, 4)
+  remainingQty Decimal @db.Decimal(18, 4)
+  unitCost     Decimal @db.Decimal(18, 4)
+
+  /// Aging clock starts here.
+  receivedDate DateTime  @db.Date
+  isDeadStock  Boolean   @default(false)
+  deadStockFlaggedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  movements InventoryMovement[]
+
+  @@index([state, receivedDate])
+  @@index([materialId])
+  @@index([variantId])
+  @@map("inventory_lots")
+}
+
+model InventoryMovement {
+  id        String       @id @default(cuid())
+  lotId     String
+  lot       InventoryLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  type      MovementType
+  quantity  Decimal      @db.Decimal(18, 4)
+  unitCost  Decimal      @db.Decimal(18, 4)
+  totalCost Decimal      @db.Decimal(18, 4)
+  movementDate DateTime  @db.Date
+  referenceType String?
+  referenceId   String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@index([lotId])
+  @@index([movementDate, type])
+  @@map("inventory_movements")
+}
+
+// ===========================================================================
+// COMMERCIAL — channels, customers, sales, returns
+// ===========================================================================
+
+enum ChannelKind {
+  ONLINE
+  RETAIL_STORE
+  WHOLESALE
+  MARKETPLACE
+}
+
+model SalesChannel {
+  id     String      @id @default(cuid())
+  code   String      @unique
+  nameEn String
+  nameAr String
+  kind   ChannelKind
+
+  /// Payment cost differs sharply by channel: COD carries a per-order courier
+  /// fee, cards a percentage.
+  paymentFeePct   Decimal @default(0) @db.Decimal(9, 6)
+  paymentFeeFixed Decimal @default(0) @db.Decimal(18, 4)
+  shippingCostPerOrder Decimal @default(0) @db.Decimal(18, 4)
+
+  /// Defaults used for unit economics until a style has its own history.
+  defaultReturnRate   Decimal @default(0) @db.Decimal(9, 6)
+  defaultDiscountRate Decimal @default(0) @db.Decimal(9, 6)
+  /// Average days to collect cash — feeds the CCC.
+  collectionDays      Int     @default(0)
+
+  city     String?
+  isActive Boolean @default(true)
+
+  salesOrders SalesOrder[]
+  customers   Customer[]
+
+  @@map("sales_channels")
+}
+
+model Customer {
+  id        String        @id @default(cuid())
+  code      String        @unique
+  name      String
+  channelId String?
+  channel   SalesChannel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  phone     String?
+  email     String?
+  city      String?
+  creditDays Int          @default(0)
+  shopifyCustomerId String?
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+
+  salesOrders SalesOrder[]
+
+  @@map("customers")
+}
+
+enum SalesOrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+model SalesOrder {
+  id          String           @id @default(cuid())
+  orderNumber String           @unique
+  channelId   String
+  channel     SalesChannel     @relation(fields: [channelId], references: [id])
+  customerId  String?
+  customer    Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status      SalesOrderStatus @default(PENDING)
+
+  orderDate     DateTime  @db.Date
+  shippedDate   DateTime? @db.Date
+  deliveredDate DateTime? @db.Date
+  /// When cash actually landed — feeds collection days in the CCC.
+  collectedDate DateTime? @db.Date
+
+  grossAmount    Decimal @db.Decimal(18, 4)
+  discountAmount Decimal @default(0) @db.Decimal(18, 4)
+  netAmount      Decimal @db.Decimal(18, 4)
+  shippingAmount Decimal @default(0) @db.Decimal(18, 4)
+  paymentFee     Decimal @default(0) @db.Decimal(18, 4)
+
+  shopifyOrderId String?  @unique
+  city           String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lines   SalesOrderLine[]
+  returns Return[]
+
+  @@index([channelId, orderDate])
+  @@index([status])
+  @@map("sales_orders")
+}
+
+/// `discountPct` on the line is what drives markdown analysis — the split
+/// between full-price, lightly discounted and heavily discounted units.
+model SalesOrderLine {
+  id           String     @id @default(cuid())
+  salesOrderId String
+  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  variantId    String
+  variant      Variant    @relation(fields: [variantId], references: [id])
+
+  quantity     Int
+  retailPrice  Decimal @db.Decimal(18, 4)
+  discountPct  Decimal @default(0) @db.Decimal(9, 6)
+  netPrice     Decimal @db.Decimal(18, 4)
+  lineTotal    Decimal @db.Decimal(18, 4)
+  /// FIFO cost of goods relieved for this line.
+  unitCost     Decimal @db.Decimal(18, 4)
+  lineCost     Decimal @db.Decimal(18, 4)
+
+  @@index([salesOrderId])
+  @@index([variantId])
+  @@map("sales_order_lines")
+}
+
+enum ReturnDisposition {
+  RESTOCK
+  WRITE_OFF
+  REPAIR_AND_RESTOCK
+}
+
+model Return {
+  id           String            @id @default(cuid())
+  returnNumber String            @unique
+  salesOrderId String
+  salesOrder   SalesOrder        @relation(fields: [salesOrderId], references: [id])
+  variantId    String
+  variant      Variant           @relation(fields: [variantId], references: [id])
+  quantity     Int
+  reason       String?
+  disposition  ReturnDisposition @default(RESTOCK)
+  handlingCost Decimal           @default(0) @db.Decimal(18, 4)
+  refundAmount Decimal           @db.Decimal(18, 4)
+  returnDate   DateTime          @db.Date
+  createdAt    DateTime          @default(now())
+
+  @@index([salesOrderId])
+  @@index([returnDate])
+  @@map("returns")
+}
+
+// ===========================================================================
+// EXTERNAL CMT — the lever on idle capacity
+// ===========================================================================
+
+model CMTClient {
+  id         String  @id @default(cuid())
+  code       String  @unique
+  name       String
+  contactPerson String?
+  phone      String?
+  email      String?
+  creditDays Int     @default(0)
+  isActive   Boolean @default(true)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  quotes CMTQuote[]
+  orders CMTOrder[]
+
+  @@map("cmt_clients")
+}
+
+enum CMTQuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+/// Hard rule: `quotedMinuteRate` may never fall below the period's
+/// `fullCapacityMinuteRate`. Below that, the quote does not even recover
+/// overhead at full capacity and every minute sold makes things worse.
+model CMTQuote {
+  id          String         @id @default(cuid())
+  quoteNumber String         @unique
+  clientId    String
+  client      CMTClient      @relation(fields: [clientId], references: [id])
+  minuteRatePeriodId String
+  minuteRatePeriod   MinuteRatePeriod @relation(fields: [minuteRatePeriodId], references: [id])
+  status      CMTQuoteStatus @default(DRAFT)
+
+  styleDescription String
+  quantity         Int
+  smvPerUnit       Decimal @db.Decimal(18, 4)
+  totalMinutes     Decimal @db.Decimal(18, 4)
+
+  /// Frozen floor at quote time.
+  floorMinuteRate  Decimal @db.Decimal(18, 8)
+  quotedMinuteRate Decimal @db.Decimal(18, 8)
+  marginOverFloorPct Decimal @db.Decimal(9, 6)
+  quotedUnitPrice  Decimal @db.Decimal(18, 4)
+  quotedTotal      Decimal @db.Decimal(18, 4)
+
+  validUntil DateTime? @db.Date
+  quoteDate  DateTime  @db.Date
+  notes      String?
+  createdAt  DateTime  @default(now())
+
+  orders CMTOrder[]
+
+  @@index([clientId])
+  @@map("cmt_quotes")
+}
+
+enum CMTOrderStatus {
+  CONFIRMED
+  IN_PRODUCTION
+  COMPLETED
+  CANCELLED
+}
+
+model CMTOrder {
+  id          String         @id @default(cuid())
+  orderNumber String         @unique
+  clientId    String
+  client      CMTClient      @relation(fields: [clientId], references: [id])
+  quoteId     String?
+  quote       CMTQuote?      @relation(fields: [quoteId], references: [id])
+  status      CMTOrderStatus @default(CONFIRMED)
+
+  quantity        Int
+  smvPerUnit      Decimal @db.Decimal(18, 4)
+  totalMinutes    Decimal @db.Decimal(18, 4)
+  agreedMinuteRate Decimal @db.Decimal(18, 8)
+  contractValue   Decimal @db.Decimal(18, 4)
+
+  actualMinutes  Decimal? @db.Decimal(18, 4)
+  actualCost     Decimal? @db.Decimal(18, 4)
+  realisedMargin Decimal? @db.Decimal(18, 4)
+
+  orderDate    DateTime  @db.Date
+  dueDate      DateTime? @db.Date
+  completedAt  DateTime? @db.Date
+  createdAt    DateTime  @default(now())
+
+  capacityBookings CapacityBooking[]
+
+  @@index([clientId, orderDate])
+  @@map("cmt_orders")
+}
+
+// ===========================================================================
+// CASH FLOW FORECAST
+// ===========================================================================
+
+enum CashDirection {
+  INFLOW
+  OUTFLOW
+}
+
+enum CashItemFrequency {
+  ONE_OFF
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+/// Recurring known cash items (payroll, rent, instalments) that have no
+/// invoice yet but will absolutely need funding. Combined with expense due
+/// dates, PO commitments and expected receivables to build the forecast.
+model ScheduledCashItem {
+  id             String            @id @default(cuid())
+  entityId       String
+  entity         Entity            @relation(fields: [entityId], references: [id])
+  costCategoryId String?
+  costCategory   CostCategory?     @relation(fields: [costCategoryId], references: [id], onDelete: SetNull)
+  nameEn         String
+  nameAr         String
+  direction      CashDirection
+  amount         Decimal           @db.Decimal(18, 4)
+  frequency      CashItemFrequency @default(MONTHLY)
+  /// Day of month the cash actually moves.
+  dayOfMonth     Int               @default(1)
+  startDate      DateTime          @db.Date
+  endDate        DateTime?         @db.Date
+  isActive       Boolean           @default(true)
+
+  @@index([entityId, isActive])
+  @@map("scheduled_cash_items")
+}
+
+// ===========================================================================
+// ALERTS — the system tells you, you don't go looking
+// ===========================================================================
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  SNOOZED
+}
+
+model AlertRule {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  nameEn      String
+  nameAr      String
+  descriptionEn String?
+  descriptionAr String?
+  severity    AlertSeverity @default(WARNING)
+  /// Rule parameters (thresholds, windows) — configurable, never hardcoded.
+  parameters  Json
+  isEnabled   Boolean       @default(true)
+  lastRunAt   DateTime?
+
+  alerts Alert[]
+
+  @@map("alert_rules")
+}
+
+model Alert {
+  id          String        @id @default(cuid())
+  alertRuleId String
+  alertRule   AlertRule     @relation(fields: [alertRuleId], references: [id], onDelete: Cascade)
+  severity    AlertSeverity
+  status      AlertStatus   @default(OPEN)
+
+  titleEn String
+  titleAr String
+  bodyEn  String
+  bodyAr  String
+
+  /// What the alert is about, for deep-linking.
+  subjectType String?
+  subjectId   String?
+  /// The numbers that triggered it, for the drill-down.
+  metrics     Json?
+
+  /// Deduplication key so the same condition doesn't re-alert every morning.
+  dedupeKey String
+
+  acknowledgedByUserId String?
+  acknowledgedBy       User?     @relation("AlertAcknowledgedBy", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull)
+  acknowledgedAt       DateTime?
+  resolvedAt           DateTime?
+  snoozedUntil         DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([alertRuleId, dedupeKey])
+  @@index([status, severity, createdAt])
+  @@map("alerts")
+}
+
+// ===========================================================================
+// SCENARIO SIMULATOR — "what if"
+// ===========================================================================
+
+/// Scenarios never write to operational tables. They read the current state,
+/// apply overrides in memory, and store the resulting comparison.
+model Scenario {
+  id            String   @id @default(cuid())
+  name          String
+  descriptionEn String?
+  descriptionAr String?
+  createdByUserId String?
+  createdBy       User?  @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  /// e.g. { "fabricPriceDeltaPct": 0.10, "utilisationRate": 0.85,
+  ///        "returnRate": 0.12, "discountRate": 0.20,
+  ///        "wageDeltaPct": 0.15, "marketingDeltaPct": 0.30 }
+  assumptions Json
+  /// Which fiscal period the baseline was drawn from.
+  baselinePeriodId String?
+
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  results ScenarioResult[]
+
+  @@map("scenarios")
+}
+
+model ScenarioResult {
+  id         String   @id @default(cuid())
+  scenarioId String
+  scenario   Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  metricKey   String
+  labelEn     String
+  labelAr     String
+  baseline    Decimal  @db.Decimal(18, 4)
+  simulated   Decimal  @db.Decimal(18, 4)
+  delta       Decimal  @db.Decimal(18, 4)
+  deltaPct    Decimal? @db.Decimal(9, 6)
+  unit        String   @default("EGP")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([scenarioId])
+  @@map("scenario_results")
+}
