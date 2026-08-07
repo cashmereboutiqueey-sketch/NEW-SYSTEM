@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
 import { getSession, type SessionPayload } from "./session";
+import { can, type Permission } from "@/core/permissions";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -50,24 +51,33 @@ export async function requireUser(): Promise<SessionPayload> {
   return session;
 }
 
-const ROLE_RANK: Record<SessionPayload["role"], number> = {
-  VIEWER: 0,
-  PRODUCTION: 1,
-  ACCOUNTANT: 2,
-  OWNER: 3,
-};
-
-export function hasAtLeast(
-  role: SessionPayload["role"],
-  minimum: SessionPayload["role"],
-): boolean {
-  return ROLE_RANK[role] >= ROLE_RANK[minimum];
-}
-
-export async function requireRole(
-  minimum: SessionPayload["role"],
+/**
+ * Server-component guard for a page. Sends an unauthorised user home rather
+ * than showing an empty screen.
+ */
+export async function requirePermission(
+  permission: Permission,
 ): Promise<SessionPayload> {
   const session = await requireUser();
-  if (!hasAtLeast(session.role, minimum)) redirect("/");
+  if (!can(session.role, permission)) redirect("/");
+  return session;
+}
+
+export class ForbiddenError extends Error {
+  constructor(permission: Permission, role: string) {
+    super(`Role ${role} does not have permission ${permission}.`);
+    this.name = "ForbiddenError";
+  }
+}
+
+/**
+ * Guard for a server action. Throws instead of redirecting, because an action
+ * must fail loudly — a redirect would let the caller believe the mutation
+ * succeeded.
+ */
+export async function authorize(permission: Permission): Promise<SessionPayload> {
+  const session = await getSession();
+  if (!session) throw new ForbiddenError(permission, "anonymous");
+  if (!can(session.role, permission)) throw new ForbiddenError(permission, session.role);
   return session;
 }

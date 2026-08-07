@@ -27,11 +27,24 @@ datasource db {
 // SYSTEM / AUTH / CONFIG
 // ===========================================================================
 
+/// Roles name a job. What a role may actually *do* is defined by the
+/// capability map in `src/core/permissions.ts`, not by rank — a linear
+/// hierarchy cannot express "production sees WIP but never payroll".
 enum UserRole {
   OWNER
   ACCOUNTANT
   PRODUCTION
   VIEWER
+  BRAND_MANAGER
+  MODERATOR
+  POS_CASHIER
+  WAREHOUSE
+  HR
+  MARKETING
+  FINANCE_APPROVER
+  /// Integration connectors (Shopify, biometric, payment). Scoped to the
+  /// minimum needed and never able to reach human-user functions.
+  SERVICE_ACCOUNT
 }
 
 model User {

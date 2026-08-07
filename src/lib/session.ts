@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
 import type { Locale } from "./i18n";
+import { ROLES } from "@/core/permissions";
 
 const SESSION_COOKIE = "cashmere_session";
 const PREFS_COOKIE = "cashmere_prefs";
@@ -12,7 +13,7 @@ const sessionPayloadSchema = z.object({
   userId: z.string(),
   email: z.string(),
   name: z.string(),
-  role: z.enum(["OWNER", "ACCOUNTANT", "PRODUCTION", "VIEWER"]),
+  role: z.enum(ROLES),
 });
 
 export type SessionPayload = z.infer<typeof sessionPayloadSchema>;
