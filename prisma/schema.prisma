@@ -74,6 +74,24 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Gap-free per-period document numbering (journals, POs, invoices…).
+///
+/// The counter is bumped with a single atomic `UPDATE … RETURNING` inside the
+/// caller's transaction, so two concurrent postings can never be handed the
+/// same number — which counting existing rows would allow.
+model DocumentSequence {
+  id       String   @id @default(cuid())
+  docType  String
+  year     Int
+  month    Int
+  /// Last number issued. The next document takes `lastNumber + 1`.
+  lastNumber Int    @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([docType, year, month])
+  @@map("document_sequences")
+}
+
 enum SettingType {
   DECIMAL
   INTEGER
