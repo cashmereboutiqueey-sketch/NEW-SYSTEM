@@ -222,19 +222,29 @@ Each phase is handed over for testing with real data before the next begins.
 
 ### Requirements
 - Node.js 22+
-- PostgreSQL 16+
+- PostgreSQL 16+ — either your own instance, or the bundled Docker one below
 
 ### Setup
 
 ```bash
 npm install                 # also runs `prisma generate`
-cp .env.example .env        # then set DATABASE_URL and AUTH_SECRET
+cp .env.example .env        # then fill in the three secrets it asks for
+docker compose up -d db     # local Postgres 18 on 127.0.0.1:5435
 npm run db:migrate          # create the schema
 npm run db:seed             # load realistic Egyptian sample data
 npm run dev                 # http://localhost:3000
 ```
 
-Generate a session secret with `openssl rand -base64 32`.
+`docker-compose.yml` binds Postgres to loopback only, so the database is never
+publicly exposed. Point `DATABASE_URL` at your own instance instead if you
+prefer — nothing in the application depends on Docker.
+
+Generate the two secrets `.env` needs:
+
+```bash
+openssl rand -base64 32                                                  # AUTH_SECRET
+node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  # POSTGRES_PASSWORD
+```
 
 ### Seeded sign-in
 

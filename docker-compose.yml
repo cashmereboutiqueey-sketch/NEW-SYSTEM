@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: cashmere-os-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cashmere_os
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: cashmere_os
+    # Bound to loopback only — the database is never publicly exposed.
+    ports:
+      - "127.0.0.1:5435:5432"
+    # Postgres 18 images expect the volume at /var/lib/postgresql, not its
+    # /data subdirectory, so that pg_upgrade --link can work across versions.
+    volumes:
+      - cashmere-os-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cashmere_os -d cashmere_os"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cashmere-os-db-data:
