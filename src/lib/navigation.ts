@@ -13,6 +13,12 @@ export type NavItem = {
   /** Which entity lenses this screen makes sense in. */
   scopes: EntityScope[];
   icon: string;
+  /**
+   * Set only once the screen actually works end to end. Gating by phase
+   * instead would light up every phase-2 link the moment the first phase-2
+   * screen shipped, linking to pages that do not exist yet.
+   */
+  shipped?: boolean;
 };
 
 export type NavSection = {
@@ -26,14 +32,14 @@ export const navigation: NavSection[] = [
   {
     key: "dashboard",
     items: [
-      { key: "dashboard", href: "/", phase: 1, scopes: ALL_SCOPES, icon: "home" },
+      { key: "dashboard", href: "/", phase: 1, scopes: ALL_SCOPES, icon: "home" , shipped: true },
       { key: "alerts", href: "/alerts", phase: 3, scopes: ALL_SCOPES, icon: "bell" },
     ],
   },
   {
     key: "expenses",
     items: [
-      { key: "expenses", href: "/expenses", phase: 2, scopes: ALL_SCOPES, icon: "receipt" },
+      { key: "expenses", href: "/expenses", phase: 2, scopes: ALL_SCOPES, icon: "receipt" , shipped: true },
       { key: "apAging", href: "/expenses/aging", phase: 2, scopes: ALL_SCOPES, icon: "clock" },
       { key: "cashFlowForecast", href: "/cash-flow", phase: 5, scopes: ALL_SCOPES, icon: "wallet" },
     ],
@@ -96,14 +102,12 @@ export const navigation: NavSection[] = [
     key: "scenarioSimulator",
     items: [
       { key: "whatIf", href: "/scenarios", phase: 3, scopes: ALL_SCOPES, icon: "sparkles" },
-      { key: "settings", href: "/settings", phase: 1, scopes: ALL_SCOPES, icon: "settings" },
+      { key: "settings", href: "/settings", phase: 1, scopes: ALL_SCOPES, icon: "settings" , shipped: true },
     ],
   },
 ];
 
-/** Phases already shipped. Everything else renders disabled with its phase number. */
-export const SHIPPED_PHASES: NavItem["phase"][] = [1];
-
+/** Everything not marked shipped renders disabled, labelled with its phase. */
 export function isShipped(item: NavItem): boolean {
-  return SHIPPED_PHASES.includes(item.phase);
+  return item.shipped === true;
 }

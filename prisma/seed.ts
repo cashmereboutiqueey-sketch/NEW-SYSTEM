@@ -414,43 +414,55 @@ async function main() {
   // twice. Materials, financing and all brand costs are excluded from it.
   // -------------------------------------------------------------------------
   const factoryCategories = [
-    { code: "FAC-DIRECT-LABOUR", nameEn: "Direct sewing labour", nameAr: "أجور عمال الإنتاج", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
-    { code: "FAC-INDIRECT-LABOUR", nameEn: "Supervisors, mechanics, QC", nameAr: "مشرفين وفنيين وجودة", behaviour: "FIXED" as const, includeInMinuteRate: true },
-    { code: "FAC-RENT", nameEn: "Factory rent", nameAr: "إيجار المصنع", behaviour: "FIXED" as const, includeInMinuteRate: true },
-    { code: "FAC-UTILITIES", nameEn: "Electricity and water", nameAr: "كهرباء ومياه", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
-    { code: "FAC-MAINTENANCE", nameEn: "Machine maintenance", nameAr: "صيانة المكن", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
-    { code: "FAC-DEPRECIATION", nameEn: "Depreciation", nameAr: "الإهلاك", behaviour: "FIXED" as const, includeInMinuteRate: true },
-    { code: "FAC-ADMIN", nameEn: "Factory administration", nameAr: "إدارة المصنع", behaviour: "FIXED" as const, includeInMinuteRate: true },
-    { code: "FAC-TRANSPORT", nameEn: "Internal transport", nameAr: "نقل داخلي", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
-    { code: "FAC-CONSUMABLES", nameEn: "Production consumables", nameAr: "مستهلكات الإنتاج", behaviour: "VARIABLE" as const, includeInMinuteRate: true },
+    { code: "FAC-DIRECT-LABOUR", accountCode: "6110", nameEn: "Direct sewing labour", nameAr: "أجور عمال الإنتاج", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
+    { code: "FAC-INDIRECT-LABOUR", accountCode: "6115", nameEn: "Supervisors, mechanics, QC", nameAr: "مشرفين وفنيين وجودة", behaviour: "FIXED" as const, includeInMinuteRate: true },
+    { code: "FAC-RENT", accountCode: "6120", nameEn: "Factory rent", nameAr: "إيجار المصنع", behaviour: "FIXED" as const, includeInMinuteRate: true },
+    { code: "FAC-UTILITIES", accountCode: "6125", nameEn: "Electricity and water", nameAr: "كهرباء ومياه", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
+    { code: "FAC-MAINTENANCE", accountCode: "6130", nameEn: "Machine maintenance", nameAr: "صيانة المكن", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
+    { code: "FAC-DEPRECIATION", accountCode: "6135", nameEn: "Depreciation", nameAr: "الإهلاك", behaviour: "FIXED" as const, includeInMinuteRate: true },
+    { code: "FAC-ADMIN", accountCode: "6140", nameEn: "Factory administration", nameAr: "إدارة المصنع", behaviour: "FIXED" as const, includeInMinuteRate: true },
+    { code: "FAC-TRANSPORT", accountCode: "6145", nameEn: "Internal transport", nameAr: "نقل داخلي", behaviour: "SEMI_VARIABLE" as const, includeInMinuteRate: true },
+    { code: "FAC-CONSUMABLES", accountCode: "6150", nameEn: "Production consumables", nameAr: "مستهلكات الإنتاج", behaviour: "VARIABLE" as const, includeInMinuteRate: true },
     // Excluded from the minute rate on purpose:
-    { code: "FAC-MATERIALS", nameEn: "Fabric and trims purchased", nameAr: "مشتريات الخامات", behaviour: "VARIABLE" as const, includeInMinuteRate: false },
-    { code: "FAC-FINANCE", nameEn: "Interest and bank charges", nameAr: "فوائد ومصاريف بنكية", behaviour: "FIXED" as const, includeInMinuteRate: false },
+    { code: "FAC-MATERIALS", accountCode: "5100", nameEn: "Fabric and trims purchased", nameAr: "مشتريات الخامات", behaviour: "VARIABLE" as const, includeInMinuteRate: false },
+    { code: "FAC-FINANCE", accountCode: "7510", nameEn: "Interest and bank charges", nameAr: "فوائد ومصاريف بنكية", behaviour: "FIXED" as const, includeInMinuteRate: false },
   ];
 
   const brandCategories = [
-    { code: "BRD-SALARIES", nameEn: "Brand salaries", nameAr: "رواتب البراند", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
-    { code: "BRD-RENT", nameEn: "Showroom and office rent", nameAr: "إيجار المعرض والمكتب", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
-    { code: "BRD-MARKETING", nameEn: "Marketing and advertising", nameAr: "التسويق والإعلان", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
-    { code: "BRD-SHIPPING", nameEn: "Shipping and delivery", nameAr: "الشحن والتوصيل", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
-    { code: "BRD-PACKAGING", nameEn: "Retail packaging", nameAr: "تغليف التجزئة", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
-    { code: "BRD-PAYMENT-FEES", nameEn: "Payment and COD fees", nameAr: "رسوم الدفع والتحصيل", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
-    { code: "BRD-SOFTWARE", nameEn: "Software and subscriptions", nameAr: "برمجيات واشتراكات", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
-    { code: "BRD-RETURNS", nameEn: "Return handling", nameAr: "معالجة المرتجعات", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
+    { code: "BRD-SALARIES", accountCode: "6310", nameEn: "Brand salaries", nameAr: "رواتب البراند", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
+    { code: "BRD-RENT", accountCode: "6320", nameEn: "Showroom and office rent", nameAr: "إيجار المعرض والمكتب", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
+    { code: "BRD-MARKETING", accountCode: "6410", nameEn: "Marketing and advertising", nameAr: "التسويق والإعلان", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
+    { code: "BRD-SHIPPING", accountCode: "6220", nameEn: "Shipping and delivery", nameAr: "الشحن والتوصيل", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
+    { code: "BRD-PACKAGING", accountCode: "6210", nameEn: "Retail packaging", nameAr: "تغليف التجزئة", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
+    { code: "BRD-PAYMENT-FEES", accountCode: "6230", nameEn: "Payment and COD fees", nameAr: "رسوم الدفع والتحصيل", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
+    { code: "BRD-SOFTWARE", accountCode: "6330", nameEn: "Software and subscriptions", nameAr: "برمجيات واشتراكات", behaviour: "FIXED" as const, includeInBrandFixedPool: true },
+    { code: "BRD-RETURNS", accountCode: "6240", nameEn: "Return handling", nameAr: "معالجة المرتجعات", behaviour: "VARIABLE" as const, includeInBrandFixedPool: false },
   ];
 
+  // `accountCode` is what connects the expense subledger to the general
+  // ledger — without it an expense could be recorded but never posted.
+  const linkAccount = ({ accountCode, ...rest }: { accountCode: string } & Record<string, unknown>) => {
+    const accountId = accountIdByCode.get(accountCode);
+    if (!accountId) throw new Error(`Cost category ${rest.code} maps to unknown account ${accountCode}`);
+    return { ...rest, accountId };
+  };
+
   for (const [i, c] of factoryCategories.entries()) {
+    const linked = linkAccount(c);
     await db.costCategory.upsert({
       where: { entityId_code: { entityId: factory.id, code: c.code } },
-      update: {},
-      create: { ...c, entityId: factory.id, sortOrder: i },
+      // The account link is repaired on re-seed: a category that cannot reach
+      // the ledger silently blocks every expense filed against it.
+      update: { accountId: linked.accountId },
+      create: { ...linked, entityId: factory.id, sortOrder: i } as never,
     });
   }
   for (const [i, c] of brandCategories.entries()) {
+    const linked = linkAccount(c);
     await db.costCategory.upsert({
       where: { entityId_code: { entityId: brand.id, code: c.code } },
-      update: {},
-      create: { ...c, entityId: brand.id, sortOrder: i },
+      update: { accountId: linked.accountId },
+      create: { ...linked, entityId: brand.id, sortOrder: i } as never,
     });
   }
   console.log(`  cost categories: ${factoryCategories.length + brandCategories.length}`);
