@@ -1611,9 +1611,40 @@ model Customer {
   isActive  Boolean       @default(true)
   createdAt DateTime      @default(now())
 
+  /// Where this customer first came from. Kept even after they buy through
+  /// other channels, because acquisition source and current channel are
+  /// different questions.
+  acquiredVia OrderSource?
+
+  /// Normalised for duplicate detection. Two Egyptian numbers written five
+  /// different ways are one line; storing the normalised form makes that
+  /// searchable without re-parsing on every query.
+  phoneNormalised String?
+  emailNormalised String?
+
+  /// Marketing consent. Absence of a decision is not consent, so this stays
+  /// null until the customer actually says.
+  marketingConsent   Boolean?
+  consentRecordedAt  DateTime?
+  /// Suppressed customers are excluded from every campaign regardless of
+  /// consent — an unsubscribe outranks an old opt-in.
+  isSuppressed Boolean @default(false)
+
+  /// Set when this record is confirmed to be a duplicate of another. The
+  /// record is kept, never deleted, so its order history stays readable.
+  mergedIntoId String?
+  mergedInto   Customer?  @relation("CustomerMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom   Customer[] @relation("CustomerMerge")
+  mergedAt     DateTime?
+
+  notes String?
+
   salesOrders  SalesOrder[]
   journalLines JournalLine[]
 
+  @@index([phoneNormalised])
+  @@index([emailNormalised])
+  @@index([mergedIntoId])
   @@map("customers")
 }
 

@@ -129,6 +129,7 @@ export const dictionary = {
   markdown: { ar: "تحليل الخصومات", en: "Markdown analysis" },
   gmroi: { ar: "العائد على المخزون", en: "GMROI" },
   collectionPerformance: { ar: "أداء الكوليكشن", en: "Collection performance" },
+  customers: { ar: "العملاء", en: "Customers" },
   customerProfitability: { ar: "ربحية العميل", en: "Customer profitability" },
   sales: { ar: "المبيعات", en: "Sales" },
   returns: { ar: "المرتجعات", en: "Returns" },
