@@ -150,6 +150,13 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "6145", nameEn: "Internal transport", nameAr: "نقل داخلي", type: "EXPENSE", normalBalance: "DEBIT", parent: "6100", scope: "FACTORY", reportingCategory: "FACTORY_CONVERSION", includeInMinuteRate: true },
   { code: "6150", nameEn: "Production consumables", nameAr: "مستهلكات الإنتاج", type: "EXPENSE", normalBalance: "DEBIT", parent: "6100", scope: "FACTORY", reportingCategory: "FACTORY_CONVERSION", includeInMinuteRate: true },
 
+  // Contra-expense. Conversion cost is incurred as a period expense in the
+  // 61xx accounts, then absorbed into inventory at the minute rate as garments
+  // are produced. The balance left here is the under- or over-absorption — in
+  // other words, the cost of the capacity that produced nothing. It is
+  // excluded from the minute-rate pool, or absorption would feed its own rate.
+  { code: "6190", nameEn: "Conversion cost absorbed into inventory", nameAr: "تكلفة التشغيل المحمّلة على المخزون", type: "EXPENSE", normalBalance: "CREDIT", parent: "6100", scope: "FACTORY", reportingCategory: "FACTORY_ABSORPTION" },
+
   { code: "6200", nameEn: "Brand variable selling costs", nameAr: "تكاليف البيع المتغيرة", type: "EXPENSE", normalBalance: "DEBIT", parent: "6000", scope: "BRAND", isPostable: false, reportingCategory: "BRAND_VARIABLE" },
   { code: "6210", nameEn: "Retail packaging", nameAr: "تغليف التجزئة", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
   { code: "6220", nameEn: "Shipping and delivery", nameAr: "الشحن والتوصيل", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
@@ -196,6 +203,27 @@ export const COST_CENTERS = [
   { code: "CC-STORE-CAI", nameEn: "Cairo store", nameAr: "فرع القاهرة", entityKind: "BRAND" as const },
   { code: "CC-MARKETING", nameEn: "Marketing", nameAr: "التسويق", entityKind: "BRAND" as const },
   { code: "CC-CORPORATE", nameEn: "Corporate", nameAr: "الإدارة العامة", entityKind: null },
+];
+
+/**
+ * Physical stock locations.
+ *
+ * The Alexandria site is both showroom and the Brand's warehouse — online and
+ * moderator orders ship from it — so it is one location, not two.
+ */
+export const LOCATIONS = [
+  {
+    code: "LOC-FAC", nameEn: "Factory warehouse", nameAr: "مخزن المصنع",
+    kind: "FACTORY_WAREHOUSE" as const, entityKind: "FACTORY" as const, city: "Alexandria",
+  },
+  {
+    code: "LOC-ALX", nameEn: "Alexandria showroom and warehouse", nameAr: "معرض ومخزن الإسكندرية",
+    kind: "SHOWROOM" as const, entityKind: "BRAND" as const, city: "Alexandria",
+  },
+  {
+    code: "LOC-CAI", nameEn: "Cairo store", nameAr: "فرع القاهرة",
+    kind: "STORE" as const, entityKind: "BRAND" as const, city: "Cairo",
+  },
 ];
 
 /**

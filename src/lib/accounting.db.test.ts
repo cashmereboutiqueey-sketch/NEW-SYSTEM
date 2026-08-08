@@ -375,8 +375,10 @@ describe("seeded chart of accounts", () => {
       OTHER_INCOME: "CREDIT",
       OTHER_EXPENSE: "DEBIT",
     };
-    // Contra accounts intentionally invert their class's normal balance.
-    const contraCodes = new Set(["1590", "3200", "4200", "4210"]);
+    // Contra accounts intentionally invert their class's normal balance:
+    // accumulated depreciation, owner drawings, sales discounts and returns,
+    // and conversion cost absorbed into inventory.
+    const contraCodes = new Set(["1590", "3200", "4200", "4210", "6190"]);
 
     const mismatched = accounts.filter(
       (a) => !contraCodes.has(a.code) && a.normalBalance !== expected[a.type],

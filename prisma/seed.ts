@@ -15,7 +15,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
-import { CHART_OF_ACCOUNTS, COST_CENTERS, TAX_RATES } from "./chart-of-accounts";
+import { CHART_OF_ACCOUNTS, COST_CENTERS, TAX_RATES, LOCATIONS } from "./chart-of-accounts";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const db = new PrismaClient({ adapter });
@@ -163,6 +163,19 @@ async function main() {
     });
   }
   console.log(`  tax rates: ${TAX_RATES.length}`);
+
+  for (const [i, l] of LOCATIONS.entries()) {
+    await db.location.upsert({
+      where: { code: l.code },
+      update: {},
+      create: {
+        code: l.code, nameEn: l.nameEn, nameAr: l.nameAr, kind: l.kind,
+        entityId: l.entityKind === "FACTORY" ? factory.id : brand.id,
+        city: l.city, sortOrder: i,
+      },
+    });
+  }
+  console.log(`  locations: ${LOCATIONS.length}`);
 
   // -------------------------------------------------------------------------
   // Settings — every configurable number lives here, never in code

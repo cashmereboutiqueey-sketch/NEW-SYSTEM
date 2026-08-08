@@ -157,6 +157,8 @@ model Entity {
   costCenters        CostCenter[]
   journalEntries     JournalEntry[]
   journalLines       JournalLine[]
+  locations          Location[]
+  inventoryLots      InventoryLot[]
 
   @@map("entities")
 }
@@ -1399,6 +1401,41 @@ model ReworkRecord {
 // INVENTORY — FIFO lots across raw / WIP / finished goods
 // ===========================================================================
 
+enum LocationKind {
+  FACTORY_WAREHOUSE
+  SHOWROOM
+  STORE
+  /// Bazaars and exhibitions: stock goes out for a few days and must be
+  /// reconciled back afterwards.
+  EXHIBITION
+  TRANSIT
+}
+
+/// Physical places stock can be. Configurable rather than an enum in code,
+/// because new showrooms and events are a business decision, not a deploy.
+model Location {
+  id       String       @id @default(cuid())
+  code     String       @unique
+  nameEn   String
+  nameAr   String
+  kind     LocationKind
+  entityId String?
+  entity   Entity?      @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  city     String?
+  /// Temporary locations (exhibitions) close after their event.
+  isActive Boolean      @default(true)
+  opensAt  DateTime?    @db.Date
+  closesAt DateTime?    @db.Date
+  sortOrder Int         @default(0)
+
+  inventoryLots     InventoryLot[]
+  movementsFrom     InventoryMovement[] @relation("MovementFrom")
+  movementsTo       InventoryMovement[] @relation("MovementTo")
+
+  @@index([kind, isActive])
+  @@map("locations")
+}
+
 enum InventoryState {
   RAW_MATERIAL
   WIP
@@ -1433,9 +1470,23 @@ model InventoryLot {
   productionOrderId  String?
   productionOrder    ProductionOrder?  @relation(fields: [productionOrderId], references: [id])
 
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  /// Which entity's books this stock belongs to. The same SKU exists as
+  /// factory finished goods and, after the transfer, as brand stock — at
+  /// different costs.
+  entityId String?
+  entity   Entity? @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
   originalQty  Decimal @db.Decimal(18, 4)
   remainingQty Decimal @db.Decimal(18, 4)
+  /// Reserved for orders but not yet issued. Available = remaining − reserved.
+  reservedQty  Decimal @default(0) @db.Decimal(18, 4)
   unitCost     Decimal @db.Decimal(18, 4)
+
+  /// Breaks same-day receipt ties so FIFO order is total and deterministic.
+  sequence Int @default(autoincrement())
 
   /// Aging clock starts here.
   receivedDate DateTime  @db.Date
@@ -1447,28 +1498,47 @@ model InventoryLot {
 
   movements InventoryMovement[]
 
+  // FIFO reads lots oldest-first within a material/variant and location, so
+  // the index carries the sort key too.
   @@index([state, receivedDate])
-  @@index([materialId])
-  @@index([variantId])
+  @@index([materialId, locationId, receivedDate, sequence])
+  @@index([variantId, locationId, receivedDate, sequence])
   @@map("inventory_lots")
 }
 
+/// The append-only stock ledger. Balances are always reconstructible from
+/// these rows, so a lot's `remainingQty` is a cache that must agree with the
+/// movements — never an independent source of truth.
 model InventoryMovement {
   id        String       @id @default(cuid())
   lotId     String
   lot       InventoryLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
   type      MovementType
+  /// Always positive. `type` says whether stock came in or went out.
   quantity  Decimal      @db.Decimal(18, 4)
   unitCost  Decimal      @db.Decimal(18, 4)
   totalCost Decimal      @db.Decimal(18, 4)
   movementDate DateTime  @db.Date
+
+  /// Both set only on a transfer; a receipt has no origin and an issue has no
+  /// destination.
+  fromLocationId String?
+  fromLocation   Location? @relation("MovementFrom", fields: [fromLocationId], references: [id], onDelete: SetNull)
+  toLocationId   String?
+  toLocation     Location? @relation("MovementTo", fields: [toLocationId], references: [id], onDelete: SetNull)
+
+  /// Every movement must name the document that caused it.
   referenceType String?
   referenceId   String?
+  /// The journal this movement posted, so stock and the ledger stay tied.
+  journalEntryId String?
+
   notes     String?
   createdAt DateTime @default(now())
 
   @@index([lotId])
   @@index([movementDate, type])
+  @@index([referenceType, referenceId])
   @@map("inventory_movements")
 }
 
