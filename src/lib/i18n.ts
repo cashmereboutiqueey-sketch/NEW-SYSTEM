@@ -130,6 +130,7 @@ export const dictionary = {
   gmroi: { ar: "العائد على المخزون", en: "GMROI" },
   collectionPerformance: { ar: "أداء الكوليكشن", en: "Collection performance" },
   customers: { ar: "العملاء", en: "Customers" },
+  people: { ar: "الموظفون والأجور", en: "People and payroll" },
   customerProfitability: { ar: "ربحية العميل", en: "Customer profitability" },
   sales: { ar: "المبيعات", en: "Sales" },
   returns: { ar: "المرتجعات", en: "Returns" },

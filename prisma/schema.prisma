@@ -162,6 +162,8 @@ model Entity {
   locations          Location[]
   inventoryLots      InventoryLot[]
   salesOrders        SalesOrder[]
+  employees          Employee[]
+  payrollRuns        PayrollRun[]
 
   @@map("entities")
 }
@@ -186,6 +188,7 @@ model FiscalPeriod {
   expenses          Expense[]
   supplierScores    SupplierScorecard[]
   journalEntries    JournalEntry[]
+  payrollRuns       PayrollRun[]
 
   @@unique([year, month])
   @@index([startDate])
@@ -271,6 +274,7 @@ model Account {
 
   journalLines   JournalLine[]
   costCategories CostCategory[]
+  payrollLines   PayrollLine[]
 
   @@index([type, isActive])
   @@index([parentId])
@@ -291,6 +295,7 @@ model CostCenter {
   sortOrder Int    @default(0)
 
   journalLines JournalLine[]
+  employees    Employee[]
 
   @@map("cost_centers")
 }
@@ -611,6 +616,11 @@ model Operator {
   line       ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
   hiredAt    DateTime?       @db.Date
   isActive   Boolean         @default(true)
+
+  /// The HR record behind this operator. Sewing operators are employees too;
+  /// keeping one employee master avoids two versions of the same person's pay.
+  employeeId String?   @unique
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
   productivity OperatorProductivity[]
 
@@ -1556,6 +1566,214 @@ model InventoryMovement {
   @@index([movementDate, type])
   @@index([referenceType, referenceId])
   @@map("inventory_movements")
+}
+
+// ===========================================================================
+// HR — employees, attendance, payroll
+//
+// Biometric devices are an input source, not the accounting authority: raw
+// punches are kept as evidence, and approved attendance is a separate,
+// correctable record derived from them.
+// ===========================================================================
+
+enum EmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum PayFrequency {
+  MONTHLY
+  WEEKLY
+  DAILY
+  PIECE_RATE
+}
+
+model Employee {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  entityId  String
+  entity    Entity   @relation(fields: [entityId], references: [id])
+  /// Drives which cost pool the payroll lands in — a sewing operator's wage
+  /// belongs in the factory conversion pool, a showroom assistant's does not.
+  costCenterId String?
+  costCenter   CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+
+  department String?
+  jobTitle   String?
+  status     EmploymentStatus @default(ACTIVE)
+  hiredAt    DateTime  @db.Date
+  endedAt    DateTime? @db.Date
+
+  payFrequency PayFrequency @default(MONTHLY)
+  /// Current gross pay per period. History lives in SalaryHistory.
+  baseSalary   Decimal      @db.Decimal(18, 4)
+
+  phone String?
+  /// National identifier. Sensitive: readable only with the salary capability.
+  nationalId String?
+
+  /// Device identifier used by the fingerprint reader, so punches can be
+  /// mapped without coupling the employee record to one vendor's numbering.
+  biometricDeviceUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  operator       Operator?
+  salaryHistory  SalaryHistory[]
+  punches        BiometricPunch[]
+  attendance     AttendanceDay[]
+  payrollLines   PayrollLine[]
+
+  @@index([entityId, status])
+  @@index([biometricDeviceUserId])
+  @@map("employees")
+}
+
+/// Append-only. A pay rise never rewrites what a past payroll was based on.
+model SalaryHistory {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  baseSalary Decimal  @db.Decimal(18, 4)
+  effectiveFrom DateTime @db.Date
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId, effectiveFrom])
+  @@map("salary_history")
+}
+
+/// Raw evidence from the device. Never edited, never deleted — a correction
+/// is made on the derived attendance day, not on the punch.
+model BiometricPunch {
+  id         String   @id @default(cuid())
+  employeeId String?
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  /// Kept even when no employee matches, so an unknown card surfaces as an
+  /// exception instead of vanishing.
+  deviceUserId String
+  deviceId     String
+  punchedAt    DateTime
+  /// Vendor payload, retained verbatim for dispute resolution.
+  rawPayload   Json?
+  importedAt   DateTime @default(now())
+
+  /// Device replays are common. The same device, badge and timestamp can only
+  /// ever be stored once, which makes re-importing a file harmless.
+  @@unique([deviceId, deviceUserId, punchedAt])
+  @@index([employeeId, punchedAt])
+  @@map("biometric_punches")
+}
+
+enum AttendanceSource {
+  BIOMETRIC
+  MANUAL
+  IMPORTED
+}
+
+/// One approved day per employee. Derived from punches but independently
+/// correctable, because a device failure must not become a pay dispute.
+model AttendanceDay {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workDate   DateTime @db.Date
+
+  firstIn  DateTime?
+  lastOut  DateTime?
+  /// Minutes actually present, after breaks.
+  workedMinutes    Decimal @default(0) @db.Decimal(18, 4)
+  /// Approved overtime only. Unapproved excess hours are visible but unpaid.
+  overtimeMinutes  Decimal @default(0) @db.Decimal(18, 4)
+  isAbsent   Boolean @default(false)
+  isLeave    Boolean @default(false)
+  leaveType  String?
+
+  source     AttendanceSource @default(BIOMETRIC)
+  /// Required whenever a day is corrected away from what the device recorded.
+  adjustmentReason String?
+  approvedByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, workDate])
+  @@index([workDate])
+  @@map("attendance_days")
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  APPROVED
+  POSTED
+}
+
+/// A payroll run for one entity and month. Posting is what creates the
+/// accrual; approval and posting are separate so preparation and release stay
+/// segregated.
+model PayrollRun {
+  id             String           @id @default(cuid())
+  runNumber      String           @unique
+  entityId       String
+  entity         Entity           @relation(fields: [entityId], references: [id])
+  fiscalPeriodId String
+  fiscalPeriod   FiscalPeriod     @relation(fields: [fiscalPeriodId], references: [id])
+  status         PayrollRunStatus @default(DRAFT)
+
+  grossPay     Decimal @default(0) @db.Decimal(18, 4)
+  deductions   Decimal @default(0) @db.Decimal(18, 4)
+  netPay       Decimal @default(0) @db.Decimal(18, 4)
+  employerCost Decimal @default(0) @db.Decimal(18, 4)
+
+  preparedByUserId String?
+  approvedByUserId String?
+  approvedAt       DateTime?
+  postedAt         DateTime?
+  /// The accrual journal, so payroll can be traced into the ledger.
+  journalEntryId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines PayrollLine[]
+
+  @@unique([entityId, fiscalPeriodId])
+  @@index([status])
+  @@map("payroll_runs")
+}
+
+model PayrollLine {
+  id           String     @id @default(cuid())
+  payrollRunId String
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee   @relation(fields: [employeeId], references: [id])
+
+  baseSalary      Decimal @db.Decimal(18, 4)
+  overtimePay     Decimal @default(0) @db.Decimal(18, 4)
+  /// Deduction for unpaid absence, computed from approved attendance.
+  absenceDeduction Decimal @default(0) @db.Decimal(18, 4)
+  otherDeductions  Decimal @default(0) @db.Decimal(18, 4)
+  grossPay        Decimal @db.Decimal(18, 4)
+  netPay          Decimal @db.Decimal(18, 4)
+  /// Social insurance and other employer-side costs, on top of gross.
+  employerCost    Decimal @default(0) @db.Decimal(18, 4)
+
+  workedMinutes   Decimal @default(0) @db.Decimal(18, 4)
+  overtimeMinutes Decimal @default(0) @db.Decimal(18, 4)
+  absentDays      Int     @default(0)
+
+  /// Which ledger account this person's pay lands in. Set from their cost
+  /// centre so factory labour reaches the conversion pool exactly once.
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId])
+  @@map("payroll_lines")
 }
 
 // ===========================================================================
