@@ -85,7 +85,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "factoryPnl", href: "/reports/factory-pnl", phase: 5, scopes: ["FACTORY", "GROUP"], icon: "chart" },
       { key: "brandPnl", href: "/reports/brand-pnl", phase: 5, scopes: ["BRAND", "GROUP"], icon: "chart" },
-      { key: "groupPnl", href: "/reports/group-pnl", phase: 5, scopes: ["GROUP"], icon: "chart" },
+      { key: "groupPnl", href: "/reports/group-pnl", phase: 5, scopes: ["GROUP"], icon: "chart" , shipped: true },
       { key: "breakEven", href: "/reports/break-even", phase: 5, scopes: ["BRAND", "GROUP"], icon: "target" },
       { key: "cashCycle", href: "/reports/cash-cycle", phase: 5, scopes: ALL_SCOPES, icon: "refresh" },
       { key: "gmroi", href: "/reports/gmroi", phase: 5, scopes: ["BRAND", "GROUP"], icon: "percent" },

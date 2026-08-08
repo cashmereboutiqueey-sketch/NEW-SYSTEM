@@ -1111,6 +1111,7 @@ model CostSnapshot {
 
   lines            CostSnapshotLine[]
   productionOrders ProductionOrder[]
+  transferredLots  InventoryLot[]
 
   @@index([styleId, createdAt])
   @@map("cost_snapshots")
@@ -1492,6 +1493,16 @@ model InventoryLot {
 
   /// Breaks same-day receipt ties so FIFO order is total and deterministic.
   sequence Int @default(autoincrement())
+
+  /// Factory profit sitting inside this lot's unit cost, set when stock is
+  /// transferred to the Brand at transfer price. Group consolidation
+  /// eliminates `remainingQty × transferMarginPerUnit`, because margin the
+  /// group charged itself is not profit until the goods are sold outside.
+  transferMarginPerUnit Decimal? @db.Decimal(18, 4)
+  /// The costing this lot's transfer price came from, so the elimination is
+  /// traceable back to its inputs.
+  sourceCostSnapshotId  String?
+  sourceCostSnapshot    CostSnapshot? @relation(fields: [sourceCostSnapshotId], references: [id], onDelete: SetNull)
 
   /// Aging clock starts here.
   receivedDate DateTime  @db.Date
