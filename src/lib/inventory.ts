@@ -307,25 +307,36 @@ export async function receiveFinishedGoods(
     locationId: string;
     entityId: string;
     quantity: string;
-    /** Frozen material cost per garment. */
+    /**
+     * Total frozen cost per garment — the authoritative figure the lot
+     * carries, taken straight from the cost snapshot.
+     */
+    unitCost: string;
+    /** The material portion of that total. Conversion is the remainder. */
     materialUnitCost: string;
-    /** Frozen conversion cost per garment: SMV × the minute rate. */
-    conversionUnitCost: string;
     receivedDate: Date;
     productionOrderId?: string | null;
   },
   ctx: AuditContext,
 ): Promise<{ lotId: string; lotNumber: string; journalEntryNumber: string }> {
   const quantity = dec(input.quantity);
+  const unitCost = dec(input.unitCost);
   const materialUnitCost = dec(input.materialUnitCost);
-  const conversionUnitCost = dec(input.conversionUnitCost);
-  const unitCost = materialUnitCost.plus(conversionUnitCost);
+  // Derived rather than passed in, so material and conversion always sum to
+  // exactly the snapshot total. Adding two separately-rounded figures can
+  // differ from the stored sum in the last digit.
+  const conversionUnitCost = unitCost.minus(materialUnitCost);
 
   if (quantity.lessThanOrEqualTo(0)) {
     throw new InventoryError("Output quantity must be greater than zero.");
   }
-  if (materialUnitCost.lessThan(0) || conversionUnitCost.lessThan(0)) {
+  if (unitCost.lessThan(0) || materialUnitCost.lessThan(0)) {
     throw new InventoryError("Unit costs cannot be negative.");
+  }
+  if (conversionUnitCost.lessThan(0)) {
+    throw new InventoryError(
+      "Material cost exceeds the total unit cost, which would make conversion negative.",
+    );
   }
 
   return db.$transaction(async (tx) => {

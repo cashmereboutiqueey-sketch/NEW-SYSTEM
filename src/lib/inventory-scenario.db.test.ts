@@ -121,8 +121,8 @@ async function runScenario() {
     {
       variantId, locationId, entityId: factoryId,
       quantity: String(GARMENTS_MADE),
+      unitCost: String(COST_PER_GARMENT),
       materialUnitCost: String(METRES_PER_GARMENT * FABRIC_COST_PER_METRE),
-      conversionUnitCost: String(CONVERSION_PER_GARMENT),
       receivedDate: day,
     },
     ctx,
