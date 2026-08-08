@@ -73,7 +73,7 @@ export const navigation: NavSection[] = [
   {
     key: "inventory",
     items: [
-      { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" },
+      { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true },
       { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ["BRAND", "GROUP"], icon: "alert" },
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" },
       { key: "sellThrough", href: "/sales/sell-through", phase: 5, scopes: ["BRAND", "GROUP"], icon: "trending" },
