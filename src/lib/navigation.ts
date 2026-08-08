@@ -75,7 +75,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true },
       { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ["BRAND", "GROUP"], icon: "alert" },
-      { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" },
+      { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true },
       { key: "sellThrough", href: "/sales/sell-through", phase: 5, scopes: ["BRAND", "GROUP"], icon: "trending" },
       { key: "markdown", href: "/sales/markdown", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag" },
     ],
