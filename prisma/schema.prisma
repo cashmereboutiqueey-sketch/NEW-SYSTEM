@@ -64,6 +64,8 @@ model User {
   acknowledgedById Alert[]    @relation("AlertAcknowledgedBy")
   journalsCreated  JournalEntry[] @relation("JournalCreatedBy")
   journalsPosted   JournalEntry[] @relation("JournalPostedBy")
+  posSessions      PosSession[]
+  salesOrders      SalesOrder[]   @relation("SalesOrderCreatedBy")
 
   @@map("users")
 }
@@ -159,6 +161,7 @@ model Entity {
   journalLines       JournalLine[]
   locations          Location[]
   inventoryLots      InventoryLot[]
+  salesOrders        SalesOrder[]
 
   @@map("entities")
 }
@@ -1431,6 +1434,8 @@ model Location {
   inventoryLots     InventoryLot[]
   movementsFrom     InventoryMovement[] @relation("MovementFrom")
   movementsTo       InventoryMovement[] @relation("MovementTo")
+  posSessions       PosSession[]
+  salesOrders       SalesOrder[]
 
   @@index([kind, isActive])
   @@map("locations")
@@ -1610,6 +1615,46 @@ enum SalesOrderStatus {
   RETURNED
 }
 
+/// Where the order came from. Every Brand sale enters the same engine, but
+/// attribution must survive: the website, a moderator's DM conversation and a
+/// showroom till are different businesses to manage even when they sell the
+/// same SKU from the same stock.
+enum OrderSource {
+  SHOPIFY
+  MODERATOR
+  POS
+  EXHIBITION
+  WHOLESALE
+  MANUAL
+}
+
+/// A cashier's shift at a till. Cash is counted in at the start and out at the
+/// end; the difference between counted and expected is a variance that must be
+/// explained rather than absorbed.
+model PosSession {
+  id         String    @id @default(cuid())
+  sessionNumber String @unique
+  locationId String
+  location   Location  @relation(fields: [locationId], references: [id])
+  cashierUserId String
+  cashier    User      @relation(fields: [cashierUserId], references: [id])
+
+  openedAt   DateTime  @default(now())
+  closedAt   DateTime?
+  openingFloat Decimal @db.Decimal(18, 4)
+  /// Counted in the drawer at close. Null until the shift is closed.
+  countedCash  Decimal? @db.Decimal(18, 4)
+  /// Opening float plus cash sales, as the system believes it.
+  expectedCash Decimal? @db.Decimal(18, 4)
+  cashVariance Decimal? @db.Decimal(18, 4)
+  varianceNote String?
+
+  orders SalesOrder[]
+
+  @@index([locationId, openedAt])
+  @@map("pos_sessions")
+}
+
 model SalesOrder {
   id          String           @id @default(cuid())
   orderNumber String           @unique
@@ -1618,6 +1663,25 @@ model SalesOrder {
   customerId  String?
   customer    Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
   status      SalesOrderStatus @default(PENDING)
+
+  source OrderSource @default(MANUAL)
+
+  /// Which entity's books the sale belongs to. Brand for retail; the factory
+  /// uses this for external CMT invoicing.
+  entityId String?
+  entity   Entity? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+
+  /// Who entered it — the moderator or the cashier. Null for machine imports.
+  createdByUserId String?
+  createdBy       User?   @relation("SalesOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  /// Where stock is relieved from. Online orders normally ship from the
+  /// Alexandria warehouse; POS sells from the till's own location.
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  posSessionId String?
+  posSession   PosSession? @relation(fields: [posSessionId], references: [id], onDelete: SetNull)
 
   orderDate     DateTime  @db.Date
   shippedDate   DateTime? @db.Date
@@ -1630,19 +1694,66 @@ model SalesOrder {
   netAmount      Decimal @db.Decimal(18, 4)
   shippingAmount Decimal @default(0) @db.Decimal(18, 4)
   paymentFee     Decimal @default(0) @db.Decimal(18, 4)
+  /// FIFO cost of everything relieved for this order.
+  cogsAmount     Decimal @default(0) @db.Decimal(18, 4)
 
+  /// The external system's own id. Unique per source so re-importing the same
+  /// Shopify order can never create a duplicate.
+  externalId     String?
   shopifyOrderId String?  @unique
+
   city           String?
   notes          String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  lines   SalesOrderLine[]
-  returns Return[]
+  lines    SalesOrderLine[]
+  returns  Return[]
+  payments SalesPayment[]
 
+  @@unique([source, externalId])
   @@index([channelId, orderDate])
   @@index([status])
+  @@index([source, orderDate])
+  @@index([createdByUserId])
   @@map("sales_orders")
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  COD
+  BANK_TRANSFER
+  WALLET
+  STORE_CREDIT
+}
+
+enum PaymentStatus {
+  PENDING
+  COLLECTED
+  FAILED
+  REFUNDED
+}
+
+/// Money against an order. Separate from the order because one sale can be
+/// split across methods, and because a cash-on-delivery order is not cash
+/// until the courier actually hands it over.
+model SalesPayment {
+  id           String        @id @default(cuid())
+  salesOrderId String
+  salesOrder   SalesOrder    @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  method       PaymentMethod
+  status       PaymentStatus @default(PENDING)
+  amount       Decimal       @db.Decimal(18, 4)
+  /// Processor or courier fee on this payment.
+  fee          Decimal       @default(0) @db.Decimal(18, 4)
+  reference    String?
+  collectedAt  DateTime?
+  createdAt    DateTime      @default(now())
+
+  @@index([salesOrderId])
+  @@index([status, method])
+  @@map("sales_payments")
 }
 
 /// `discountPct` on the line is what drives markdown analysis — the split
