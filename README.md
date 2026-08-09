@@ -216,8 +216,8 @@ Working end to end, with tests and verified in the browser:
 | **Style costing** | BOM at landed cost, SMV at the frozen rate, margin, transfer price, immutable cost snapshots. | `/costing` |
 | **Inventory** | FIFO by lot across raw / WIP / finished goods, locations, ageing, dead stock, capital tracker. | `/inventory` |
 | **Production** | Raise, confirm, issue against and close a run. Confirming freezes the cost basis; output is booked as a size curve, one lot per SKU. Planned vs actual fabric, minutes and waste. | `/production` |
-| **Sales** | One engine for Shopify, moderator and POS, with till sessions, split payments and COD clearing. | `/sales` |
-| **Group** | Factory→Brand transfer invoicing at the frozen snapshot price, intercompany elimination, unrealised profit in unsold stock. | `/transfers`, `/reports/group-pnl` |
+| **Sales** | One engine for Shopify, moderator and POS, with till sessions, split payments and COD clearing. Orders taken by message are entered on the sales screen; the website arrives by webhook. | `/sales`, `/pos` |
+| **Group** | Factory despatches, the shop counts the delivery in and tags it, and only then is the internal invoice raised — for what actually arrived. Anything short is the factory's abnormal loss. Intercompany elimination and unrealised profit in unsold stock follow from it. | `/transfers`, `/goods-in`, `/reports/group-pnl` |
 | **Statements** | Factory and Brand P&L with the trial balance beside them, AP aging by due date. | `/reports/entity-pnl` |
 | **CRM** | RFM, lifetime value from real orders, duplicate detection with human confirmation, consent. | `/customers` |
 | **HR** | Biometric import, derived attendance, payroll accrual reaching the cost pool exactly once. | `/hr` |
@@ -234,6 +234,25 @@ sell it — and reports anything that does not add up. It also checks that every
 step of that cycle has a screen with buttons on it, because the first version
 of this script passed while the production screen was read-only: it was calling
 the services directly, which no user can do.
+
+### Stock crossing between the two companies
+
+The Factory and the Brand are separate companies, so stock crosses between
+them by invoice. It happens in two steps, for the same reason a courier makes
+you sign for a parcel:
+
+- **Despatch** (`/transfers`) — the goods leave the factory warehouse and sit
+  in transit. They are still the factory's, and nothing is invoiced. Sending
+  is not selling.
+- **Goods in** (`/goods-in`) — the shop counts what arrived and tags it. The
+  internal invoice is raised then, for the counted quantity, and the garments
+  become sellable.
+
+Two consequences, both deliberate. A delivery that arrives short is invoiced
+short: the missing garments are charged to the factory as abnormal loss
+(account 5400), because the goods were in its hands until they arrived. And
+nothing reaches a shelf untagged — a garment with no barcode is one the till
+cannot ring up and a stocktake cannot count.
 
 ### Business decisions
 

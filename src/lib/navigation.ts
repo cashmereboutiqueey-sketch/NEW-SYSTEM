@@ -70,7 +70,7 @@ export const navigation: NavSection[] = [
       { key: "collectionPerformance", href: "/styles", phase: 2, scopes: ALL_SCOPES, icon: "shirt" , shipped: true },
       { key: "transferPrice", href: "/costing", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "calculator" , shipped: true },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
-      { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ALL_SCOPES, icon: "truck", shipped: true },
+      { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true },
       { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" },
       { key: "scrap", href: "/production/scrap", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors" },
     ],
@@ -78,6 +78,7 @@ export const navigation: NavSection[] = [
   {
     key: "inventory",
     items: [
+      { key: "goodsIn", href: "/goods-in", phase: 4, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true },
       { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true },
       { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ["BRAND", "GROUP"], icon: "alert" },
       { key: "pos", href: "/pos", phase: 6, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true },

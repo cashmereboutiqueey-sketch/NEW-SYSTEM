@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { transferToBrand, IntercompanyError } from "@/lib/intercompany";
+import { despatchToBrand, IntercompanyError } from "@/lib/intercompany";
 import { LedgerError } from "@/lib/ledger";
 import type { FormState } from "@/components/entity-form";
 
@@ -11,17 +11,17 @@ function toMessage(error: unknown): string {
     return error.message;
   }
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
-  console.error("Unhandled transfer error:", error);
+  console.error("Unhandled despatch error:", error);
   return "Something went wrong. Nothing was saved.";
 }
 
-export async function transferToBrandAction(
+export async function despatchToBrandAction(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
   try {
-    // Moving goods between the two companies changes both sets of books, so it
-    // needs the stock-movement right, not merely the right to look at stock.
+    // Moving goods out of the warehouse needs the stock-movement right, not
+    // merely the right to look at stock.
     const session = await authorize("inventory:transfer");
 
     const costSnapshotId = String(formData.get("costSnapshotId") ?? "");
@@ -32,28 +32,26 @@ export async function transferToBrandAction(
       };
     }
 
-    const result = await transferToBrand(
+    const result = await despatchToBrand(
       {
         variantId: String(formData.get("variantId") ?? ""),
         quantity: String(formData.get("quantity") ?? ""),
         fromLocationId: String(formData.get("fromLocationId") ?? ""),
-        toLocationId: String(formData.get("toLocationId") ?? ""),
-        transferDate: new Date(String(formData.get("transferDate") ?? "")),
+        despatchDate: new Date(String(formData.get("despatchDate") ?? "")),
         costSnapshotId,
+        notes: (formData.get("notes") as string) || null,
       },
       { userId: session.userId },
     );
 
     revalidatePath("/transfers");
+    revalidatePath("/goods-in");
     revalidatePath("/inventory");
-    revalidatePath("/pos");
 
-    const margin = Number(result.marginPerUnit);
     return {
       success:
-        `Invoiced as ${result.transferNumber}. The goods are now the Brand's, at ` +
-        `${Number(result.transferPrice).toFixed(2)} — ${margin.toFixed(2)} per garment of ` +
-        `that is internal margin, and stays out of the group's profit until it sells.`,
+        `Sent on ${result.despatchNumber}. Nothing is invoiced yet — the shop counts ` +
+        `it in on the goods-in screen, and the invoice is raised for what actually arrives.`,
     };
   } catch (error) {
     return { error: toMessage(error) };

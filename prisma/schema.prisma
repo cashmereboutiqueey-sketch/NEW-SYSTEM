@@ -1521,6 +1521,11 @@ model InventoryLot {
   isDeadStock  Boolean   @default(false)
   deadStockFlaggedAt DateTime?
 
+  /// When the shop tagged this batch. Nothing reaches a shelf untagged: a
+  /// garment without a readable barcode is a garment the till cannot ring up
+  /// and stocktake cannot count, so intake stamps this as it happens.
+  labelsPrintedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

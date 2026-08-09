@@ -2,44 +2,42 @@ import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
 import { can } from "@/core/permissions";
-import { awaitingTransfer, recentTransfers } from "@/lib/intercompany";
+import { awaitingDespatch, awaitingIntake, recentTransfers } from "@/lib/intercompany";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, dec } from "@/lib/money";
-import { TransferForm } from "./transfer-form";
+import { DespatchForm } from "./transfer-form";
 
 /**
- * التحويل للبراند — the handover from the Factory to the Brand.
+ * الشحن للبراند — the factory's side of the handover.
  *
  * This is the step people forget, and forgetting it is not a small mistake: a
  * garment sitting in the factory warehouse belongs to the factory, so it will
- * never appear at a till no matter how many were made. The two companies are
- * genuinely separate, and stock crosses between them by invoice, not by being
- * carried across the yard.
+ * never appear at a till no matter how many were made.
+ *
+ * Sending is not selling. The goods stay the factory's while they are on the
+ * road; the invoice is raised when the shop counts them in, for what the shop
+ * actually found. So this screen has no journal behind it — only a note the
+ * shop will count against.
  */
 export default async function TransfersPage() {
   const session = await requireUser();
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const mayTransfer = can(session.role, "inventory:transfer");
+  const mayDespatch = can(session.role, "inventory:transfer");
   const maySeePrice = can(session.role, "transfer_price:view");
 
-  const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
-
-  const [pending, history, destinations] = await Promise.all([
-    awaitingTransfer(),
+  const [pending, inTransit, history] = await Promise.all([
+    awaitingDespatch(),
+    awaitingIntake(),
     recentTransfers(),
-    db.location.findMany({
-      where: { isActive: true, entityId: brand.id },
-      orderBy: { sortOrder: "asc" },
-    }),
   ]);
 
-  const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
   const today = new Date().toISOString().slice(0, 10);
 
   const waitingUnits = pending.reduce((s, r) => s.plus(dec(r.quantity)), dec(0));
   const waitingCost = pending.reduce((s, r) => s.plus(dec(r.factoryCost)), dec(0));
+  const transitUnits = inTransit.reduce((s, r) => s.plus(dec(r.expectedQty)), dec(0));
 
   // Margin the group has invoiced itself but not yet earned from an outsider.
   const unrealised = history.reduce(
@@ -53,20 +51,26 @@ export default async function TransfersPage() {
   return (
     <>
       <PageHeader
-        title={ar ? "التحويل للبراند" : "Transfer to Brand"}
+        title={ar ? "الشحن للبراند" : "Despatch to the Brand"}
         subtitle={
           ar
-            ? "البضاعة المصنّعة تفضل ملك المصنع لحد ما تتفوتر للبراند — قبل كده مش هتظهر في نقطة البيع"
-            : "Finished garments stay the Factory's until they are invoiced to the Brand — until then they cannot reach a till"
+            ? "الشحن مش بيع — البضاعة تفضل ملك المصنع لحد ما المعرض يعدّها ويستلمها، والفاتورة تتعمل على اللي وصل فعلًا"
+            : "Sending is not selling — the goods stay the Factory's until the shop counts them in, and the invoice is raised for what actually arrived"
         }
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid gap-3 sm:grid-cols-4">
         <StatTile
-          label={ar ? "قطع في المصنع" : "Units at the factory"}
+          label={ar ? "جاهزة للشحن" : "Ready to send"}
           value={formatNumber(waitingUnits, locale)}
           tone={waitingUnits.greaterThan(0) ? "warn" : "neutral"}
-          hint={ar ? "مش قابلة للبيع دلوقتي" : "Not sellable yet"}
+          hint={ar ? "لسه في المصنع" : "Still at the factory"}
+        />
+        <StatTile
+          label={ar ? "في الطريق" : "On the road"}
+          value={formatNumber(transitUnits, locale)}
+          tone={transitUnits.greaterThan(0) ? "info" : "neutral"}
+          hint={ar ? "مستنية استلام المعرض" : "Waiting to be counted in"}
         />
         <StatTile
           label={ar ? "بتكلفة المصنع" : "At factory cost"}
@@ -82,10 +86,10 @@ export default async function TransfersPage() {
         )}
       </div>
 
-      {/* ------------------------------------------------- awaiting transfer */}
+      {/* -------------------------------------------------- ready to despatch */}
       <Card
         className="mb-4"
-        title={ar ? "في انتظار التحويل" : "Awaiting transfer"}
+        title={ar ? "جاهزة للشحن" : "Ready to send"}
         description={
           ar
             ? "السعر جاي من التكلفة المجمّدة قبل ما التشغيلة تبدأ، فمش قابل للتعديل هنا"
@@ -95,7 +99,7 @@ export default async function TransfersPage() {
         {pending.length === 0 ? (
           <p className="py-8 text-center text-sm text-ink-400">
             {ar
-              ? "مفيش بضاعة تامّة في المصنع مستنية تحويل."
+              ? "مفيش بضاعة تامّة في المصنع مستنية شحن."
               : "No finished goods are waiting at the factory."}
           </p>
         ) : (
@@ -131,16 +135,15 @@ export default async function TransfersPage() {
                       ? "التشغيلة دي اتعملت من غير تكلفة مجمّدة، فمفيش سعر تحويل تتفوتر بيه. اعمل لقطة تكلفة للموديل الأول."
                       : "This run was made without a frozen cost, so there is no price to invoice at. Take a cost snapshot for the style first."}
                   </p>
-                ) : !mayTransfer ? (
+                ) : !mayDespatch ? (
                   <p className="text-sm text-ink-400">
                     <span className="num">{r.quantity}</span>{" "}
-                    {ar ? "قطعة — مش من صلاحياتك تحوّلها." : "units — transferring is not yours to do."}
+                    {ar ? "قطعة — مش من صلاحياتك تشحنها." : "units — despatching is not yours to do."}
                   </p>
                 ) : (
-                  <TransferForm
+                  <DespatchForm
                     locale={locale}
                     today={today}
-                    destinations={destinations.map((d) => ({ id: d.id, label: name(d) }))}
                     row={{
                       variantId: r.variantId,
                       sku: r.sku,
@@ -160,6 +163,61 @@ export default async function TransfersPage() {
           </ul>
         )}
       </Card>
+
+      {/* ------------------------------------------------------ on the road */}
+      {inTransit.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "في الطريق" : "On the road"}
+          description={
+            ar
+              ? "اتشحنت ولسه المعرض ماستلمهاش. لحد دلوقتي هي ملك المصنع ومفيش فاتورة اتعملت."
+              : "Sent, not yet counted in. Until then they are the Factory's and nothing has been invoiced."
+          }
+        >
+          <DataTable
+            headers={[
+              ar ? "إذن الشحن" : "Note",
+              ar ? "التاريخ" : "Date",
+              "SKU",
+              ar ? "الصنف" : "Item",
+              ar ? "المُرسَل" : "Sent",
+            ]}
+            rows={inTransit.map((r, i) => [
+              <code key={`${i}-n`} dir="ltr" className="text-xs text-ink-500">
+                {r.despatchNumber}
+              </code>,
+              <span key={`${i}-d`} className="num" dir="ltr">
+                {r.despatchedOn.toISOString().slice(0, 10)}
+              </span>,
+              <code key={`${i}-s`} dir="ltr" className="text-xs text-ink-500">{r.sku}</code>,
+              <span key={`${i}-i`}>
+                {ar ? r.styleAr : r.styleEn} · {ar ? r.colourAr : r.colourEn} · {r.size}
+              </span>,
+              <span key={`${i}-q`} className="num">{formatNumber(dec(r.expectedQty), locale)}</span>,
+            ])}
+          />
+          <p className="mt-3 text-xs text-ink-500">
+            {ar ? (
+              <>
+                الاستلام بيتم من{" "}
+                <a href="/goods-in" className="underline decoration-ink-300 underline-offset-2">
+                  الوارد من المصنع
+                </a>
+                .
+              </>
+            ) : (
+              <>
+                Counted in from{" "}
+                <a href="/goods-in" className="underline decoration-ink-300 underline-offset-2">
+                  Goods in
+                </a>
+                .
+              </>
+            )}
+          </p>
+        </Card>
+      )}
 
       {/* ------------------------------------------------------- what moved */}
       <Card title={ar ? "التحويلات السابقة" : "Past transfers"}>

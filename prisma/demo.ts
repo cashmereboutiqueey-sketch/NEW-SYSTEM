@@ -22,7 +22,7 @@ import { receiveMaterial } from "../src/lib/inventory";
 import {
   createProductionOrder, confirmProductionOrder, issueForOrder, completeProductionOrder,
 } from "../src/lib/production";
-import { transferToBrand } from "../src/lib/intercompany";
+import { despatchToBrand, receiveAtBrand } from "../src/lib/intercompany";
 import { createSale, openPosSession, closePosSession } from "../src/lib/sales";
 import { upsertCustomerContact } from "../src/lib/crm";
 import {
@@ -185,22 +185,55 @@ async function main() {
   const shipped = outputs.filter((o) => o.goodQty > 0).slice(0, 4);
   let transferNumber = "";
   let marginPerUnit = "0";
-  for (const out of shipped) {
-    const transfer = await transferToBrand(
+  let shortfall = 0;
+
+  for (const [i, out] of shipped.entries()) {
+    const sent = await despatchToBrand(
       {
         variantId: out.variantId, quantity: String(out.goodQty),
-        fromLocationId: facLoc.id, toLocationId: alxLoc.id,
-        transferDate: on(15), costSnapshotId: snapshot.costSnapshotId,
+        fromLocationId: facLoc.id, despatchDate: on(15),
+        costSnapshotId: snapshot.costSnapshotId,
       },
       asOwner,
     );
-    transferNumber = transfer.transferNumber;
-    marginPerUnit = transfer.marginPerUnit;
+
+    // The last box arrives three light. Deliveries do that, and the books
+    // should show it rather than quietly agreeing with the note.
+    const short = i === shipped.length - 1 ? 3 : 0;
+    const received = await receiveAtBrand(
+      {
+        despatchNumber: sent.despatchNumber, variantId: out.variantId,
+        countedQty: String(out.goodQty - short),
+        toLocationId: alxLoc.id, receivedDate: on(16), labelsPrinted: true,
+        shortfallNote: short > 0 ? "الكرتونة وصلت مفتوحة" : null,
+      },
+      asOwner,
+    );
+    transferNumber = received.transferNumber;
+    marginPerUnit = received.marginPerUnit;
+    shortfall += short;
   }
-  const held = outputs.slice(4).reduce((s, o) => s + o.goodQty, 0);
+
+  // One SKU is left in transit so the goods-in screen has something waiting.
+  const onTheRoad = outputs[4];
+  if (onTheRoad && onTheRoad.goodQty > 0) {
+    await despatchToBrand(
+      {
+        variantId: onTheRoad.variantId, quantity: String(onTheRoad.goodQty),
+        fromLocationId: facLoc.id, despatchDate: on(17),
+        costSnapshotId: snapshot.costSnapshotId,
+      },
+      asOwner,
+    );
+  }
+
+  const held = outputs.slice(5).reduce((s, o) => s + o.goodQty, 0);
   console.log(
     `  transfer: ${shipped.length} invoices to ${transferNumber} — ` +
-      `margin ${Number(marginPerUnit).toFixed(2)}/unit, ${held} left at the factory`,
+      `margin ${Number(marginPerUnit).toFixed(2)}/unit, ${shortfall} lost on the road`,
+  );
+  console.log(
+    `  in transit: ${onTheRoad?.goodQty ?? 0} awaiting intake, ${held} still at the factory`,
   );
 
   // -------------------------------------------------------------- customers

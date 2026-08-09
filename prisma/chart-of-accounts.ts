@@ -217,6 +217,13 @@ export const LOCATIONS = [
     kind: "FACTORY_WAREHOUSE" as const, entityKind: "FACTORY" as const, city: "Alexandria",
   },
   {
+    // Goods despatched but not yet counted in by the shop. They stay the
+    // factory's while they are on the road, which is what makes a shortfall
+    // the factory's loss rather than a mystery in the brand's books.
+    code: "LOC-TRANSIT", nameEn: "In transit to the Brand", nameAr: "في الطريق للبراند",
+    kind: "TRANSIT" as const, entityKind: "FACTORY" as const, city: null,
+  },
+  {
     code: "LOC-ALX", nameEn: "Alexandria showroom and warehouse", nameAr: "معرض ومخزن الإسكندرية",
     kind: "SHOWROOM" as const, entityKind: "BRAND" as const, city: "Alexandria",
   },

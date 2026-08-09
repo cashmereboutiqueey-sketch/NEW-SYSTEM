@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { transferToBrandAction } from "./actions";
+import { despatchToBrandAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
 import type { Locale } from "@/lib/i18n";
 
@@ -11,7 +11,7 @@ const field =
   "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
-export type TransferRow = {
+export type DespatchRow = {
   variantId: string;
   sku: string;
   name: string;
@@ -25,24 +25,22 @@ export type TransferRow = {
 };
 
 /**
- * One row, one movement.
+ * One row, one despatch.
  *
  * The quantity defaults to everything available, because sending part of a run
  * is the exception. The price is shown but never editable — it comes from the
  * snapshot frozen before the run started.
  */
-export function TransferForm({
+export function DespatchForm({
   locale,
   row,
-  destinations,
   today,
 }: {
   locale: Locale;
-  row: TransferRow;
-  destinations: { id: string; label: string }[];
+  row: DespatchRow;
   today: string;
 }) {
-  const [state, formAction, pending] = useActionState(transferToBrandAction, initial);
+  const [state, formAction, pending] = useActionState(despatchToBrandAction, initial);
   const [quantity, setQuantity] = useState(row.quantity);
   const ar = locale === "ar";
 
@@ -53,7 +51,7 @@ export function TransferForm({
 
   const tooMany = qty > available;
   // A transfer price at or above retail means the Brand cannot sell it at a
-  // profit. Worth saying before the invoice exists, not after.
+  // profit. Worth saying before the goods leave, not after.
   const squeezed = retail != null && price >= retail;
 
   return (
@@ -86,28 +84,12 @@ export function TransferForm({
         </div>
 
         <div>
-          <label className={label} htmlFor={`to-${row.variantId}`}>
-            {ar ? "إلى" : "To"}
-          </label>
-          <select
-            id={`to-${row.variantId}`}
-            name="toLocationId"
-            required
-            className={`${field} min-w-44`}
-          >
-            {destinations.map((d) => (
-              <option key={d.id} value={d.id}>{d.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
           <label className={label} htmlFor={`date-${row.variantId}`}>
-            {ar ? "التاريخ" : "Date"}
+            {ar ? "تاريخ الشحن" : "Despatch date"}
           </label>
           <input
             id={`date-${row.variantId}`}
-            name="transferDate"
+            name="despatchDate"
             type="date"
             required
             defaultValue={today}
@@ -116,8 +98,21 @@ export function TransferForm({
           />
         </div>
 
+        <div>
+          <label className={label} htmlFor={`note-${row.variantId}`}>
+            {ar ? "ملاحظة" : "Note"}
+          </label>
+          <input
+            id={`note-${row.variantId}`}
+            name="notes"
+            type="text"
+            placeholder={ar ? "اسم السواق مثلًا" : "driver, van, anything"}
+            className={`${field} w-44`}
+          />
+        </div>
+
         <div className="ms-auto text-end">
-          <p className="text-xs text-ink-500">{ar ? "قيمة الفاتورة" : "Invoice value"}</p>
+          <p className="text-xs text-ink-500">{ar ? "قيمتها عند الاستلام" : "Value on arrival"}</p>
           <p className="num text-lg font-semibold">{(qty * price).toFixed(2)}</p>
         </div>
 
@@ -127,8 +122,8 @@ export function TransferForm({
           className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
           {pending
-            ? ar ? "جارٍ التحويل…" : "Transferring…"
-            : ar ? "حوّل للبراند" : "Transfer to Brand"}
+            ? ar ? "جارٍ الشحن…" : "Sending…"
+            : ar ? "اشحن للبراند" : "Send to the Brand"}
         </button>
       </div>
 

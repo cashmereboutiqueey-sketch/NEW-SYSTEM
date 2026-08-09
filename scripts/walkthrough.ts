@@ -17,7 +17,9 @@ import {
 } from "../src/lib/production";
 import { sellableStock, openTillFor } from "../src/lib/pos";
 import { openPosSession, createSale, closePosSession } from "../src/lib/sales";
-import { transferToBrand, awaitingTransfer, recentTransfers } from "../src/lib/intercompany";
+import {
+  despatchToBrand, receiveAtBrand, awaitingDespatch, awaitingIntake, recentTransfers,
+} from "../src/lib/intercompany";
 
 import { existsSync } from "node:fs";
 
@@ -41,7 +43,9 @@ for (const [route, why] of [
   ["minute-rate", "calculate the minute rate"],
   ["costing", "freeze a cost"],
   ["production", "raise, confirm, issue and close a run"],
-  ["transfers", "invoice the goods to the brand"],
+  ["transfers", "send the goods to the brand"],
+  ["goods-in", "count them in and tag them"],
+  ["sales", "record an order taken by message"],
   ["pos", "sell at the till"],
 ] as const) {
   const dir = `src/app/(app)/${route}`;
@@ -222,8 +226,8 @@ if (!found) {
   if (Number(stuck._sum.remainingQty ?? 0) !== 116) gap("the till's explanation would show the wrong count");
   else ok("the till explains it: 116 waiting at the factory, with a link to /transfers");
 
-  step("8b. Transfer factory → brand  →  /transfers");
-  const queue = await awaitingTransfer();
+  step("8b. Factory sends it  →  /transfers");
+  const queue = await awaitingDespatch();
   if (queue.length !== 6) gap(`screen lists ${queue.length} rows, expected one per SKU`);
   else ok(`screen lists all 6 SKUs, ${queue.reduce((s, q) => s + Number(q.quantity), 0)} garments`);
 
@@ -237,17 +241,61 @@ if (!found) {
 
   // One click per row, which is what the screen actually offers.
   for (const row of queue) {
-    await transferToBrand({
+    await despatchToBrand({
       variantId: row.variantId, quantity: row.quantity,
-      fromLocationId: row.locationId, toLocationId: alxLoc.id,
-      transferDate: on(21), costSnapshotId: row.costSnapshotId!,
+      fromLocationId: row.locationId, despatchDate: on(21),
+      costSnapshotId: row.costSnapshotId!,
     }, ctx);
   }
-  ok(`6 internal invoices raised, margin ${Number(queue[0].marginPerUnit).toFixed(2)}/unit`);
+  ok("6 despatch notes raised — no invoice yet, the goods are still the factory's");
 
-  const left = await awaitingTransfer();
-  if (left.length > 0) gap(`${left.length} row(s) still queued after transferring`);
-  else ok("the queue empties once everything is invoiced");
+  if ((await awaitingDespatch()).length > 0) gap("rows still queued at the factory after sending");
+  else ok("the factory queue empties");
+
+  const stillNotSellable = await sellableStock(alxLoc.id, brand.id);
+  if (stillNotSellable.length > 0) {
+    gap("goods in transit are sellable at the till — they should not be");
+  } else ok("in transit is not sellable: the shop has not counted it yet");
+
+  step("8c. Shop counts it in and tags it  →  /goods-in");
+  const arriving = await awaitingIntake();
+  if (arriving.length !== 6) gap(`goods-in lists ${arriving.length} rows, expected 6`);
+  else ok(`goods-in lists 6 deliveries, ${arriving.reduce((s, r) => s + Number(r.expectedQty), 0)} garments expected`);
+
+  // Nothing reaches the floor untagged.
+  const untagged = await receiveAtBrand({
+    despatchNumber: arriving[0].despatchNumber, variantId: arriving[0].variantId,
+    countedQty: arriving[0].expectedQty, toLocationId: alxLoc.id,
+    receivedDate: on(22), labelsPrinted: false,
+  }, ctx).then(() => "accepted").catch(() => "refused");
+  if (untagged !== "refused") gap("an untagged batch was allowed onto the floor");
+  else ok("an untagged batch is refused");
+
+  // One box arrives two garments light. The factory wears it.
+  let short = 0;
+  for (const [i, r] of arriving.entries()) {
+    const counted = i === 0 ? String(Number(r.expectedQty) - 2) : r.expectedQty;
+    if (i === 0) short = 2;
+    const got = await receiveAtBrand({
+      despatchNumber: r.despatchNumber, variantId: r.variantId,
+      countedQty: counted, toLocationId: alxLoc.id,
+      receivedDate: on(22), labelsPrinted: true,
+      shortfallNote: i === 0 ? "اتكسر الكرتونة في الطريق" : null,
+    }, ctx);
+    if (i === 0 && got.shortfallQty !== "2") gap(`shortfall recorded as ${got.shortfallQty}, expected 2`);
+  }
+  ok(`6 invoices raised for what actually arrived — ${short} garments short on one box`);
+
+  const overCounted = await receiveAtBrand({
+    despatchNumber: arriving[0].despatchNumber, variantId: arriving[0].variantId,
+    countedQty: "999", toLocationId: alxLoc.id,
+    receivedDate: on(22), labelsPrinted: true,
+  }, ctx).then(() => "accepted").catch(() => "refused");
+  if (overCounted !== "refused") gap("more arrived than was ever sent");
+  else ok("counting in more than was sent is refused");
+
+  if ((await awaitingIntake()).length > 0) gap("deliveries still listed after being received");
+  else ok("goods-in empties once everything is counted");
 
   onShelf = await sellableStock(alxLoc.id, brand.id);
 }
@@ -256,9 +304,10 @@ const sellable = onShelf.find((p) => p.styleCode === "SAMIA");
 if (!sellable) gap("still not sellable after the transfer");
 else {
   const total = onShelf.reduce((s, p) => s + Number(p.available), 0);
-  if (onShelf.length !== 6 || total !== 116) {
-    gap(`the till shows ${onShelf.length} SKUs totalling ${total}, expected 6 and 116`);
-  } else ok("all 6 SKUs on the shelf, 116 garments");
+  // 116 made, 2 lost on the road.
+  if (onShelf.length !== 6 || total !== 114) {
+    gap(`the till shows ${onShelf.length} SKUs totalling ${total}, expected 6 and 114`);
+  } else ok("all 6 SKUs on the shelf, 114 garments — the 2 lost never arrived");
   ok(`${sellable.sku} — ${sellable.available} available at the till`);
   if (!sellable.retailPrice) {
     gap("no price on the till button — the cashier must type it every time");

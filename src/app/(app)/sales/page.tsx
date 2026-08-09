@@ -1,10 +1,13 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
+import { sellableStock } from "@/lib/pos";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { dec, safeDiv } from "@/lib/money";
+import { ModeratorOrderForm } from "./moderator-form";
 
 /**
  * Brand sales.
@@ -18,11 +21,14 @@ import { dec, safeDiv } from "@/lib/money";
  * the P&L, not on this screen.
  */
 export default async function SalesPage() {
-  await requireUser();
+  const session = await requireUser();
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const [orders, sessions] = await Promise.all([
+  const mayOrder = can(session.role, "sales_order:create");
+  const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+
+  const [orders, sessions, customers, channels, brandLocations] = await Promise.all([
     db.salesOrder.findMany({
       include: {
         customer: true,
@@ -39,7 +45,42 @@ export default async function SalesPage() {
       orderBy: { openedAt: "desc" },
       take: 10,
     }),
+    db.customer.findMany({
+      where: { isSuppressed: false, mergedIntoId: null },
+      orderBy: { name: "asc" },
+      take: 500,
+    }),
+    db.salesChannel.findMany({ where: { isActive: true }, orderBy: { nameEn: "asc" } }),
+    db.location.findMany({
+      where: { isActive: true, entityId: brand.id },
+      orderBy: { sortOrder: "asc" },
+    }),
   ]);
+
+  // Only what the brand actually holds, so an order cannot promise a garment
+  // that is still at the factory or still on the road.
+  const stockByLocation = await Promise.all(
+    brandLocations.map((l) => sellableStock(l.id, brand.id)),
+  );
+  const sellable = new Map<
+    string,
+    { variantId: string; sku: string; label: string; available: number; retailPrice: number }
+  >();
+  for (const shelf of stockByLocation) {
+    for (const p of shelf) {
+      const existing = sellable.get(p.variantId);
+      const available = Number(p.available);
+      if (existing) existing.available += available;
+      else
+        sellable.set(p.variantId, {
+          variantId: p.variantId,
+          sku: p.sku,
+          label: `${ar ? p.styleAr : p.styleEn} · ${ar ? p.colourAr : p.colourEn} · ${p.size}`,
+          available,
+          retailPrice: Number(p.retailPrice ?? 0),
+        });
+    }
+  }
 
   const revenue = orders.reduce((s, o) => s.plus(dec(o.netAmount)), dec(0));
   const cogs = orders.reduce((s, o) => s.plus(dec(o.cogsAmount)), dec(0));
@@ -131,6 +172,37 @@ export default async function SalesPage() {
             : "Every order in one engine, with its source and who entered it preserved"
         }
       />
+
+      {mayOrder && (
+        <Card
+          className="mb-4"
+          title={ar ? "أوردر مودريتور" : "Moderator order"}
+          description={
+            ar
+              ? "الأوردر اللي جه على واتساب أو إنستجرام — نفس المحرك اللي بيشتغل بيه الكاشير والموقع"
+              : "An order that came in by message — the same engine the till and the website use"
+          }
+        >
+          {sellable.size === 0 || channels.length === 0 || brandLocations.length === 0 ? (
+            <p className="py-4 text-sm text-ink-500">
+              {ar
+                ? "مفيش مخزون عند البراند دلوقتي. استلم بضاعة من المصنع الأول من صفحة الوارد."
+                : "The Brand holds no stock yet. Receive a delivery from the factory first."}
+            </p>
+          ) : (
+            <ModeratorOrderForm
+              locale={locale}
+              entityId={brand.id}
+              today={new Date().toISOString().slice(0, 10)}
+              canDiscount={can(session.role, "sales_order:discount")}
+              products={[...sellable.values()].sort((a, b) => a.sku.localeCompare(b.sku))}
+              customers={customers.map((c) => ({ id: c.id, name: c.name, phone: c.phone }))}
+              channels={channels.map((c) => ({ id: c.id, label: ar ? c.nameAr : c.nameEn }))}
+              locations={brandLocations.map((l) => ({ id: l.id, label: ar ? l.nameAr : l.nameEn }))}
+            />
+          )}
+        </Card>
+      )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
