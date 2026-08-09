@@ -164,6 +164,7 @@ model Entity {
   salesOrders        SalesOrder[]
   employees          Employee[]
   payrollRuns        PayrollRun[]
+  garmentUnits GarmentUnit[]
 
   @@map("entities")
 }
@@ -1077,6 +1078,7 @@ model Variant {
   inventoryLots        InventoryLot[]
   returns              Return[]
   journalLines         JournalLine[]
+  garmentUnits         GarmentUnit[]
 
   @@unique([styleId, colorCodeId, sizeCodeId])
   @@index([sku])
@@ -1223,6 +1225,7 @@ model ProductionOrder {
   scrapRecords     ScrapRecord[]
   capacityBookings CapacityBooking[]
   inventoryLots    InventoryLot[]
+  garmentUnits    GarmentUnit[]
 
   @@index([status, orderDate])
   @@index([styleId])
@@ -1449,6 +1452,7 @@ model Location {
   movementsTo       InventoryMovement[] @relation("MovementTo")
   posSessions       PosSession[]
   salesOrders       SalesOrder[]
+  garmentUnits      GarmentUnit[]
 
   @@index([kind, isActive])
   @@map("locations")
@@ -1473,6 +1477,74 @@ enum MovementType {
 
 /// FIFO lot. Raw lots come from goods receipts; finished-goods lots come from
 /// production output and carry the frozen transfer price as their unit cost.
+/// What state a single garment is in. Distinct from its lot's state, because a
+/// lot is a costing bucket and this is a physical object somebody can hold.
+enum GarmentUnitStatus {
+  /// Made, tagged, sitting at the factory.
+  MADE
+  /// Despatched to the Brand, not yet counted in.
+  IN_TRANSIT
+  /// On the Brand's floor and sellable.
+  IN_STOCK
+  SOLD
+  /// Despatched and never arrived.
+  LOST
+  RETURNED
+}
+
+/// One physical garment.
+///
+/// Every piece carries its own code on its tag, so two black mediums off the
+/// same run are told apart. That is what makes "which one was sold", "which
+/// one came back" and "which three never arrived" answerable at all — none of
+/// them are, when a whole size shares one barcode.
+///
+/// This sits alongside the lot rather than replacing it. Lots carry cost and
+/// drive FIFO; units carry identity. Keeping them apart means the accounting
+/// is unchanged by this existing at all.
+model GarmentUnit {
+  id     String @id @default(cuid())
+  serial String @unique
+
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id])
+
+  /// The run it came off.
+  productionOrderId String?
+  productionOrder   ProductionOrder? @relation(fields: [productionOrderId], references: [id])
+
+  /// The lot it currently belongs to, which changes as it moves between the
+  /// two companies. Null once it is sold or written off.
+  lotId String?
+  lot   InventoryLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  status GarmentUnitStatus @default(MADE)
+
+  entityId   String?
+  entity     Entity?   @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  /// The order that sold it, so a specific garment traces to a specific sale.
+  salesOrderLineId String?
+  salesOrderLine   SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id], onDelete: SetNull)
+
+  /// Nothing reaches a shelf untagged; this records when it was.
+  labelPrintedAt DateTime?
+  soldAt         DateTime?
+  /// Why it was written off, when it was.
+  writeOffNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([variantId, status])
+  @@index([status, locationId])
+  @@index([lotId])
+  @@index([productionOrderId])
+  @@map("garment_units")
+}
+
 model InventoryLot {
   id        String         @id @default(cuid())
   lotNumber String         @unique
@@ -1533,6 +1605,7 @@ model InventoryLot {
 
   // FIFO reads lots oldest-first within a material/variant and location, so
   // the index carries the sort key too.
+  garmentUnits GarmentUnit[]
   @@index([state, receivedDate])
   @@index([materialId, locationId, receivedDate, sequence])
   @@index([variantId, locationId, receivedDate, sequence])
@@ -2325,6 +2398,8 @@ model SalesOrderLine {
   /// FIFO cost of goods relieved for this line.
   unitCost     Decimal @db.Decimal(18, 4)
   lineCost     Decimal @db.Decimal(18, 4)
+
+  garmentUnits GarmentUnit[]
 
   @@index([salesOrderId])
   @@index([variantId])

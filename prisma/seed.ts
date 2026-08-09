@@ -425,6 +425,74 @@ async function main() {
       descriptionEn: "Existing convention — enforced by a shared generator and validator.",
       descriptionAr: "الصيغة المستخدمة بالفعل — يفرضها مولّد ومدقق موحّد.",
     },
+
+    // --- the label roll -----------------------------------------------
+    // Physical measurements of the stationery in the printer. A shop that
+    // changes its roll changes these, not the code.
+    {
+      key: "label.widthMm",
+      value: "40",
+      type: "DECIMAL" as const,
+      group: "Labels",
+      labelEn: "Label width (mm)",
+      labelAr: "عرض الليبل (مم)",
+      descriptionEn: "Across the roll. The barcode is sized to fit inside it.",
+      descriptionAr: "بعرض الرول. الباركود بيتظبط عشان يدخل جواه.",
+    },
+    {
+      key: "label.heightMm",
+      value: "20",
+      type: "DECIMAL" as const,
+      group: "Labels",
+      labelEn: "Label height (mm)",
+      labelAr: "ارتفاع الليبل (مم)",
+      descriptionEn: "Along the roll, from one gap to the next.",
+      descriptionAr: "بطول الرول، من فاصل للي بعده.",
+    },
+    {
+      key: "label.gapMm",
+      value: "2",
+      type: "DECIMAL" as const,
+      group: "Labels",
+      labelEn: "Gap between labels (mm)",
+      labelAr: "الفراغ بين الليبلات (مم)",
+      descriptionEn: "What the printer's sensor looks for to find the next label.",
+      descriptionAr: "اللي حساس الطابعة بيدور عليه عشان يلاقي الليبل اللي بعده.",
+    },
+    {
+      key: "label.moduleWidthMm",
+      value: "0.25",
+      type: "DECIMAL" as const,
+      group: "Labels",
+      labelEn: "Narrowest bar (mm)",
+      labelAr: "أرفع خط في الباركود (مم)",
+      descriptionEn:
+        "Below about 0.2mm a thermal head smears the bars together and scanners stop reading.",
+      descriptionAr:
+        "أقل من ٠٫٢ مم تقريبًا رأس الطابعة بيلزق الخطوط في بعضها والسكانر بيبطّل يقرا.",
+    },
+    {
+      key: "label.barcodeHeightMm",
+      value: "8",
+      type: "DECIMAL" as const,
+      group: "Labels",
+      labelEn: "Barcode height (mm)",
+      labelAr: "ارتفاع الباركود (مم)",
+      descriptionEn: "Taller bars are easier to scan at an angle.",
+      descriptionAr: "الخطوط الأطول بتتقري أسهل لو السكانر مايل.",
+    },
+    {
+      key: "label.showPrice",
+      value: "true",
+      type: "BOOLEAN" as const,
+      group: "Labels",
+      labelEn: "Print the price on the label",
+      labelAr: "اطبع السعر على الليبل",
+      descriptionEn:
+        "Turn off if prices change often — a wrong printed price is worse than none.",
+      descriptionAr:
+        "اقفلها لو الأسعار بتتغير كتير — سعر مطبوع غلط أسوأ من مفيش سعر.",
+    },
   ];
 
   for (const s of settings) {

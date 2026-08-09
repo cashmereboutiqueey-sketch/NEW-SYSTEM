@@ -119,7 +119,7 @@ export function IntakeForm({
       <div className="rounded-lg border border-ink-200 bg-paper-50 p-3">
         <div className="flex flex-wrap items-center gap-3">
           <a
-            href={`/print/labels/${row.styleId}?stock=1`}
+            href={`/print/labels/despatch/${encodeURIComponent(row.despatchNumber)}`}
             target="_blank"
             rel="noreferrer"
             className="rounded-lg border border-ink-300 px-3 py-1.5 text-sm text-ink-700"

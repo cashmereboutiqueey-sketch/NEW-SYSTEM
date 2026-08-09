@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { relieveFinishedGoodsForSale } from "./inventory";
+import { markUnitsSold } from "./garment-units";
 import { writeAudit, type AuditContext } from "./audit";
 import type { DraftLine } from "@/core/ledger";
 import { dec, sum, roundMoney } from "./money";
@@ -90,6 +91,12 @@ export const createSaleSchema = z.object({
         quantity: z.coerce.number().int().positive(),
         retailPrice: z.coerce.number().min(0),
         discountPct: z.coerce.number().min(0).max(1).default(0),
+        /**
+         * Tags the cashier actually scanned. Optional: tapping a tile on the
+         * till sells a garment without naming which one, and that is a normal
+         * way to work. When they are given, the sale records the exact pieces.
+         */
+        scannedSerials: z.array(z.string()).optional(),
       }),
     )
     .min(1, "An order needs at least one line."),
@@ -288,6 +295,25 @@ export async function createSale(
         },
       },
     });
+
+    // The physical garments that left the shop, tied to the line that sold
+    // them. Scanned tags are used first so the record names exact pieces.
+    const orderLines = await tx.salesOrderLine.findMany({
+      where: { salesOrderId: order.id },
+      select: { id: true, variantId: true, quantity: true },
+    });
+    for (const orderLine of orderLines) {
+      const source = lines.find((l) => l.variantId === orderLine.variantId);
+      await markUnitsSold(tx, {
+        variantId: orderLine.variantId,
+        quantity: orderLine.quantity,
+        locationId: data.locationId,
+        entityId: data.entityId,
+        salesOrderLineId: orderLine.id,
+        soldAt: data.orderDate,
+        scannedSerials: source?.scannedSerials,
+      });
+    }
 
     // --- revenue -------------------------------------------------------
     // Discounts are shown gross-then-contra rather than netted away, so

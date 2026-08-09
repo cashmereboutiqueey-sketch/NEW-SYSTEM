@@ -20,10 +20,15 @@ import { openPosSession, createSale, closePosSession } from "../src/lib/sales";
 import {
   despatchToBrand, receiveAtBrand, awaitingDespatch, awaitingIntake, recentTransfers,
 } from "../src/lib/intercompany";
+import { findUnitBySerial } from "../src/lib/garment-units";
+import { labelsForDespatch, labelFormat } from "../src/lib/print";
+import { decodeSerial } from "../src/core/serial";
+import { code128Bars } from "../src/core/barcode";
 
 import { existsSync } from "node:fs";
 
 const problems: string[] = [];
+let lostTags: string[] = [];
 const step = (n: string) => console.log(`\n── ${n}`);
 const ok = (m: string) => console.log(`   ✓ ${m}`);
 const gap = (m: string) => { problems.push(m); console.log(`   ✗ ${m}`); };
@@ -46,6 +51,7 @@ for (const [route, why] of [
   ["transfers", "send the goods to the brand"],
   ["goods-in", "count them in and tag them"],
   ["sales", "record an order taken by message"],
+  ["settings", "change the label size"],
   ["pos", "sell at the till"],
 ] as const) {
   const dir = `src/app/(app)/${route}`;
@@ -201,6 +207,12 @@ const done = await completeProductionOrder({
 if (done.goodQty !== 116) gap(`size curve totals ${done.goodQty}, expected 116`);
 else ok(`116 good across ${done.finishedLotNumbers.length} SKUs, 4 rejected`);
 
+// Every garment is tagged as it comes off the line.
+if (done.serials.length !== 116) gap(`${done.serials.length} tags minted, expected 116`);
+else if (new Set(done.serials).size !== 116) gap("two garments share a tag code");
+else if (done.serials.some((s) => decodeSerial(s) === null)) gap("a tag code fails its own check character");
+else ok(`116 tags minted, all different — ${done.serials[0]} … ${done.serials[115]}`);
+
 
 // 8 ──────────────────────────────────────────────── does it reach the till?
 step("8. Open the till and look for it  →  /pos");
@@ -240,14 +252,35 @@ if (!found) {
   } else ok(`every row priced at ${frozen.transferPrice} from the frozen snapshot, not typed`);
 
   // One click per row, which is what the screen actually offers.
+  const notes: string[] = [];
   for (const row of queue) {
-    await despatchToBrand({
+    const sent = await despatchToBrand({
       variantId: row.variantId, quantity: row.quantity,
       fromLocationId: row.locationId, despatchDate: on(21),
       costSnapshotId: row.costSnapshotId!,
     }, ctx);
+    notes.push(sent.despatchNumber);
   }
   ok("6 despatch notes raised — no invoice yet, the goods are still the factory's");
+
+  // The tags to print are exactly the garments in that box.
+  const format = await labelFormat();
+  const sheet = await labelsForDespatch(notes[0]);
+  const firstRow = queue[0];
+  if (sheet.length !== Number(firstRow.quantity)) {
+    gap(`${notes[0]} would print ${sheet.length} labels for ${firstRow.quantity} garments`);
+  } else ok(`${notes[0]} prints ${sheet.length} labels, one per garment`);
+
+  if (format.widthMm !== 40 || format.heightMm !== 20) {
+    gap(`label roll reads ${format.widthMm}×${format.heightMm}mm, expected 40×20`);
+  } else ok("label roll 40 × 20 mm, one label per page");
+
+  const widest = Math.max(
+    ...sheet.map((l) => code128Bars(l.serial).totalModules * format.moduleWidthMm),
+  );
+  if (widest >= format.widthMm) {
+    gap(`barcode is ${widest.toFixed(1)}mm on a ${format.widthMm}mm label — it will not scan`);
+  } else ok(`barcode ${widest.toFixed(1)}mm on a ${format.widthMm}mm label`);
 
   if ((await awaitingDespatch()).length > 0) gap("rows still queued at the factory after sending");
   else ok("the factory queue empties");
@@ -283,6 +316,11 @@ if (!found) {
       shortfallNote: i === 0 ? "اتكسر الكرتونة في الطريق" : null,
     }, ctx);
     if (i === 0 && got.shortfallQty !== "2") gap(`shortfall recorded as ${got.shortfallQty}, expected 2`);
+    if (i === 0) {
+      if (got.lostSerials.length !== 2) gap("the missing garments were not named");
+      else ok(`the 2 missing garments are named: ${got.lostSerials.join(", ")}`);
+      lostTags = got.lostSerials;
+    }
   }
   ok(`6 invoices raised for what actually arrived — ${short} garments short on one box`);
 
@@ -317,15 +355,43 @@ else {
 }
 
 // 9 ────────────────────────────────────────────────────────────── sell it
-step("9. Sell one  →  /pos");
+step("9. Scan a tag and sell it  →  /pos");
+
+// The cashier scans the label rather than tapping a tile, so the sale names
+// the exact garment that left the shop.
+const onShelfUnit = await db.garmentUnit.findFirstOrThrow({
+  where: { variantId: sellable!.variantId, status: "IN_STOCK", locationId: alxLoc.id },
+  orderBy: { serial: "asc" },
+});
+const scanned = await findUnitBySerial(onShelfUnit.serial.toLowerCase());
+if (!scanned.ok) gap(`scanning ${onShelfUnit.serial} failed`);
+else ok(`scanned ${scanned.unit.serial} → ${scanned.unit.sku}, in stock at ${scanned.unit.locationAr}`);
+
+// A garment that never arrived must not be sellable.
+if (lostTags.length > 0) {
+  const ghost = await findUnitBySerial(lostTags[0]);
+  if (ghost.ok && ghost.unit.status !== "LOST") {
+    gap(`${lostTags[0]} never arrived but reads as ${ghost.ok ? ghost.unit.status : "?"}`);
+  } else ok(`${lostTags[0]} reads back as lost, so the till refuses it`);
+}
+
 const channel = await db.salesChannel.findFirstOrThrow();
 const sale = await createSale({
   source: "POS", channelId: channel.id, entityId: brand.id, locationId: alxLoc.id,
   posSessionId: till.posSessionId, orderDate: on(22),
-  lines: [{ variantId: sellable!.variantId, quantity: 1, retailPrice: 1650, discountPct: 0 }],
+  lines: [
+    {
+      variantId: sellable!.variantId, quantity: 1, retailPrice: 1650, discountPct: 0,
+      scannedSerials: [onShelfUnit.serial],
+    },
+  ],
   payments: [{ method: "CASH", amount: 1650, fee: 0, collected: true }],
 }, ctx);
 ok(`${sale.orderNumber} — sold 1650, cost ${Number(sale.cogs).toFixed(2)}, margin ${Number(sale.grossMargin).toFixed(2)}`);
+
+const soldUnit = await db.garmentUnit.findFirstOrThrow({ where: { serial: onShelfUnit.serial } });
+if (soldUnit.status !== "SOLD") gap(`${onShelfUnit.serial} was not marked sold`);
+else ok(`${onShelfUnit.serial} is recorded as the garment that left the shop`);
 
 const closed = await closePosSession(
   { posSessionId: till.posSessionId, countedCash: "2150" }, ctx,

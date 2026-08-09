@@ -43,10 +43,7 @@
     margin: 0;
   }
 
-  @page labels {
-    size: A4;
-    margin: 8mm 6mm;
-  }
+  /* Roll labels set their own @page inline, from the configured size. */
 
   html,
   body {
@@ -205,42 +202,71 @@
     page: thermal;
   }
 
-  .sheet-labels {
-    page: labels;
-  }
+
 }
 
-/* --- label sheet ------------------------------------------------------ */
+/* --- garment labels on a roll ----------------------------------------- */
 
-.sheet-labels {
-  width: 198mm;
-  display: grid;
-  /* Matches a common 63.5 × 38.1mm address-label sheet, three across. */
-  grid-template-columns: repeat(3, 65mm);
+/*
+ * One label per page. The page size itself is written inline by LabelSheet,
+ * because it comes from the settings rather than from here — a shop that
+ * changes its roll should not need a developer.
+ *
+ * On screen the labels stack with a hairline between them so the run can be
+ * checked before any paper moves.
+ */
+.sheet-roll {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 0;
 }
 
-.label-cell {
-  width: 65mm;
-  height: 38mm;
-  padding: 2mm;
+.roll-label {
+  box-sizing: border-box;
+  padding: 1mm 1.5mm;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   overflow: hidden;
+  /* A label split across two pages is two ruined labels. */
   break-inside: avoid;
+  page-break-inside: avoid;
+  break-after: page;
+  page-break-after: always;
 }
 
-.label-cell .name {
-  font-size: 8pt;
-  line-height: 1.2;
-  max-height: 2.4em;
+.roll-label:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+.roll-label-name {
+  font-size: 6.5pt;
+  line-height: 1.15;
+  max-height: 2.3em;
   overflow: hidden;
+  margin-bottom: 0.5mm;
 }
 
-.label-cell .price {
-  font-size: 10pt;
+.roll-label-serial {
+  font-size: 6pt;
+  letter-spacing: 0.08em;
+  margin-top: 0.3mm;
+}
+
+.roll-label-price {
+  font-size: 8pt;
   font-weight: 600;
+  margin-top: 0.3mm;
+}
+
+@media screen {
+  .roll-label {
+    border: 1px dashed #cbd5e1;
+    margin-bottom: 2mm;
+    background: #fff;
+  }
 }

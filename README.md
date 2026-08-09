@@ -221,6 +221,7 @@ Working end to end, with tests and verified in the browser:
 | **Statements** | Factory and Brand P&L with the trial balance beside them, AP aging by due date. | `/reports/entity-pnl` |
 | **CRM** | RFM, lifetime value from real orders, duplicate detection with human confirmation, consent. | `/customers` |
 | **HR** | Biometric import, derived attendance, payroll accrual reaching the cost pool exactly once. | `/hr` |
+| **Garment tags** | A unique code per physical garment, minted as a run is closed, followed through despatch, intake and sale. Roll labels sized from settings; the till scans a tag to sell that exact piece. | `/print/labels/despatch/…`, `/pos` |
 | **Dashboard** | Cash, capital locked, idle-capacity penalty, cash conversion cycle, dead stock, group result. | `/` |
 
 Not built yet: bank and channel reconciliation, alert evaluation, the scenario
@@ -253,6 +254,32 @@ short: the missing garments are charged to the factory as abnormal loss
 (account 5400), because the goods were in its hands until they arrived. And
 nothing reaches a shelf untagged — a garment with no barcode is one the till
 cannot ring up and a stocktake cannot count.
+
+### Every garment carries its own code
+
+A tag holds an eight-character code unique to that physical garment, not to its
+SKU — two black mediums off the same run are told apart. That is what makes
+"which one was sold", "which one came back" and "which three never arrived"
+answerable at all.
+
+The code is deliberately short. A Code 128 barcode of eight characters is
+35.75mm wide including its quiet zones, which fits a 40mm label; the readable
+`DALIA-BLK-M-00427` shape comes to 55mm and runs off the edge, where no scanner
+will read it. A test holds that line so nobody makes the code legible and finds
+out on the roll.
+
+The alphabet drops `0/O` and `1/I/L`, leaving exactly 31 characters. 31 being
+prime is what makes the check character catch every single wrong character and
+every transposition — at a composite length, weights sharing a factor with the
+base wave some misreadings through.
+
+Codes are minted as a run is closed, so a short delivery names the missing
+pieces rather than only counting them. Labels print one per garment on a roll
+sized from settings, and the till resolves a scan to the exact piece: one
+already sold, still at the factory, or in the other branch each says so.
+
+Units sit alongside lots rather than replacing them. Lots carry cost and drive
+FIFO; units carry identity. No figure in the ledger depends on any of this.
 
 ### Business decisions
 

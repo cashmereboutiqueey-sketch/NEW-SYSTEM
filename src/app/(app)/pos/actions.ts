@@ -6,6 +6,7 @@ import { createSale, openPosSession, closePosSession, SalesError } from "@/lib/s
 import { LedgerError } from "@/lib/ledger";
 import { InventoryError } from "@/lib/inventory";
 import { can } from "@/core/permissions";
+import { findUnitBySerial } from "@/lib/garment-units";
 
 export type PosState = {
   error?: string;
@@ -75,7 +76,83 @@ export async function closeTillAction(_prev: PosState, formData: FormData): Prom
   }
 }
 
-type CartLine = { variantId: string; quantity: number; retailPrice: number; discountPct: number };
+type CartLine = {
+  variantId: string;
+  quantity: number;
+  retailPrice: number;
+  discountPct: number;
+  /** Tags the cashier scanned for this line, if they scanned rather than tapped. */
+  scannedSerials?: string[];
+};
+
+export type ScanResult =
+  | { ok: true; variantId: string; serial: string; label: string; retailPrice: string | null }
+  | { ok: false; message: string };
+
+/**
+ * Resolves a tag the cashier just scanned.
+ *
+ * The garment has to be in stock at *this* till's location. One that is still
+ * at the factory, already sold, or sitting in the other branch is a real
+ * situation with a real answer, and saying which is far more use to the person
+ * at the counter than "not found".
+ */
+export async function lookupSerialAction(
+  serial: string,
+  locationId: string,
+): Promise<ScanResult> {
+  try {
+    await authorize("pos:operate");
+
+    const found = await findUnitBySerial(serial);
+    if (!found.ok) {
+      return {
+        ok: false,
+        message:
+          found.reason === "MALFORMED"
+            ? "That scan came through garbled. Scan it again."
+            : "No garment carries that code.",
+      };
+    }
+
+    const unit = found.unit;
+    const label = `${unit.styleEn} · ${unit.colourEn} · ${unit.size}`;
+
+    if (unit.status === "SOLD") {
+      const when = unit.soldAt?.toISOString().slice(0, 10) ?? "earlier";
+      return { ok: false, message: `${label} was already sold on ${when}.` };
+    }
+    if (unit.status === "LOST") {
+      return { ok: false, message: `${label} is written off as lost.` };
+    }
+    if (unit.status !== "IN_STOCK") {
+      return {
+        ok: false,
+        message: `${label} has not been received onto the floor yet.`,
+      };
+    }
+    if (unit.locationId !== locationId) {
+      return {
+        ok: false,
+        message: `${label} belongs to ${unit.locationEn ?? "another location"}, not this till.`,
+      };
+    }
+
+    return {
+      ok: true,
+      variantId: unit.variantId,
+      serial: unit.serial,
+      label,
+      retailPrice: unit.retailPrice,
+    };
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      return { ok: false, message: "You do not have permission to do that." };
+    }
+    console.error("Unhandled scan error:", error);
+    return { ok: false, message: "Something went wrong reading that code." };
+  }
+}
 
 export async function checkoutAction(_prev: PosState, formData: FormData): Promise<PosState> {
   try {

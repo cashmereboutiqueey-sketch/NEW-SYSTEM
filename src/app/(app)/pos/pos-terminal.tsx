@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import { checkoutAction, type PosState } from "./actions";
+import { checkoutAction, lookupSerialAction, type PosState } from "./actions";
+import { isWellFormedSerial, normaliseTypedSerial } from "@/core/serial";
 import type { Locale } from "@/lib/i18n";
 
 type Product = {
@@ -27,6 +28,12 @@ type CartLine = {
   retailPrice: number;
   discountPct: number;
   available: number;
+  /**
+   * The tags scanned for this line. Shorter than `quantity` when the cashier
+   * tapped the tile for some of them, which is fine — the sale then names the
+   * pieces it can and picks the rest oldest-first.
+   */
+  scannedSerials: string[];
 };
 
 const initial: PosState = {};
@@ -60,6 +67,8 @@ export function PosTerminal({
   const [method, setMethod] = useState("CASH");
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
@@ -102,16 +111,24 @@ export function PosTerminal({
     searchRef.current?.focus();
   }, [lastReceipt]);
 
-  function add(p: Product) {
+  function add(p: Product, serial?: string) {
     const available = Number(p.available);
     setCart((prev) => {
       const line = prev.find((l) => l.variantId === p.variantId);
       if (line) {
+        // The same tag scanned twice is one garment, not two.
+        if (serial && line.scannedSerials.includes(serial)) return prev;
         // Never let the cart exceed the shelf — the sale would fail at
         // checkout with the customer still standing there.
         if (line.quantity >= available) return prev;
         return prev.map((l) =>
-          l.variantId === p.variantId ? { ...l, quantity: l.quantity + 1 } : l,
+          l.variantId === p.variantId
+            ? {
+                ...l,
+                quantity: l.quantity + 1,
+                scannedSerials: serial ? [...l.scannedSerials, serial] : l.scannedSerials,
+              }
+            : l,
         );
       }
       return [
@@ -124,10 +141,12 @@ export function PosTerminal({
           retailPrice: Number(p.retailPrice ?? 0),
           discountPct: 0,
           available,
+          scannedSerials: serial ? [serial] : [],
         },
       ];
     });
     setQuery("");
+    setScanError(null);
     searchRef.current?.focus();
   }
 
@@ -138,11 +157,45 @@ export function PosTerminal({
 
   const priced = cart.every((l) => l.retailPrice > 0);
 
-  // A barcode scanner types fast and finishes with Enter; one exact match is
-  // added straight to the cart so the cashier never touches the mouse.
-  function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
+  /**
+   * A barcode scanner types fast and finishes with Enter.
+   *
+   * A garment tag is an eight-character code with a check character, so it can
+   * be told apart from someone typing a style name without asking the server
+   * first. Scanning names the exact piece; searching still works as it did.
+   */
+  async function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== "Enter") return;
     e.preventDefault();
+
+    const typed = normaliseTypedSerial(query);
+    if (isWellFormedSerial(typed)) {
+      setScanning(true);
+      setScanError(null);
+      try {
+        const result = await lookupSerialAction(typed, locationId);
+        if (!result.ok) {
+          setScanError(result.message);
+          setQuery("");
+          return;
+        }
+        const product = products.find((p) => p.variantId === result.variantId);
+        if (!product) {
+          setScanError(
+            ar
+              ? "الصنف ده مش على رف الفرع ده."
+              : "That garment is not on this branch's shelf.",
+          );
+          setQuery("");
+          return;
+        }
+        add(product, result.serial);
+      } finally {
+        setScanning(false);
+      }
+      return;
+    }
+
     if (filtered.length === 1) add(filtered[0]);
   }
 
@@ -160,9 +213,16 @@ export function PosTerminal({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onSearchKey}
-          placeholder={ar ? "امسح الباركود أو ابحث بالكود أو الاسم…" : "Scan a barcode, or search by SKU or name…"}
+          placeholder={ar ? "امسح الليبل أو ابحث بالكود أو الاسم…" : "Scan a tag, or search by SKU or name…"}
           className={`${field} mb-3 w-full`}
         />
+
+        {scanning && (
+          <p className="mb-3 text-sm text-ink-400">{ar ? "بيقرا…" : "Reading…"}</p>
+        )}
+        {scanError && (
+          <p className="mb-3 rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">{scanError}</p>
+        )}
 
         {filtered.length === 0 ? (
           <div className="rounded-xl border border-dashed border-ink-200 py-12 text-center text-sm text-ink-400">

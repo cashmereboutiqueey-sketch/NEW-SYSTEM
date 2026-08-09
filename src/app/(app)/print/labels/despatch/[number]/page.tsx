@@ -3,30 +3,27 @@ import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { LabelSheet } from "@/components/print-documents";
 import { PrintButton } from "@/components/print-button";
-import { labelsForStyle, labelFormat } from "@/lib/print";
+import { labelsForDespatch, labelFormat } from "@/lib/print";
 
 /**
- * Reprinting tags for a style.
+ * The tags for one delivery.
  *
- * One label per garment that still exists, each with its own code — the tag
- * that fell off in the fitting room, or the batch that got soaked. Garments
- * already sold are left out: a live code printed for something that is not in
- * the shop is a scan nobody can explain later.
+ * This is what the receiving bay prints: exactly the garments in the box in
+ * front of them, one label each, in the same order as the codes were issued.
+ * Printing by style instead would produce labels for stock that is elsewhere.
  */
-export default async function LabelsPage({
+export default async function DespatchLabelsPage({
   params,
-  searchParams,
 }: {
-  params: Promise<{ styleId: string }>;
-  searchParams: Promise<{ at?: string }>;
+  params: Promise<{ number: string }>;
 }) {
-  await requirePermission("production:view");
+  await requirePermission("inventory:view");
   const { locale } = await getPrefs();
-  const { styleId } = await params;
-  const query = await searchParams;
+  const { number } = await params;
 
+  const despatchNumber = decodeURIComponent(number);
   const [labels, format] = await Promise.all([
-    labelsForStyle(styleId, { onlyAt: query.at ?? null }),
+    labelsForDespatch(despatchNumber),
     labelFormat(),
   ]);
   if (labels.length === 0) notFound();
@@ -37,7 +34,8 @@ export default async function LabelsPage({
     <>
       <div className="print-controls no-print mx-auto mb-4 flex max-w-[198mm] items-center justify-between">
         <span className="text-sm text-ink-600">
-          {labels.length} {ar ? "ملصق" : "labels"} ·{" "}
+          <code dir="ltr">{despatchNumber}</code> · {labels.length}{" "}
+          {ar ? "ملصق" : "labels"} ·{" "}
           <span className="num" dir="ltr">
             {format.widthMm} × {format.heightMm} mm
           </span>

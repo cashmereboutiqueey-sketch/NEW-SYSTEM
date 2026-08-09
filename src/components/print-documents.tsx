@@ -416,6 +416,8 @@ function TotalRow({ label, value }: { label: string; value: string }) {
 // --------------------------------------------------------------- label sheet
 
 export type LabelData = {
+  /** The code on this particular garment. Unique to the piece, not the SKU. */
+  serial: string;
   sku: string;
   nameEn: string;
   nameAr: string;
@@ -423,6 +425,27 @@ export type LabelData = {
   colourAr: string;
   size: string;
   price?: string | null;
+};
+
+/** The physical roll. Every measurement the label depends on, in millimetres. */
+export type LabelFormat = {
+  widthMm: number;
+  heightMm: number;
+  /** Gap between one label and the next on the roll. */
+  gapMm: number;
+  /** Width of the narrowest bar. Below about 0.2mm a thermal head smears. */
+  moduleWidthMm: number;
+  barcodeHeightMm: number;
+  showPrice: boolean;
+};
+
+export const DEFAULT_LABEL_FORMAT: LabelFormat = {
+  widthMm: 40,
+  heightMm: 20,
+  gapMm: 2,
+  moduleWidthMm: 0.25,
+  barcodeHeightMm: 8,
+  showPrice: true,
 };
 
 /**
@@ -435,32 +458,51 @@ export type LabelData = {
 export function LabelSheet({
   labels,
   locale,
+  format = DEFAULT_LABEL_FORMAT,
 }: {
   labels: LabelData[];
   locale: Locale;
+  format?: LabelFormat;
 }) {
   const ar = locale === "ar";
 
+  // The page is one label. A roll printer advances to the next gap after each
+  // page, so a sheet-shaped grid would print three labels' worth of content
+  // onto one label and throw the rest away.
+  const pageCss = `
+    @page {
+      size: ${format.widthMm}mm ${format.heightMm}mm;
+      margin: 0;
+    }
+    .roll-label {
+      width: ${format.widthMm}mm;
+      height: ${format.heightMm}mm;
+    }
+  `;
+
   return (
-    <div className="print-sheet sheet-labels">
-      {labels.map((l, i) => (
-        <div key={`${l.sku}-${i}`} className="label-cell" dir={ar ? "rtl" : "ltr"}>
-          <div className="name">
-            {ar ? l.nameAr : l.nameEn}
-          </div>
-          <div style={{ fontSize: "7.5pt", color: "#444" }} className="muted-print">
-            {ar ? l.colourAr : l.colourEn} · {l.size}
-          </div>
-          <div style={{ margin: "1mm 0" }}>
-            <Barcode value={l.sku} moduleWidthMm={0.3} heightMm={9} />
-          </div>
-          {l.price && (
-            <div className="price num">
-              {formatMoney(l.price, locale)}
+    <>
+      <style dangerouslySetInnerHTML={{ __html: pageCss }} />
+      <div className="print-sheet sheet-roll">
+        {labels.map((l) => (
+          <div key={l.serial} className="roll-label" dir={ar ? "rtl" : "ltr"}>
+            <div className="roll-label-name">
+              {ar ? l.nameAr : l.nameEn} · {ar ? l.colourAr : l.colourEn} · {l.size}
             </div>
-          )}
-        </div>
-      ))}
-    </div>
+            <Barcode
+              value={l.serial}
+              moduleWidthMm={format.moduleWidthMm}
+              heightMm={format.barcodeHeightMm}
+            />
+            <div className="roll-label-serial num" dir="ltr">
+              {l.serial}
+            </div>
+            {format.showPrice && l.price && (
+              <div className="roll-label-price num">{formatMoney(l.price, locale)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

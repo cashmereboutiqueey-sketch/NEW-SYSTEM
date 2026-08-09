@@ -1,18 +1,24 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
+import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge } from "@/components/ui";
+import { SettingForm } from "./setting-form";
 
 /**
  * Every configurable number in the system, in one place.
  *
  * Rule 3 of the specification: no hardcoded rates or magic numbers anywhere.
  * If a figure influences a calculation, it is a row in this table — visible,
- * auditable, and changeable without a deploy. Editing arrives with Phase 2,
- * when there is a costing engine for these values to drive.
+ * auditable, and changeable without a deploy. Every change is written to the
+ * audit log with the old value beside the new one, because "the margin was 18%
+ * until someone moved it" is a question that gets asked months later.
  */
 export default async function SettingsPage() {
+  const session = await requireUser();
   const { locale } = await getPrefs();
+  const mayEdit = can(session.role, "settings:manage");
 
   const settings = await db.setting.findMany({
     orderBy: [{ group: "asc" }, { key: "asc" }],
@@ -69,9 +75,19 @@ export default async function SettingsPage() {
                     </span>
                   )}
                 </span>,
-                <span key={`${s.id}-v`} className="num font-medium text-ink-900">
-                  {displayValue(s.value, s.type)}
-                </span>,
+                mayEdit ? (
+                  <SettingForm
+                    key={`${s.id}-v`}
+                    locale={locale}
+                    settingKey={s.key}
+                    value={s.value}
+                    type={s.type}
+                  />
+                ) : (
+                  <span key={`${s.id}-v`} className="num font-medium text-ink-900">
+                    {displayValue(s.value, s.type)}
+                  </span>
+                ),
                 <Badge key={`${s.id}-t`} tone="neutral">
                   {s.type}
                 </Badge>,

@@ -4,6 +4,7 @@ import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { consumeFifo } from "@/core/fifo";
 import { writeAudit, type AuditContext } from "./audit";
+import { markUnitsDespatched, settleUnitsOnIntake } from "./garment-units";
 import { dec } from "./money";
 
 /**
@@ -282,6 +283,15 @@ export async function despatchToBrand(
           // Deliberately no journal: same account, same entity, same value.
         },
       });
+
+      // The tagged garments travel with the stock they belong to.
+      await markUnitsDespatched(tx, {
+        variantId: input.variantId,
+        quantity: Number(a.quantity),
+        fromLocationId: input.fromLocationId,
+        toLotId: transitLot.id,
+        transitLocationId: transit.id,
+      });
     }
 
     await writeAudit(tx, {
@@ -435,6 +445,9 @@ export async function receiveAtBrand(
   transferPrice: string;
   marginPerUnit: string;
   brandLotNumber: string;
+  /** The tags that went on the floor, and the tags that never turned up. */
+  receivedSerials: string[];
+  lostSerials: string[];
 }> {
   if (!input.labelsPrinted) {
     throw new IntercompanyError(
@@ -648,6 +661,17 @@ export async function receiveAtBrand(
       },
     });
 
+    const settled = await settleUnitsOnIntake(tx, {
+      variantId: input.variantId,
+      transitLotIds: lots.map((l) => l.id),
+      countedQty: Number(counted),
+      brandLotId: brandLot.id,
+      toLocationId: input.toLocationId,
+      entityId: brand.id,
+      receivedDate: input.receivedDate,
+      shortfallNote: input.shortfallNote ?? null,
+    });
+
     await tx.inventoryMovement.create({
       data: {
         lotId: brandLot.id,
@@ -675,6 +699,9 @@ export async function receiveAtBrand(
         shortfallQty: shortfall.toString(),
         shortfallCost: shortfall.greaterThan(0) ? lostCost.toString() : null,
         shortfallNote: input.shortfallNote ?? null,
+        // Named so a missing garment can be looked for by its tag rather than
+        // being only a number in a variance column.
+        lostSerials: settled.lost,
         transferPrice: transferTotal.toString(),
         marginPerUnit: marginPerUnit.toString(),
         unrealisedIfUnsold: marginPerUnit.times(counted).toString(),
@@ -690,6 +717,8 @@ export async function receiveAtBrand(
       transferPrice: transferTotal.toString(),
       marginPerUnit: marginPerUnit.toString(),
       brandLotNumber,
+      receivedSerials: settled.received,
+      lostSerials: settled.lost,
     };
   });
 }

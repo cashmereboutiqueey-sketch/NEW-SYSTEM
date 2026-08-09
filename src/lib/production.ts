@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
+import { mintUnitsForOutput } from "./garment-units";
 import { createCostSnapshot } from "./costing";
 import { issueMaterialToProduction, receiveFinishedGoods } from "./inventory";
 import { explodeBom, variance, actualWasteRate } from "@/core/production";
@@ -361,6 +362,8 @@ export async function completeProductionOrder(
   costVariance: string;
   fabricVariance: string;
   finishedLotNumbers: string[];
+  /** The tag code of every garment this run produced. */
+  serials: string[];
 }> {
   const order = await db.productionOrder.findUnique({
     where: { id: input.productionOrderId },
@@ -405,6 +408,7 @@ export async function completeProductionOrder(
   // Split so the receipt can credit WIP for material and the absorption
   // account for conversion — see receiveFinishedGoods.
   const finishedLotNumbers: string[] = [];
+  const mintedLots: { lotId: string; variantId: string; quantity: number }[] = [];
   for (const output of outputs) {
     const received = await receiveFinishedGoods(
       {
@@ -420,9 +424,31 @@ export async function completeProductionOrder(
       ctx,
     );
     finishedLotNumbers.push(received.lotNumber);
+    mintedLots.push({
+      lotId: received.lotId,
+      variantId: output.variantId,
+      quantity: output.goodQty,
+    });
   }
 
   return db.$transaction(async (tx) => {
+    // Every garment gets its own tag code here, as it starts existing. Doing
+    // it later would mean a short delivery could say how many were missing
+    // but never which ones.
+    const serials: string[] = [];
+    for (const minted of mintedLots) {
+      serials.push(
+        ...(await mintUnitsForOutput(tx, {
+          variantId: minted.variantId,
+          quantity: minted.quantity,
+          lotId: minted.lotId,
+          productionOrderId: order.id,
+          entityId: input.entityId,
+          locationId: input.locationId,
+        })),
+      );
+    }
+
     const actualTotalCost = dec(snap.factoryTotalCost).times(goodQty);
     const costVar = variance(order.plannedTotalCost ?? 0, actualTotalCost);
     const fabricVar = variance(order.plannedFabricQty ?? 0, order.actualFabricQty ?? 0);
@@ -465,6 +491,8 @@ export async function completeProductionOrder(
         costVariance: costVar.variance.toString(),
         fabricVariance: fabricVar.variance.toString(),
         finishedLots: finishedLotNumbers,
+        firstSerial: serials[0] ?? null,
+        lastSerial: serials[serials.length - 1] ?? null,
       },
       ctx,
     });
@@ -472,6 +500,7 @@ export async function completeProductionOrder(
     return {
       orderNumber: order.orderNumber,
       goodQty,
+      serials,
       costVariance: costVar.variance.toString(),
       fabricVariance: fabricVar.variance.toString(),
       finishedLotNumbers,
