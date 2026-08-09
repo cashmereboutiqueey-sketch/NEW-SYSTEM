@@ -134,6 +134,7 @@ export const dictionary = {
   purchasing: { ar: "المشتريات", en: "Purchasing" },
   integrations: { ar: "التكاملات", en: "Integrations" },
   mrp: { ar: "تخطيط الاحتياجات", en: "Requirements planning" },
+  marketing: { ar: "التسويق", en: "Marketing" },
   people: { ar: "الموظفون والأجور", en: "People and payroll" },
   customerProfitability: { ar: "ربحية العميل", en: "Customer profitability" },
   sales: { ar: "المبيعات", en: "Sales" },

@@ -977,7 +977,8 @@ model Collection {
   endDate   DateTime? @db.Date
   isActive  Boolean   @default(true)
 
-  styles Style[]
+  styles    Style[]
+  campaigns Campaign[]
 
   @@map("collections")
 }
@@ -1016,6 +1017,7 @@ model Style {
   costSnapshots    CostSnapshot[]
   productionOrders ProductionOrder[]
   journalLines     JournalLine[]
+  campaigns        Campaign[]
 
   @@index([collectionId])
   @@map("styles")
@@ -1569,6 +1571,103 @@ model InventoryMovement {
 }
 
 // ===========================================================================
+// MARKETING — campaigns, spend, attribution
+//
+// Marketing is a first-class Brand module because the spend materially
+// changes whether a garment is profitable. Attribution never rewrites
+// accounting: an order's revenue and cost are what they are, and a campaign
+// link only says which effort is claiming credit for it.
+// ===========================================================================
+
+enum CampaignStatus {
+  PLANNED
+  RUNNING
+  PAUSED
+  FINISHED
+}
+
+enum AdPlatform {
+  META
+  GOOGLE
+  TIKTOK
+  INFLUENCER
+  EMAIL
+  WHATSAPP
+  OTHER
+}
+
+model Campaign {
+  id       String         @id @default(cuid())
+  code     String         @unique
+  nameEn   String
+  nameAr   String
+  status   CampaignStatus @default(PLANNED)
+  platform AdPlatform     @default(META)
+
+  objective String?
+  audience  String?
+
+  /// What the campaign is selling. Left open when it promotes the brand
+  /// rather than one garment.
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  styleId      String?
+  style        Style?      @relation(fields: [styleId], references: [id], onDelete: SetNull)
+
+  startDate DateTime  @db.Date
+  endDate   DateTime? @db.Date
+  budget    Decimal   @default(0) @db.Decimal(18, 4)
+
+  /// The discount code that ties an order back to this campaign. Unique so a
+  /// single order can never be claimed by two campaigns at once.
+  couponCode String? @unique
+
+  /// Influencer or agency fee, separate from platform ad spend.
+  creatorName String?
+  creatorFee  Decimal @default(0) @db.Decimal(18, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  spend       CampaignSpend[]
+  salesOrders SalesOrder[]
+
+  @@index([status, startDate])
+  @@map("campaigns")
+}
+
+/// A day's spend on one campaign.
+///
+/// Recorded per day rather than as a running total so a campaign's cost can
+/// be lined up against the orders it actually produced, and so a mistake can
+/// be corrected without losing the rest.
+model CampaignSpend {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  spendDate DateTime @db.Date
+  amount    Decimal  @db.Decimal(18, 4)
+
+  impressions Int @default(0)
+  clicks      Int @default(0)
+  /// Purchases the platform claims. Kept beside our own counted orders, never
+  /// instead of them — the platform is marking its own homework.
+  reportedConversions Int @default(0)
+
+  /// The expense this spend was booked as, so the campaign reconciles to the
+  /// ledger rather than living in a spreadsheet beside it.
+  expenseId String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@unique([campaignId, spendDate])
+  @@index([spendDate])
+  @@map("campaign_spend")
+}
+
+// ===========================================================================
 // INTEGRATIONS — external systems
 //
 // An integration is never the accounting authority. Imported records become
@@ -2075,6 +2174,11 @@ model SalesOrder {
 
   posSessionId String?
   posSession   PosSession? @relation(fields: [posSessionId], references: [id], onDelete: SetNull)
+
+  /// Which marketing effort is claiming credit for this order. Attribution
+  /// never changes the order's revenue or cost — it only says who claims it.
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   orderDate     DateTime  @db.Date
   shippedDate   DateTime? @db.Date
