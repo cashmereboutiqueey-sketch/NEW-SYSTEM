@@ -222,6 +222,36 @@ describe("payments", () => {
     ).rejects.toThrow(/but the order comes to/i);
   });
 
+  it("invoices at a unit price the customer can verify", async () => {
+    // The unit price is rounded to the piastre first, then multiplied — that
+    // is what an invoice line is, and it means 554.38 × 3 reads as 1,663.14
+    // rather than a total nobody can reproduce from the printed price.
+    const result = await createSale(
+      saleInput({
+        lines: [{ variantId, quantity: 3, retailPrice: 554.3768333, discountPct: 0 }],
+        payments: [{ method: "CASH", amount: 1663.14, fee: 0, collected: true }],
+      }),
+      { userId: cashierId },
+    );
+
+    expect(result.netAmount).toBe("1663.14");
+  });
+
+  it("keeps a discounted line payable to the piastre", async () => {
+    // 15% off 99.99 is 84.9915 — an amount no customer can hand over. The
+    // invoice must round it, or revenue is recognised at a figure that can
+    // never be collected and the journal is short by fractions forever.
+    const result = await createSale(
+      saleInput({
+        lines: [{ variantId, quantity: 1, retailPrice: 99.99, discountPct: 0.15 }],
+        payments: [{ method: "CASH", amount: 84.99, fee: 0, collected: true }],
+      }),
+      { userId: cashierId },
+    );
+
+    expect(result.netAmount).toBe("84.99");
+  });
+
   it("charges shipping as revenue on top of the goods", async () => {
     await createSale(
       saleInput({

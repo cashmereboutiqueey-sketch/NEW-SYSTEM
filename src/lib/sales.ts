@@ -6,7 +6,7 @@ import { postEntry, nextDocumentNumber } from "./ledger";
 import { relieveFinishedGoodsForSale } from "./inventory";
 import { writeAudit, type AuditContext } from "./audit";
 import type { DraftLine } from "@/core/ledger";
-import { dec, sum } from "./money";
+import { dec, sum, roundMoney } from "./money";
 
 /**
  * The unified Brand order engine.
@@ -164,20 +164,50 @@ export async function createSale(
     if (session.closedAt) throw new SalesError("That till session is already closed.");
   }
 
+  // Invoice amounts are rounded to the piastre, because that is what an
+  // invoice is. A 15% discount on 99.99 gives 84.9915, which no customer can
+  // pay; recognising revenue at that figure while collecting 84.99 leaves the
+  // journal short by fractions nobody can reconcile. Rounding here keeps the
+  // invoice, the revenue posting and the payment in exact agreement.
   const lines = data.lines.map((l) => {
-    const gross = dec(l.retailPrice).times(l.quantity);
-    const netPrice = dec(l.retailPrice).times(dec(1).minus(dec(l.discountPct)));
-    return { ...l, gross, netPrice, lineTotal: netPrice.times(l.quantity) };
+    // Both unit prices are rounded first, then multiplied by a whole
+    // quantity. Rounding the multiplication instead would let the gross and
+    // net lines disagree by a piastre on the same order, which is exactly the
+    // imbalance the ledger then refuses to post.
+    const unitPrice = roundMoney(dec(l.retailPrice));
+    const netPrice = roundMoney(unitPrice.times(dec(1).minus(dec(l.discountPct))));
+    return {
+      ...l,
+      gross: unitPrice.times(l.quantity),
+      netPrice,
+      lineTotal: netPrice.times(l.quantity),
+    };
   });
 
   const grossAmount = sum(lines.map((l) => l.gross));
   const netAmount = sum(lines.map((l) => l.lineTotal));
   const discountAmount = grossAmount.minus(netAmount);
-  const shipping = dec(data.shippingAmount);
+  const shipping = roundMoney(dec(data.shippingAmount));
 
-  const paymentTotal = sum(data.payments.map((p) => dec(p.amount)));
+  // A payment is money, so it is held at money precision from here on and
+  // every later use — the stored record, the settlement posting, the fee —
+  // reads the same rounded figure.
+  const payments = data.payments.map((p) => ({
+    ...p,
+    amount: roundMoney(dec(p.amount)),
+    fee: roundMoney(dec(p.fee)),
+  }));
+
+  const paymentTotal = sum(payments.map((p) => p.amount));
   const dueFromCustomer = netAmount.plus(shipping);
-  if (data.payments.length > 0 && !paymentTotal.equals(dueFromCustomer)) {
+  // Compared at money precision, not at full precision: EGP cannot be paid in
+  // fractions of a piastre, so an order totalling 4,989.3915 is settled in
+  // full by 4,989.39. Demanding exact equality here rejects correct payments
+  // and reports them with two figures that look identical on screen.
+  if (
+    payments.length > 0 &&
+    !roundMoney(paymentTotal).equals(roundMoney(dueFromCustomer))
+  ) {
     throw new SalesError(
       `Payments total ${paymentTotal.toFixed(2)} but the order comes to ${dueFromCustomer.toFixed(2)}.`,
     );
@@ -205,7 +235,7 @@ export async function createSale(
 
   return db.$transaction(async (tx) => {
     const orderNumber = await nextDocumentNumber(tx, "SO", data.orderDate);
-    const totalFees = sum(data.payments.map((p) => dec(p.fee)));
+    const totalFees = sum(payments.map((p) => p.fee));
 
     const order = await tx.salesOrder.create({
       data: {
@@ -247,10 +277,10 @@ export async function createSale(
           }),
         },
         payments: {
-          create: data.payments.map((p) => ({
+          create: payments.map((p) => ({
             method: p.method,
-            amount: dec(p.amount).toString(),
-            fee: dec(p.fee).toString(),
+            amount: p.amount.toString(),
+            fee: p.fee.toString(),
             status: p.collected ? "COLLECTED" : "PENDING",
             collectedAt: p.collected ? data.orderDate : null,
             reference: p.reference ?? null,
@@ -284,8 +314,8 @@ export async function createSale(
     // With no payment recorded the customer owes the money, so it is a
     // receivable rather than an assumption that cash arrived.
     const settlements =
-      data.payments.length > 0
-        ? data.payments.map((p) => ({ code: FUNDS_ACCOUNT[p.method], amount: dec(p.amount) }))
+      payments.length > 0
+        ? payments.map((p) => ({ code: FUNDS_ACCOUNT[p.method], amount: p.amount }))
         : [{ code: ACC.RECEIVABLE, amount: dueFromCustomer }];
 
     for (const s of settlements) {
@@ -335,7 +365,7 @@ export async function createSale(
             description: `Processor and courier fees ${orderNumber}`,
           },
           {
-            accountId: await accountId(tx, FUNDS_ACCOUNT[data.payments[0].method]),
+            accountId: await accountId(tx, FUNDS_ACCOUNT[payments[0].method]),
             credit: totalFees,
             entityId: data.entityId,
             description: `Fees deducted at source ${orderNumber}`,
