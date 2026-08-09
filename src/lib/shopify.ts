@@ -400,6 +400,230 @@ export async function pullOrders(
   return importOrders({ connectionId: connection.id, orders: data.orders }, ctx);
 }
 
+export type ShopifyCheckout = {
+  id: number;
+  token?: string;
+  email?: string | null;
+  phone?: string | null;
+  created_at: string;
+  updated_at?: string;
+  total_price?: string;
+  abandoned_checkout_url?: string | null;
+  customer?: {
+    id: number;
+    first_name?: string | null;
+    last_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
+  billing_address?: { city?: string | null } | null;
+  shipping_address?: { city?: string | null } | null;
+  line_items?: {
+    sku?: string | null;
+    title?: string | null;
+    quantity: number;
+    price?: string;
+  }[];
+};
+
+/**
+ * Pulls baskets people filled and left.
+ *
+ * The single most useful marketing record the website produces: a named
+ * person, the exact garments they wanted, and a link that puts the basket
+ * back in front of them.
+ *
+ * A checkout that has since been paid for is not abandoned, so anything with
+ * a matching later order is marked recovered rather than left on a list
+ * somebody would otherwise chase.
+ */
+export async function pullAbandonedCheckouts(
+  input: { connectionId: string; sinceDays?: number },
+  ctx: AuditContext,
+): Promise<{ imported: number; updated: number; recovered: number }> {
+  const connection = await db.integrationConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+  });
+
+  const since = new Date(Date.now() - (input.sinceDays ?? 30) * 86_400_000);
+  const data = await shopifyFetch<{ checkouts: ShopifyCheckout[] }>(
+    connection,
+    `checkouts.json?created_at_min=${since.toISOString()}&limit=250`,
+  );
+
+  return saveAbandonedCheckouts(
+    { connectionId: connection.id, checkouts: data.checkouts ?? [] },
+    ctx,
+  );
+}
+
+/** Stores checkouts and works out which have since been bought. */
+export async function saveAbandonedCheckouts(
+  input: { connectionId: string; checkouts: ShopifyCheckout[] },
+  ctx: AuditContext,
+): Promise<{ imported: number; updated: number; recovered: number }> {
+  let imported = 0;
+  let updated = 0;
+  let recovered = 0;
+
+  for (const checkout of input.checkouts) {
+    const externalId = String(checkout.id);
+    const email = checkout.email ?? checkout.customer?.email ?? null;
+    const phone = checkout.phone ?? checkout.customer?.phone ?? null;
+    const normalisedEmail = email?.trim().toLowerCase() ?? null;
+
+    const customer = normalisedEmail
+      ? await db.customer.findFirst({
+          where: { emailNormalised: normalisedEmail, mergedIntoId: null },
+        })
+      : null;
+
+    // Somebody who checked out later is not a lost sale. Matching on the
+    // shopper rather than the basket, because they often come back and buy
+    // something slightly different.
+    const laterOrder = customer
+      ? await db.salesOrder.findFirst({
+          where: {
+            customerId: customer.id,
+            orderDate: { gte: new Date(checkout.created_at) },
+            status: { not: "CANCELLED" },
+          },
+          orderBy: { orderDate: "asc" },
+        })
+      : null;
+
+    const record = {
+      connectionId: input.connectionId,
+      externalId,
+      email,
+      phone,
+      customerName:
+        [checkout.customer?.first_name, checkout.customer?.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || null,
+      city: checkout.shipping_address?.city ?? checkout.billing_address?.city ?? null,
+      customerId: customer?.id ?? null,
+      totalValue: dec(checkout.total_price ?? "0").toString(),
+      itemCount: (checkout.line_items ?? []).reduce((s, l) => s + l.quantity, 0),
+      lineItems: JSON.parse(
+        JSON.stringify(
+          (checkout.line_items ?? []).map((l) => ({
+            sku: l.sku ?? null,
+            title: l.title ?? null,
+            quantity: l.quantity,
+            price: l.price ?? null,
+          })),
+        ),
+      ),
+      recoveryUrl: checkout.abandoned_checkout_url ?? null,
+      abandonedAt: new Date(checkout.created_at),
+      lastSeenAt: new Date(),
+      recoveredOrderId: laterOrder?.id ?? null,
+      recoveredAt: laterOrder ? laterOrder.orderDate : null,
+    };
+
+    const existing = await db.abandonedCheckout.findUnique({
+      where: {
+        connectionId_externalId: { connectionId: input.connectionId, externalId },
+      },
+    });
+
+    await db.abandonedCheckout.upsert({
+      where: {
+        connectionId_externalId: { connectionId: input.connectionId, externalId },
+      },
+      create: record,
+      // Whoever has already been contacted stays contacted; a refresh must not
+      // reset that and cause somebody to be messaged twice.
+      update: {
+        ...record,
+        contactedAt: existing?.contactedAt ?? null,
+        contactedVia: existing?.contactedVia ?? null,
+        contactNote: existing?.contactNote ?? null,
+      },
+    });
+
+    if (existing) updated += 1;
+    else imported += 1;
+    if (laterOrder) recovered += 1;
+  }
+
+  await db.$transaction(async (tx) => {
+    await writeAudit(tx, {
+      action: "ABANDONED_CHECKOUTS_PULLED",
+      entityName: "IntegrationConnection",
+      entityId: input.connectionId,
+      after: { processed: input.checkouts.length, imported, updated, recovered },
+      ctx,
+    });
+  });
+
+  return { imported, updated, recovered };
+}
+
+/**
+ * The recovery list, worth chasing first.
+ *
+ * Consent is carried on every row. Someone who unsubscribed is still shown —
+ * their basket is real and worth understanding — but marked, so nobody sends
+ * them a message they asked not to receive.
+ */
+export async function recoveryList(options: { includeRecovered?: boolean } = {}) {
+  const rows = await db.abandonedCheckout.findMany({
+    where: options.includeRecovered ? {} : { recoveredOrderId: null },
+    include: { customer: true },
+    orderBy: [{ totalValue: "desc" }, { abandonedAt: "desc" }],
+    take: 200,
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.customerName ?? r.customer?.name ?? r.email ?? "—",
+    email: r.email,
+    phone: r.phone ?? r.customer?.phone ?? null,
+    city: r.city,
+    totalValue: dec(r.totalValue),
+    itemCount: r.itemCount,
+    items: (r.lineItems as { sku: string | null; title: string | null; quantity: number }[] | null) ?? [],
+    recoveryUrl: r.recoveryUrl,
+    abandonedAt: r.abandonedAt,
+    daysAgo: Math.floor((Date.now() - r.abandonedAt.getTime()) / 86_400_000),
+    recovered: Boolean(r.recoveredOrderId),
+    contactedAt: r.contactedAt,
+    contactedVia: r.contactedVia,
+    // A known shopper is a warmer contact than a stranger, and their consent
+    // decision is the one that governs whether they can be messaged at all.
+    isKnownCustomer: Boolean(r.customerId),
+    marketingConsent: r.customer?.marketingConsent ?? null,
+    isSuppressed: r.customer?.isSuppressed ?? false,
+  }));
+}
+
+/** Records that somebody has been followed up, so nobody chases them twice. */
+export async function markContacted(
+  input: { id: string; via: string; note?: string | null },
+  ctx: AuditContext,
+) {
+  await db.$transaction(async (tx) => {
+    const checkout = await tx.abandonedCheckout.update({
+      where: { id: input.id },
+      data: {
+        contactedAt: new Date(),
+        contactedVia: input.via,
+        contactNote: input.note ?? null,
+      },
+    });
+    await writeAudit(tx, {
+      action: "ABANDONED_CHECKOUT_CONTACTED",
+      entityName: "AbandonedCheckout",
+      entityId: checkout.id,
+      after: { via: input.via, value: checkout.totalValue.toString() },
+      ctx,
+    });
+  });
+}
+
 /**
  * Reports what stock Shopify should be told about.
  *

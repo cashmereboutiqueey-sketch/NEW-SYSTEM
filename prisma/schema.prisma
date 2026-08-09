@@ -1771,6 +1771,55 @@ model ExternalMapping {
   @@map("external_mappings")
 }
 
+/// A basket somebody filled and left.
+///
+/// The most useful marketing record the website produces: a named person, the
+/// exact garments they wanted, what it was worth, and a link that puts it
+/// back in front of them. Kept as its own record rather than an exception,
+/// because nothing went wrong — the sale simply has not happened yet.
+model AbandonedCheckout {
+  id         String @id @default(cuid())
+  connectionId String
+  externalId String
+
+  email       String?
+  phone       String?
+  customerName String?
+  city        String?
+  /// Matched to a known customer where possible, so their history is visible
+  /// before anyone contacts them.
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  totalValue Decimal @db.Decimal(18, 4)
+  itemCount  Int     @default(0)
+  /// What was in the basket, kept verbatim: a follow-up that names the wrong
+  /// garment is worse than none.
+  lineItems  Json?
+
+  /// Shopify's own link that restores the basket for the shopper.
+  recoveryUrl String?
+
+  abandonedAt DateTime
+  lastSeenAt  DateTime @default(now())
+
+  /// Set when the same person later buys, so nobody chases a completed sale.
+  recoveredOrderId String?
+  recoveredAt      DateTime?
+
+  /// Records that someone has already been contacted, and how.
+  contactedAt   DateTime?
+  contactedVia  String?
+  contactNote   String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([connectionId, externalId])
+  @@index([abandonedAt])
+  @@index([recoveredOrderId])
+  @@map("abandoned_checkouts")
+}
+
 enum ExceptionStatus {
   OPEN
   RESOLVED
@@ -2091,6 +2140,7 @@ model Customer {
 
   salesOrders  SalesOrder[]
   journalLines JournalLine[]
+  abandonedCheckouts AbandonedCheckout[]
 
   @@index([phoneNormalised])
   @@index([emailNormalised])

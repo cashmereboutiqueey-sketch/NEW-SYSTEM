@@ -83,6 +83,7 @@ export const navigation: NavSection[] = [
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true },
       { key: "marketing", href: "/marketing", phase: 10, scopes: ["BRAND", "GROUP"], icon: "sparkles", shipped: true },
+      { key: "recovery", href: "/recovery", phase: 10, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true },
       { key: "people", href: "/hr", phase: 8, scopes: ALL_SCOPES, icon: "users", shipped: true },
       { key: "sellThrough", href: "/sales/sell-through", phase: 5, scopes: ["BRAND", "GROUP"], icon: "trending" },
       { key: "markdown", href: "/sales/markdown", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag" },
