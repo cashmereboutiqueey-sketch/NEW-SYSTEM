@@ -4,8 +4,8 @@
   "description": "",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "node scripts/next-production.mjs build",
+    "start": "node scripts/next-production.mjs start",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",

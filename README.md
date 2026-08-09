@@ -306,7 +306,7 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 | Command | Purpose |
 |---|---|
 | `npm run dev` | Development server |
-| `npm run build` / `npm start` | Production build and serve |
+| `npm run build` / `npm start` | Production build and serve. Writes to `.next-build`, not `.next`, so it can run while a dev server is up. |
 | `npm test` | Unit tests for the domain logic. No database needed. |
 | `npm run test:db` | Integration tests against a real PostgreSQL instance |
 | `npm run walkthrough` | Drives the whole business cycle end to end and reports gaps |
