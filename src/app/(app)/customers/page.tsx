@@ -4,6 +4,9 @@ import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { customerProfiles, duplicateCandidates } from "@/lib/crm";
+import { EntityForm } from "@/components/entity-form";
+import { can } from "@/core/permissions";
+import { createCustomerAction } from "./actions";
 import { dec } from "@/lib/money";
 
 /**
@@ -14,7 +17,7 @@ import { dec } from "@/lib/money";
  * base — so a segment means the same thing next week as it does today.
  */
 export default async function CustomersPage() {
-  await requirePermission("customer:view");
+  const session = await requirePermission("customer:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
@@ -22,6 +25,7 @@ export default async function CustomersPage() {
     customerProfiles(),
     duplicateCandidates(),
   ]);
+  const mayAdd = can(session.role, "sales_order:create");
 
   const buyers = profiles.filter((p) => p.orders > 0);
   const revenue = buyers.reduce((s, p) => s.plus(dec(p.revenue)), dec(0));
@@ -176,6 +180,50 @@ export default async function CustomersPage() {
           </div>
         </Card>
       </div>
+
+      {mayAdd && (
+        <Card className="mb-4" title={ar ? "إضافة عميل" : "Add a customer"}>
+          <EntityForm
+            locale={locale}
+            action={createCustomerAction}
+            submitEn="Add customer"
+            submitAr="أضف العميل"
+            fields={[
+              { kind: "text", name: "name", labelEn: "Name", labelAr: "الاسم", required: true, span: 2 },
+              {
+                kind: "text", name: "phone", labelEn: "Phone", labelAr: "التليفون", ltr: true,
+                hintEn: "Any Egyptian format. A match against an existing customer is flagged, not blocked.",
+                hintAr: "أي صيغة مصرية. التشابه مع عميل موجود بيتنبّه عليه مش بيتمنع.",
+              },
+              { kind: "text", name: "email", labelEn: "Email", labelAr: "البريد", ltr: true },
+              { kind: "text", name: "city", labelEn: "City", labelAr: "المدينة" },
+              {
+                kind: "select", name: "acquiredVia", labelEn: "Came from", labelAr: "جه من",
+                options: [
+                  { value: "SHOPIFY", label: ar ? "الموقع" : "Website" },
+                  { value: "MODERATOR", label: ar ? "السوشيال" : "Social" },
+                  { value: "POS", label: ar ? "المعرض" : "Showroom" },
+                  { value: "EXHIBITION", label: ar ? "بازار" : "Exhibition" },
+                  { value: "WHOLESALE", label: ar ? "جملة" : "Wholesale" },
+                ],
+                emptyLabel: ar ? "— غير محدد —" : "— unknown —",
+              },
+              {
+                kind: "text", name: "code", labelEn: "Code (optional)", labelAr: "الكود (اختياري)", ltr: true,
+                hintEn: "Generated automatically if left blank.",
+                hintAr: "بيتولّد تلقائيًا لو سيبته فاضي.",
+              },
+              {
+                kind: "checkbox", name: "marketingConsent",
+                labelEn: "Agreed to receive marketing", labelAr: "وافق على استقبال التسويق",
+                hintEn: "Leave unticked if they have not been asked — silence is not consent.",
+                hintAr: "سيبها فاضية لو ماتسألش — السكوت مش موافقة.",
+              },
+              { kind: "text", name: "notes", labelEn: "Notes", labelAr: "ملاحظات", span: 3 },
+            ]}
+          />
+        </Card>
+      )}
 
       <Card title={ar ? "العملاء" : "Customers"}>
         {profiles.length === 0 ? (

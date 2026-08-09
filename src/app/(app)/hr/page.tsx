@@ -3,8 +3,10 @@ import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
+import { EntityForm } from "@/components/entity-form";
 import { formatMoney, formatNumber } from "@/lib/money";
 import { dec } from "@/lib/money";
+import { createEmployeeAction, setEmploymentStatusAction } from "./actions";
 
 /**
  * الموظفون والأجور — HR and payroll.
@@ -22,7 +24,10 @@ export default async function HrPage() {
   const ar = locale === "ar";
   const seeSalary = can(session.role, "salary:view");
 
-  const [employees, runs, unmatchedPunches, needsReview] = await Promise.all([
+  const mayManage = can(session.role, "payroll:prepare");
+
+  const [employees, runs, unmatchedPunches, needsReview, entities, costCentres, lines] =
+    await Promise.all([
     db.employee.findMany({
       where: { status: { not: "TERMINATED" } },
       include: { entity: true, costCenter: true },
@@ -39,6 +44,9 @@ export default async function HrPage() {
     }),
     db.biometricPunch.count({ where: { employeeId: null } }),
     db.attendanceDay.count({ where: { adjustmentReason: { contains: "Missing clock-out" } } }),
+    db.entity.findMany({ orderBy: { kind: "asc" } }),
+    db.costCenter.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
+    db.productionLine.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
   ]);
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
@@ -98,6 +106,62 @@ export default async function HrPage() {
               ? "بصمة ناقصة لا تُحسَب غيابًا ولا تُقدَّر تلقائيًا — لازم مشرف يراجعها قبل ما تأثر على الأجر."
               : "A missing punch is neither treated as absence nor guessed at — a supervisor must resolve it before it affects pay."}
           </p>
+        </Card>
+      )}
+
+      {mayManage && (
+        <Card className="mb-4" title={ar ? "إضافة موظف" : "Add an employee"}>
+          <EntityForm
+            locale={locale}
+            action={createEmployeeAction}
+            submitEn="Add employee"
+            submitAr="أضف الموظف"
+            fields={[
+              {
+                kind: "text", name: "code", labelEn: "Employee code", labelAr: "كود الموظف",
+                required: true, placeholder: "EMP-101", ltr: true,
+              },
+              { kind: "text", name: "name", labelEn: "Full name", labelAr: "الاسم", required: true, span: 2 },
+              {
+                kind: "select", name: "entityId", labelEn: "Employed by", labelAr: "جهة العمل",
+                required: true,
+                options: entities.map((e) => ({ value: e.id, label: name(e) })),
+              },
+              {
+                kind: "select", name: "costCenterId", labelEn: "Cost centre", labelAr: "مركز التكلفة",
+                options: costCentres.map((c) => ({ value: c.id, label: name(c) })),
+                emptyLabel: ar ? "— بدون —" : "— none —",
+                hintEn: "Decides which account the wage is charged to, and so which cost pool it lands in.",
+                hintAr: "بيحدد الحساب اللي الأجر يتحمّل عليه، وبالتالي أي مجمّع تكلفة يدخله.",
+              },
+              {
+                kind: "select", name: "productionLineId", labelEn: "Production line", labelAr: "خط الإنتاج",
+                options: lines.map((l) => ({ value: l.id, label: name(l) })),
+                emptyLabel: ar ? "— ليس عامل إنتاج —" : "— not a line operator —",
+                hintEn: "Sewing operators also become production operators on a line.",
+                hintAr: "عمال الإنتاج بيتسجّلوا كمان كعمال على خط.",
+              },
+              { kind: "text", name: "jobTitle", labelEn: "Job title", labelAr: "المسمى الوظيفي" },
+              { kind: "text", name: "department", labelEn: "Department", labelAr: "القسم" },
+              {
+                kind: "date", name: "hiredAt", labelEn: "Hired on", labelAr: "تاريخ التعيين",
+                required: true, defaultValue: new Date().toISOString().slice(0, 10), ltr: true,
+              },
+              {
+                kind: "number", name: "baseSalary", labelEn: "Base salary", labelAr: "الأجر الأساسي",
+                required: true, step: "0.01", min: "0", ltr: true,
+                hintEn: "Gross per period. A later change is recorded as history, never an edit.",
+                hintAr: "الإجمالي للفترة. أي تغيير بعدين بيتسجّل كتاريخ مش تعديل.",
+              },
+              { kind: "text", name: "phone", labelEn: "Phone", labelAr: "التليفون", ltr: true },
+              {
+                kind: "text", name: "biometricDeviceUserId", labelEn: "Badge number", labelAr: "رقم البصمة",
+                ltr: true,
+                hintEn: "The number the fingerprint reader knows them by. Must be unique.",
+                hintAr: "الرقم اللي جهاز البصمة بيعرفه بيه. لازم يكون فريد.",
+              },
+            ]}
+          />
         </Card>
       )}
 
