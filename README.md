@@ -224,8 +224,15 @@ Working end to end, with tests and verified in the browser:
 | **Garment tags** | A unique code per physical garment, minted as a run is closed, followed through despatch, intake and sale. Roll labels sized from settings; the till scans a tag to sell that exact piece. | `/print/labels/despatch/…`, `/pos` |
 | **Dashboard** | Cash, capital locked, idle-capacity penalty, cash conversion cycle, dead stock, group result. | `/` |
 
-Not built yet: bank and channel reconciliation, alert evaluation, the scenario
-simulator, external CMT quoting, and deployment to the VPS.
+| **Working capital** | AP aging, cash conversion cycle with every leg measured, break-even per style, GMROI by collection, dead stock by age. | `/expenses/aging`, `/reports/cash-cycle`, `/reports/break-even`, `/reports/gmroi`, `/inventory/dead-stock` |
+| **Commercial analysis** | Sell-through against what was made, markdown analysis reading what discounting actually ate, supplier scorecard putting price, lateness and quality side by side. | `/sales/sell-through`, `/sales/markdown`, `/suppliers/scorecard` |
+| **Factory floor** | Capacity and its booking, line and stage efficiency, scrap with its recovery rate. | `/capacity`, `/capacity/planning`, `/production/lines`, `/production/scrap` |
+| **Cash forecast** | Thirteen weeks of obligations already on the books — no sales projection. | `/cash-flow` |
+| **Alerts** | Eleven rules that evaluate against real data and deduplicate by condition, so a problem seen three mornings running is one alert. | `/alerts` |
+| **What-if** | A measured month with one thing changed: cloth, wages, utilisation, discount, returns. | `/scenarios` |
+| **External CMT** | Clients and quoting, with the full-capacity rate enforced as a hard floor. | `/cmt/clients`, `/cmt/quotes` |
+
+Not built yet: bank and channel reconciliation, and deployment to the VPS.
 
 ### The walkthrough
 
@@ -235,6 +242,20 @@ sell it — and reports anything that does not add up. It also checks that every
 step of that cycle has a screen with buttons on it, because the first version
 of this script passed while the production screen was read-only: it was calling
 the services directly, which no user can do.
+
+### Two rates, and why external work is strategic
+
+The factory has two minute rates and they do different jobs. The **actual**
+rate is what the Brand pays. The **full-capacity** rate is what the same
+minutes would cost if the factory were full, and it is the hard floor for
+quoting outside work — the quoting screen refuses to go under it rather than
+warning, because below it the Brand is paying part of a stranger's bill.
+
+Between the two sits the idle penalty, which is what unsold capacity costs
+whether or not anybody buys it. Because external CMT revenue is credited
+against the factory cost pool, every minute sold above the floor lowers the
+rate the Brand itself pays. That is why external work is a lever on the
+Brand's own margin rather than a sideline.
 
 ### Stock crossing between the two companies
 

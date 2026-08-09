@@ -72,6 +72,13 @@ export const PERMISSIONS = [
   "payroll:approve",
   "salary:view",
 
+  // --- alerts and planning ----------------------------------------------
+  "alert:view",
+  "alert:acknowledge",
+  "scenario:run",
+  "cmt_quote:view",
+  "cmt_quote:create",
+
   // --- system -----------------------------------------------------------
   "settings:manage",
   "user:manage",
@@ -122,6 +129,9 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "customer:view",
     "employee:view", "payroll:prepare", "salary:view",
     "audit:view",
+    "alert:view", "alert:acknowledge",
+    "scenario:run",
+    "cmt_quote:view",
     "report:factory", "report:brand", "report:group",
     // Deliberately excluded: expense:approve, payment:approve, payroll:approve
     // and period:close. Whoever prepares the books does not also get to
@@ -147,6 +157,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "purchase_order:view", "purchase_order:create",
     "goods_receipt:create",
     "minute_rate:view",
+    "alert:view", "alert:acknowledge",
+    "cmt_quote:view", "cmt_quote:create",
     "report:factory",
     // No payroll, no salary, no journal posting.
   ],
@@ -167,6 +179,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "retail_price:manage",
     "transfer_price:view",
     "pos:operate", "pos:close_shift",
+    "alert:view", "alert:acknowledge",
+    "scenario:run",
     "report:brand",
   ],
 

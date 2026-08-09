@@ -426,6 +426,42 @@ async function main() {
       descriptionAr: "الصيغة المستخدمة بالفعل — يفرضها مولّد ومدقق موحّد.",
     },
 
+    // --- brand unit economics -----------------------------------------
+    // The costs that leave with a garment but are not in the transfer price.
+    // Configured because they cannot be read off a single order line.
+    {
+      key: "brand.packagingPerUnit",
+      value: "12",
+      type: "DECIMAL" as const,
+      group: "Brand",
+      labelEn: "Packaging per garment",
+      labelAr: "التغليف للقطعة",
+      descriptionEn: "Bag, tissue and card that go out with every garment.",
+      descriptionAr: "الشنطة والورق والكارت اللي بيخرجوا مع كل قطعة.",
+    },
+    {
+      key: "brand.shippingPerUnit",
+      value: "45",
+      type: "DECIMAL" as const,
+      group: "Brand",
+      labelEn: "Shipping per garment",
+      labelAr: "الشحن للقطعة",
+      descriptionEn: "Average courier cost on a delivered order, per garment.",
+      descriptionAr: "متوسط تكلفة الشحن على الأوردر الموصّل، للقطعة.",
+    },
+    {
+      key: "brand.returnRate",
+      value: "0.08",
+      type: "PERCENT" as const,
+      group: "Brand",
+      labelEn: "Expected return rate",
+      labelAr: "نسبة المرتجعات المتوقعة",
+      descriptionEn:
+        "Used for contribution and break-even. A garment that comes back earns nothing but still cost to send.",
+      descriptionAr:
+        "بتُستخدم في هامش المساهمة ونقطة التعادل. القطعة اللي بترجع مابتكسبش حاجة وبرضه كلّفت شحن.",
+    },
+
     // --- the label roll -----------------------------------------------
     // Physical measurements of the stationery in the printer. A shop that
     // changes its roll changes these, not the code.

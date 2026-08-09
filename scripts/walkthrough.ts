@@ -52,11 +52,20 @@ for (const [route, why] of [
   ["goods-in", "count them in and tag them"],
   ["sales", "record an order taken by message"],
   ["settings", "change the label size"],
+  ["alerts", "be told when something crosses a threshold"],
+  ["scenarios", "ask what happens if the cloth gets dearer"],
+  ["cmt/quotes", "quote outside work above the capacity floor"],
   ["pos", "sell at the till"],
 ] as const) {
   const dir = `src/app/(app)/${route}`;
+  // Actions may sit beside the page or one level up, where sibling screens
+  // share them — /cmt/clients and /cmt/quotes both post to /cmt/actions.ts.
+  const parent = dir.slice(0, dir.lastIndexOf("/"));
+  const hasActions =
+    existsSync(`${dir}/actions.ts`) || existsSync(`${parent}/actions.ts`);
+
   if (!existsSync(`${dir}/page.tsx`)) gap(`/${route} has no page — cannot ${why}`);
-  else if (!existsSync(`${dir}/actions.ts`)) gap(`/${route} is read-only — cannot ${why}`);
+  else if (!hasActions) gap(`/${route} is read-only — cannot ${why}`);
   else ok(`/${route} — ${why}`);
 }
 
