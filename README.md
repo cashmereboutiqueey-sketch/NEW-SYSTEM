@@ -93,7 +93,7 @@ Worked example, at the seeded figures:
 
 That last figure is the single most important diagnostic in the system.
 
-**The corollary that drives Phase 6:** because external CMT revenue is credited against the factory cost pool, every idle minute sold above the full-capacity floor *directly lowers the minute rate the brand pays*. External CMT is not a side business — it is the main lever on the brand's own margin.
+**The corollary that makes external CMT strategic:** because external CMT revenue is credited against the factory cost pool, every idle minute sold above the full-capacity floor *directly lowers the minute rate the brand pays*. External CMT is not a side business — it is the main lever on the brand's own margin.
 
 ### 2.4 Minute rates are versioned, never rewritten
 
@@ -203,18 +203,36 @@ The schema carries these from day one, so no later phase requires a migration th
 
 ---
 
-## 4. Build phases
+## 4. Build status
 
-| Phase | Contents | Status |
+Working end to end, with tests and verified in the browser:
+
+| Area | What works | Screen |
 |---|---|---|
-| **1 — Foundation** | Schema, migrations, seed, auth, Arabic RTL shell, entity switcher | ✅ **Delivered** |
-| 2 — Costing engine | Expenses with accruals, capacity config, minute rate versioning, materials, BOM/SMV, style costing, transfer price, cost snapshots | Next |
-| 3 — Production | Production orders, cutting tickets, waste variance, WIP, capacity planning, scrap, rework, line efficiency | |
-| 4 — Commercial | Shopify integration, sales orders, returns, inventory with aging and dead stock | |
-| 5 — Analytics | Factory / Brand / Group P&L, unit economics, break-even, CCC, AP aging, GMROI, sell-through, markdown | |
-| 6 — External CMT | Clients, quoting with the floor-price guard, capacity booking, CMT profitability | |
+| **Accounting core** | Chart of accounts, double-entry journals, trial balance. Three invariants enforced by database triggers: posted journals must balance, posted entries are immutable, closed periods are unwritable. | — |
+| **Permissions** | 12 capability-based roles with segregation of duties: no non-owner role holds both halves of a segregated pair, and nobody approves their own document. | — |
+| **Expenses** | Accrual entry posting straight to the ledger; payment is a separate event that settles the liability. | `/expenses` |
+| **Minute rate** | Cost pool read from posted conversion accounts, utilisation and efficiency kept separate, versioned and lockable per month. | `/minute-rate` |
+| **Style costing** | BOM at landed cost, SMV at the frozen rate, margin, transfer price, immutable cost snapshots. | `/costing` |
+| **Inventory** | FIFO by lot across raw / WIP / finished goods, locations, ageing, dead stock, capital tracker. | `/inventory` |
+| **Production** | Orders freeze their cost basis on confirmation; planned vs actual fabric, minutes and waste. | `/production` |
+| **Sales** | One engine for Shopify, moderator and POS, with till sessions, split payments and COD clearing. | `/sales` |
+| **Group** | Factory→Brand transfer invoicing, intercompany elimination, unrealised profit in unsold stock. | `/reports/group-pnl` |
+| **Statements** | Factory and Brand P&L with the trial balance beside them, AP aging by due date. | `/reports/entity-pnl` |
+| **CRM** | RFM, lifetime value from real orders, duplicate detection with human confirmation, consent. | `/customers` |
+| **HR** | Biometric import, derived attendance, payroll accrual reaching the cost pool exactly once. | `/hr` |
+| **Dashboard** | Cash, capital locked, idle-capacity penalty, cash conversion cycle, dead stock, group result. | `/` |
 
-Each phase is handed over for testing with real data before the next begins.
+Not built yet: MRP, marketing campaigns and ROAS, printing and document
+templates, bank and channel reconciliation, alert evaluation, the scenario
+simulator, external CMT quoting, and deployment to the VPS.
+
+### Business decisions
+
+Two decisions that change financial meaning were escalated rather than
+assumed, and are recorded with their consequences in
+[`docs/DECISIONS.md`](docs/DECISIONS.md): VAT treatment (not registered) and
+the factory margin basis (full cost including materials).
 
 ---
 
@@ -262,7 +280,8 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and serve |
-| `npm test` | Unit tests for the costing formulas |
+| `npm test` | Unit tests for the domain logic. No database needed. |
+| `npm run test:db` | Integration tests against a real PostgreSQL instance |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Load sample data |
@@ -271,7 +290,7 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 
 ### Seeded sample data
 
-2 entities · 12 fiscal periods · 16 settings · 85 accounts · 6 cost centres · 2 tax rates · 10 colours · 5 sizes · 19 cost categories · 3 production lines · 40 operators · 12 capacity configurations · 6 suppliers · 15 materials · 3 collections · 8 styles · 60 BOM lines · 66 operations · 165 variants · 5 sales channels · 11 alert rules.
+2 entities · 12 fiscal periods · 23 settings · 86 accounts · 3 locations · 6 cost centres · 2 tax rates · 10 colours · 5 sizes · 19 cost categories · 3 production lines · 40 operators · 12 capacity configurations · 6 suppliers · 15 materials · 3 collections · 8 styles · 60 BOM lines · 66 operations · 165 variants · 5 sales channels · 11 alert rules.
 
 Prices are at 2026 Egyptian levels: cotton jersey at 168 EGP/m, linen blend at 318 EGP/m, factory payroll at 268,000 EGP/month, factory rent at 55,000 EGP/month.
 
