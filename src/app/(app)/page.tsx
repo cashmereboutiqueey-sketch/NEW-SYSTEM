@@ -1,183 +1,293 @@
-import { db } from "@/lib/db";
+import Link from "next/link";
 import { getPrefs } from "@/lib/session";
-import { t } from "@/lib/i18n";
-import { formatNumber } from "@/lib/money";
+import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { PageHeader, Card, StatTile, DataTable, Badge } from "@/components/ui";
-import { navigation, isShipped } from "@/lib/navigation";
+import { formatMoney, formatNumber, formatRate, formatPercent } from "@/lib/money";
+import { ownerDashboard } from "@/lib/dashboard";
+import { AGE_BUCKETS } from "@/core/fifo";
+import { dec } from "@/lib/money";
 
 /**
- * Phase 1 dashboard.
+ * The owner's cockpit.
  *
- * Deliberately does NOT display computed costing figures. The costing engine
- * arrives in Phase 2, and showing a placeholder number as though it were real
- * is exactly the failure mode this system exists to eliminate. What it shows
- * instead is the foundation itself: what data exists, and where the rest will
- * land.
+ * Every tile is derived from the ledger or the stock records and links to the
+ * screen that owns it, so no number here is something the owner has to take
+ * on trust. Where a figure cannot be computed yet, the tile says so instead of
+ * showing a zero that reads like an answer.
  */
 export default async function DashboardPage() {
-  const { locale, scope } = await getPrefs();
+  const session = await requireUser();
+  const { locale } = await getPrefs();
+  const ar = locale === "ar";
 
-  const [
-    entities,
-    periods,
-    costCategories,
-    suppliers,
-    materials,
-    collections,
-    styles,
-    variants,
-    lines,
-    operators,
-    channels,
-    settings,
-    alertRules,
-  ] = await Promise.all([
-    db.entity.findMany({ orderBy: { kind: "asc" } }),
-    db.fiscalPeriod.count(),
-    db.costCategory.count(),
-    db.supplier.count(),
-    db.material.count(),
-    db.collection.count(),
-    db.style.count(),
-    db.variant.count(),
-    db.productionLine.count(),
-    db.operator.count(),
-    db.salesChannel.count(),
-    db.setting.count(),
-    db.alertRule.count(),
-  ]);
+  const d = await ownerDashboard();
+  const seeGroup = can(session.role, "report:group");
 
-  const scopeLabel =
-    scope === "FACTORY"
-      ? t("factory", locale)
-      : scope === "BRAND"
-        ? t("brand", locale)
-        : t("group", locale);
-
-  const upcoming = navigation
-    .flatMap((s) => s.items)
-    .filter((i) => !isShipped(i))
-    .reduce<Record<number, string[]>>((acc, item) => {
-      (acc[item.phase] ??= []).push(t(item.key, locale));
-      return acc;
-    }, {});
+  const tile = (href: string, node: React.ReactNode) => (
+    <Link href={href} className="block transition-opacity hover:opacity-80">
+      {node}
+    </Link>
+  );
 
   return (
     <>
       <PageHeader
-        title={`${t("dashboard", locale)} — ${scopeLabel}`}
+        title={ar ? "لوحة المالك" : "Owner dashboard"}
         subtitle={
-          locale === "ar"
-            ? "المرحلة الأولى: الأساس. قاعدة البيانات والصلاحيات والواجهة جاهزة — محرك التكاليف يأتي في المرحلة الثانية."
-            : "Phase 1: foundation. Schema, auth and shell are live — the costing engine arrives in Phase 2."
+          ar
+            ? "كل رقم هنا محسوب من الدفاتر، ويفتح على الشاشة اللي جايّ منها"
+            : "Every figure is computed from the books and opens on the screen it comes from"
         }
-        actions={<Badge tone="info">Phase 1</Badge>}
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile
-          label={locale === "ar" ? "الأصناف (SKU)" : "Variants (SKU)"}
-          value={formatNumber(variants, locale)}
-          hint={locale === "ar" ? "لون × مقاس" : "colour × size"}
-        />
-        <StatTile
-          label={t("materials", locale)}
-          value={formatNumber(materials, locale)}
-          hint={locale === "ar" ? "قماش وإكسسوارات" : "fabric and trims"}
-        />
-        <StatTile
-          label={t("minuteRate", locale)}
-          value="—"
-          pending
-          hint={locale === "ar" ? "المرحلة 2" : "Phase 2"}
-        />
-        <StatTile
-          label={t("idleCapacity", locale)}
-          value="—"
-          pending
-          hint={locale === "ar" ? "المرحلة 2" : "Phase 2"}
-        />
+      {/* --- money --- */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {tile("/reports/entity-pnl", (
+          <StatTile
+            label={ar ? "النقدية والبنك" : "Cash and bank"}
+            value={formatMoney(d.cash, locale)}
+            tone={d.cash.greaterThan(0) ? "good" : "bad"}
+            hint={ar ? "شامل تحصيلات لم تصل بعد" : "Includes money not yet settled"}
+          />
+        ))}
+        {tile("/expenses", (
+          <StatTile
+            label={ar ? "مستحق للموردين" : "Owed to suppliers"}
+            value={formatMoney(d.payables, locale)}
+            tone={d.payables.greaterThan(0) ? "warn" : "good"}
+          />
+        ))}
+        {tile("/expenses", (
+          <StatTile
+            label={ar ? "متأخر عن السداد" : "Overdue"}
+            value={formatMoney(d.overduePayables, locale)}
+            tone={d.overduePayables.greaterThan(0) ? "bad" : "good"}
+          />
+        ))}
+        {tile("/inventory", (
+          <StatTile
+            label={ar ? "رأس المال في المخزون" : "Capital in stock"}
+            value={formatMoney(d.stock.total, locale)}
+            tone={d.stock.total.greaterThan(0) ? "warn" : "neutral"}
+            hint={`${formatMoney(d.stock.raw, locale)} ${ar ? "خامات" : "raw"}`}
+          />
+        ))}
+      </div>
+
+      {/* --- the factory's central number --- */}
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <Card
+          title={ar ? "الطاقة العاطلة" : "Idle capacity"}
+          description={
+            ar
+              ? "الفرق بين تكلفة الدقيقة الفعلية وتكلفتها بكامل الطاقة"
+              : "The gap between the actual minute rate and the full-capacity rate"
+          }
+        >
+          {d.minuteRate ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <div className="text-xs text-ink-500">{ar ? "الفعلي" : "Actual"}</div>
+                  <div className="num text-lg font-semibold">
+                    {formatRate(d.minuteRate.actual, locale)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-ink-500">{ar ? "كامل الطاقة" : "Full capacity"}</div>
+                  <div className="num text-lg font-semibold text-info">
+                    {formatRate(d.minuteRate.fullCapacity, locale)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-ink-500">{ar ? "العبء" : "Idle penalty"}</div>
+                  <div className="num text-lg font-semibold text-bad">
+                    {formatRate(d.minuteRate.idlePenalty, locale)}
+                  </div>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-ink-500">
+                {ar
+                  ? `${formatNumber(d.minuteRate.idleMinutes, locale)} دقيقة عاطلة في ${d.minuteRate.period}. كل دقيقة تُباع فوق سعر كامل الطاقة بتقلّل تكلفة الدقيقة على البراند.`
+                  : `${formatNumber(d.minuteRate.idleMinutes, locale)} idle minutes in ${d.minuteRate.period}. Every minute sold above the full-capacity rate lowers the rate the brand pays.`}
+              </p>
+              <Link href="/minute-rate" className="mt-2 inline-block text-xs underline">
+                {ar ? "افتح تكلفة الدقيقة" : "Open the minute rate"}
+              </Link>
+            </>
+          ) : (
+            <p className="py-4 text-sm text-ink-400">
+              {ar
+                ? "لم تُحسب تكلفة الدقيقة بعد — سجّل مصروفات التشغيل ثم احسب الشهر."
+                : "No minute rate calculated yet — post conversion costs, then calculate the period."}
+            </p>
+          )}
+        </Card>
+
+        <Card
+          title={ar ? "دورة الكاش" : "Cash conversion cycle"}
+          description={
+            ar
+              ? "الأيام من دفع ثمن القماش حتى تحصيل ثمن القطعة"
+              : "Days from paying for fabric to collecting for the garment"
+          }
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <div className="text-xs text-ink-500">{ar ? "طول الدورة" : "Cycle length"}</div>
+              <div className="num text-2xl font-semibold">
+                {formatNumber(d.ccc.cashConversionDays, locale)}{" "}
+                <span className="text-sm font-normal text-ink-500">{ar ? "يوم" : "days"}</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-ink-500">{ar ? "رأس مال محبوس" : "Capital locked"}</div>
+              <div className="num text-2xl font-semibold text-warn">
+                {formatMoney(d.ccc.workingCapitalLocked, locale)}
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-ink-500">
+            {d.ccc.cashConversionDays.greaterThan(0)
+              ? ar
+                ? "الدورة موجبة، يعني كل نمو في المبيعات بيستهلك كاش قبل ما يجيب."
+                : "A positive cycle means every unit of growth consumes cash before it returns any."
+              : ar
+                ? "الدورة سالبة — الموردون بيموّلوا التشغيل."
+                : "A negative cycle — suppliers are funding operations."}
+          </p>
+          <Link href="/settings" className="mt-2 inline-block text-xs underline">
+            {ar ? "الأيام المفترضة قابلة للتعديل" : "The assumed days are configurable"}
+          </Link>
+        </Card>
+      </div>
+
+      {/* --- trading --- */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {tile("/sales", (
+          <StatTile
+            label={ar ? "إيراد المبيعات" : "Sales revenue"}
+            value={formatMoney(d.sales.revenue, locale)}
+            hint={`${formatNumber(d.sales.unitsSold, locale)} ${ar ? "قطعة" : "units"}`}
+          />
+        ))}
+        {tile("/sales", (
+          <StatTile
+            label={ar ? "مجمل الربح" : "Gross margin"}
+            value={formatMoney(d.sales.grossMargin, locale)}
+            tone={d.sales.grossMargin.greaterThan(0) ? "good" : "bad"}
+            hint={d.sales.grossMarginPct ? formatPercent(d.sales.grossMarginPct, locale) : undefined}
+          />
+        ))}
+        {tile("/sales", (
+          <StatTile
+            label={ar ? "الربح بعد التسويق" : "Profit after marketing"}
+            value={formatMoney(d.marketing.profitAfterMarketing, locale)}
+            tone={d.marketing.profitAfterMarketing.greaterThan(0) ? "good" : "bad"}
+            hint={
+              d.marketing.contributionRoas
+                ? `${ar ? "عائد على الإنفاق" : "Contribution ROAS"} ${d.marketing.contributionRoas.toFixed(2)}×`
+                : ar ? "لا يوجد إنفاق تسويقي" : "No marketing spend"
+            }
+          />
+        ))}
+        {tile("/inventory", (
+          <StatTile
+            label={ar ? "المخزون الراكد" : "Dead stock"}
+            value={formatMoney(d.deadStock, locale)}
+            tone={d.deadStock.greaterThan(0) ? "bad" : "good"}
+            hint={ar ? "أكثر من ٩٠ يومًا" : "Older than 90 days"}
+          />
+        ))}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card
-          title={locale === "ar" ? "الكيانات" : "Entities"}
-          description={
-            locale === "ar"
-              ? "دفتران منفصلان يتعاملان بسعر تحويل عادل"
-              : "Two separate books transacting at an arm's-length transfer price"
-          }
-        >
-          <DataTable
-            headers={[
-              locale === "ar" ? "الكيان" : "Entity",
-              locale === "ar" ? "النوع" : "Kind",
-              locale === "ar" ? "العملة" : "Currency",
-            ]}
-            rows={entities.map((e) => [
-              locale === "ar" ? e.nameAr : e.nameEn,
-              <Badge key={e.id} tone={e.kind === "FACTORY" ? "info" : "good"}>
-                {e.kind}
-              </Badge>,
-              <span key={`${e.id}-c`} className="num">
-                {e.baseCurrency}
-              </span>,
-            ])}
-          />
-        </Card>
+        {seeGroup && (
+          <Card
+            title={ar ? "المجموعة" : "The group"}
+            description={
+              ar
+                ? "بعد حذف البيع الداخلي والربح غير المحقق"
+                : "After removing the internal sale and unrealised profit"
+            }
+          >
+            <dl className="space-y-2 text-sm">
+              {[
+                [ar ? "ربح المصنع" : "Factory profit", d.group.factoryProfit],
+                [ar ? "ربح البراند" : "Brand profit", d.group.brandProfit],
+                [ar ? "ربح غير محقق في المخزون" : "Unrealised in stock", d.group.unrealised],
+              ].map(([label, v]) => (
+                <div
+                  key={String(label)}
+                  className="flex items-baseline justify-between border-b border-ink-100 pb-1.5"
+                >
+                  <dt className="text-ink-600">{String(label)}</dt>
+                  <dd className="num">{formatMoney(v as never, locale)}</dd>
+                </div>
+              ))}
+              <div className="flex items-baseline justify-between border-t border-ink-300 pt-2 font-semibold">
+                <dt>{ar ? "ربح المجموعة" : "Group profit"}</dt>
+                <dd
+                  className={
+                    dec(d.group.groupProfit).greaterThan(0)
+                      ? "num text-good"
+                      : "num text-bad"
+                  }
+                >
+                  {formatMoney(d.group.groupProfit, locale)}
+                </dd>
+              </div>
+            </dl>
+            <div className="mt-3 flex items-center gap-3">
+              <Badge tone={d.group.intercompanyMatched ? "good" : "bad"}>
+                {d.group.intercompanyMatched
+                  ? ar ? "الحساب الجاري مطابق" : "Intercompany matched"
+                  : ar ? "فرق في الحساب الجاري" : "Intercompany difference"}
+              </Badge>
+              <Link href="/reports/group-pnl" className="text-xs underline">
+                {ar ? "افتح قائمة المجموعة" : "Open the group statement"}
+              </Link>
+            </div>
+          </Card>
+        )}
 
         <Card
-          title={locale === "ar" ? "بيانات الأساس" : "Foundation data"}
+          title={ar ? "أعمار البضاعة الجاهزة" : "Finished goods ageing"}
           description={
-            locale === "ar"
-              ? "ما تم تحميله من بيانات مرجعية وتجريبية"
-              : "Reference and seed data currently loaded"
+            ar
+              ? "رأس المال المحبوس حسب مدة بقاء البضاعة"
+              : "Capital locked by how long the goods have been sitting"
           }
         >
           <DataTable
             headers={[
-              locale === "ar" ? "الجدول" : "Table",
-              locale === "ar" ? "العدد" : "Count",
+              ar ? "العمر" : "Age",
+              ar ? "الكمية" : "Quantity",
+              ar ? "القيمة" : "Value",
             ]}
-            rows={[
-              [locale === "ar" ? "الفترات المالية" : "Fiscal periods", periods],
-              [locale === "ar" ? "بنود التكلفة" : "Cost categories", costCategories],
-              [t("suppliers", locale), suppliers],
-              [locale === "ar" ? "الكوليكشنز" : "Collections", collections],
-              [locale === "ar" ? "الموديلات" : "Styles", styles],
-              [t("productionLine", locale), lines],
-              [locale === "ar" ? "العمال" : "Operators", operators],
-              [locale === "ar" ? "قنوات البيع" : "Sales channels", channels],
-              [t("settings", locale), settings],
-              [locale === "ar" ? "قواعد التنبيهات" : "Alert rules", alertRules],
-            ].map(([label, count]) => [
-              label as string,
-              <span key={String(label)} className="num font-medium">
-                {formatNumber(count as number, locale)}
+            rows={AGE_BUCKETS.map((b) => [
+              <span key={`${b}-l`} className={b === "90+" ? "text-bad" : undefined}>
+                {b === "90+" ? (ar ? "أكثر من ٩٠ يوم" : "90+ days") : `${b} ${ar ? "يوم" : "days"}`}
+              </span>,
+              <span key={`${b}-q`} className="num">{formatNumber(d.aging[b].quantity, locale)}</span>,
+              <span
+                key={`${b}-v`}
+                className={b === "90+" && d.aging[b].value.greaterThan(0) ? "num text-bad" : "num"}
+              >
+                {formatMoney(d.aging[b].value, locale)}
               </span>,
             ])}
           />
+          {d.gmroi && (
+            <p className="mt-3 text-xs text-ink-500">
+              {ar
+                ? `كل جنيه في البضاعة الجاهزة بيجيب ${d.gmroi.toFixed(2)} جنيه مجمل ربح.`
+                : `Each pound in finished goods returns ${d.gmroi.toFixed(2)} of gross margin.`}
+            </p>
+          )}
         </Card>
       </div>
-
-      <Card
-        className="mt-4"
-        title={locale === "ar" ? "خارطة الطريق" : "Roadmap"}
-        description={
-          locale === "ar"
-            ? "الجداول موجودة بالفعل في قاعدة البيانات — الشاشات تُبنى مرحلة بمرحلة"
-            : "The tables already exist in the database — screens are built phase by phase"
-        }
-      >
-        <div className="space-y-3">
-          {Object.entries(upcoming).map(([phase, items]) => (
-            <div key={phase} className="flex gap-3">
-              <Badge tone="neutral">Phase {phase}</Badge>
-              <p className="text-sm text-ink-600">{items.join(" · ")}</p>
-            </div>
-          ))}
-        </div>
-      </Card>
     </>
   );
 }
