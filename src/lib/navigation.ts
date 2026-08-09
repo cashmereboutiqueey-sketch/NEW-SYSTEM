@@ -51,6 +51,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "capacity", href: "/capacity", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "gauge" },
       { key: "minuteRate", href: "/minute-rate", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "timer" , shipped: true },
+      { key: "mrp", href: "/mrp", phase: 9, scopes: ["FACTORY", "GROUP"], icon: "calendar", shipped: true },
       { key: "capacityPlanning", href: "/capacity/planning", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "calendar" },
     ],
   },

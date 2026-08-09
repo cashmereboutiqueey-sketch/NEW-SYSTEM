@@ -133,6 +133,7 @@ export const dictionary = {
   pos: { ar: "نقطة البيع", en: "Point of sale" },
   purchasing: { ar: "المشتريات", en: "Purchasing" },
   integrations: { ar: "التكاملات", en: "Integrations" },
+  mrp: { ar: "تخطيط الاحتياجات", en: "Requirements planning" },
   people: { ar: "الموظفون والأجور", en: "People and payroll" },
   customerProfitability: { ar: "ربحية العميل", en: "Customer profitability" },
   sales: { ar: "المبيعات", en: "Sales" },
