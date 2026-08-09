@@ -132,6 +132,7 @@ export const dictionary = {
   customers: { ar: "العملاء", en: "Customers" },
   pos: { ar: "نقطة البيع", en: "Point of sale" },
   purchasing: { ar: "المشتريات", en: "Purchasing" },
+  integrations: { ar: "التكاملات", en: "Integrations" },
   people: { ar: "الموظفون والأجور", en: "People and payroll" },
   customerProfitability: { ar: "ربحية العميل", en: "Customer profitability" },
   sales: { ar: "المبيعات", en: "Sales" },

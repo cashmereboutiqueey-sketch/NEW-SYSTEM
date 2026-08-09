@@ -108,6 +108,7 @@ export const navigation: NavSection[] = [
     key: "scenarioSimulator",
     items: [
       { key: "whatIf", href: "/scenarios", phase: 3, scopes: ALL_SCOPES, icon: "sparkles" },
+      { key: "integrations", href: "/integrations", phase: 9, scopes: ALL_SCOPES, icon: "refresh", shipped: true },
       { key: "settings", href: "/settings", phase: 1, scopes: ALL_SCOPES, icon: "settings" , shipped: true },
     ],
   },

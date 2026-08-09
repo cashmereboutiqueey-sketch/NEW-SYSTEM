@@ -1569,6 +1569,139 @@ model InventoryMovement {
 }
 
 // ===========================================================================
+// INTEGRATIONS — external systems
+//
+// An integration is never the accounting authority. Imported records become
+// internal documents through the same services a human would use, and
+// anything that cannot be matched lands in an exception queue instead of
+// being guessed at.
+// ===========================================================================
+
+enum IntegrationProvider {
+  SHOPIFY
+  BIOMETRIC
+  PAYMENT_GATEWAY
+  BANK
+}
+
+/// Credentials and state for one external connection. The token is stored
+/// here rather than in the environment so a shop can be reconnected without a
+/// deploy — it must never be returned to the browser.
+model IntegrationConnection {
+  id        String              @id @default(cuid())
+  provider  IntegrationProvider
+  /// The shop domain, device serial or bank identifier.
+  externalRef String
+  displayName String
+
+  accessToken String?
+  /// Verifies signed webhooks, so a forged payload cannot inject orders.
+  webhookSecret String?
+  apiVersion  String?
+
+  isActive     Boolean   @default(true)
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  syncLogs SyncLog[]
+  mappings ExternalMapping[]
+
+  @@unique([provider, externalRef])
+  @@map("integration_connections")
+}
+
+enum SyncDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SyncStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+/// One record per sync attempt, so a missing order can be traced to the run
+/// that should have brought it in.
+model SyncLog {
+  id           String                @id @default(cuid())
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  objectType String
+  direction  SyncDirection
+  status     SyncStatus
+
+  processed Int @default(0)
+  created   Int @default(0)
+  /// Records skipped because they had already been imported.
+  duplicates Int @default(0)
+  failed    Int @default(0)
+
+  /// Failures in full, so a run can be retried against the same evidence.
+  errors    Json?
+  startedAt DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([connectionId, startedAt])
+  @@map("sync_logs")
+}
+
+/// Ties an external identifier to an internal record.
+///
+/// This is what makes an import idempotent: the same Shopify order arriving
+/// twice finds its mapping and stops, rather than relieving stock again.
+model ExternalMapping {
+  id           String                @id @default(cuid())
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  objectType String
+  externalId String
+  internalId String
+  /// Kept so a mismatch can be investigated against what the provider sent.
+  externalRef String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([connectionId, objectType, externalId])
+  @@index([objectType, internalId])
+  @@map("external_mappings")
+}
+
+enum ExceptionStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+/// Something arrived that could not be processed automatically.
+///
+/// An unknown SKU on a website order is the common case. Guessing which
+/// garment was meant would relieve the wrong stock, so the order waits here
+/// for a person.
+model IntegrationException {
+  id           String          @id @default(cuid())
+  connectionId String?
+  provider     IntegrationProvider
+  objectType   String
+  externalId   String?
+  reason       String
+  /// The payload as received, so the decision is made on the real evidence.
+  payload      Json?
+  status       ExceptionStatus @default(OPEN)
+  resolvedAt   DateTime?
+  resolvedNote String?
+  createdAt    DateTime        @default(now())
+
+  @@index([status, provider])
+  @@map("integration_exceptions")
+}
+
+// ===========================================================================
 // HR — employees, attendance, payroll
 //
 // Biometric devices are an input source, not the accounting authority: raw

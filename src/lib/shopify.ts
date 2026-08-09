@@ -1,0 +1,443 @@
+import "server-only";
+import crypto from "node:crypto";
+import { db } from "./db";
+import { createSale, SalesError } from "./sales";
+import { writeAudit, type AuditContext } from "./audit";
+import { dec } from "./money";
+
+/**
+ * The Shopify connector.
+ *
+ * Shopify is authoritative for what happened on the website and nothing else.
+ * An imported order becomes an internal sale through the same service a
+ * moderator or cashier uses, so it relieves the same FIFO stock and posts the
+ * same journals — there is no second, softer path into the ledger.
+ *
+ * Anything that cannot be matched with certainty becomes an exception rather
+ * than a guess. Picking the closest-looking SKU would relieve the wrong
+ * garment and misstate both stock and margin.
+ */
+
+export class ShopifyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ShopifyError";
+  }
+}
+
+const API_VERSION = "2024-10";
+
+export type ShopifyOrder = {
+  id: number;
+  name: string;
+  created_at: string;
+  currency: string;
+  total_discounts?: string;
+  shipping_lines?: { price: string }[];
+  customer?: {
+    id: number;
+    first_name?: string | null;
+    last_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
+  shipping_address?: { city?: string | null } | null;
+  financial_status?: string;
+  cancelled_at?: string | null;
+  line_items: {
+    id: number;
+    sku: string | null;
+    quantity: number;
+    price: string;
+    total_discount?: string;
+    title?: string;
+  }[];
+};
+
+/**
+ * Verifies a webhook came from Shopify.
+ *
+ * Timing-safe on purpose: comparing digests with === leaks how much of the
+ * signature was right, which is enough to forge one given enough attempts.
+ */
+export function verifyWebhookSignature(
+  rawBody: string,
+  hmacHeader: string,
+  secret: string,
+): boolean {
+  const digest = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
+  const a = Buffer.from(digest);
+  const b = Buffer.from(hmacHeader);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+async function shopifyFetch<T>(
+  connection: { externalRef: string; accessToken: string | null; apiVersion: string | null },
+  path: string,
+): Promise<T> {
+  if (!connection.accessToken) {
+    throw new ShopifyError("This shop has no access token configured.");
+  }
+
+  const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
+  const response = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": connection.accessToken,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (response.status === 429) {
+    // Shopify's leaky bucket. Surfacing it plainly lets the caller back off
+    // rather than hammering the shop and getting throttled harder.
+    throw new ShopifyError("Shopify is rate limiting this shop. Try again shortly.");
+  }
+  if (!response.ok) {
+    throw new ShopifyError(`Shopify returned ${response.status}: ${await response.text()}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Records an unmatched record for a person to resolve. */
+async function raiseException(input: {
+  connectionId: string;
+  objectType: string;
+  externalId: string;
+  reason: string;
+  payload: unknown;
+}) {
+  await db.integrationException.create({
+    data: {
+      connectionId: input.connectionId,
+      provider: "SHOPIFY",
+      objectType: input.objectType,
+      externalId: input.externalId,
+      reason: input.reason,
+      payload: JSON.parse(JSON.stringify(input.payload ?? null)),
+    },
+  });
+}
+
+/**
+ * Imports orders into the internal sales engine.
+ *
+ * Idempotent twice over: an existing mapping short-circuits the import, and
+ * `createSale` itself refuses a duplicate external id. Either guard alone
+ * would do; both are cheap and stock relieved twice is not recoverable.
+ */
+export async function importOrders(
+  input: { connectionId: string; orders: ShopifyOrder[] },
+  ctx: AuditContext,
+): Promise<{ created: number; duplicates: number; failed: number; exceptions: string[] }> {
+  const connection = await db.integrationConnection.findUnique({
+    where: { id: input.connectionId },
+  });
+  if (!connection) throw new ShopifyError("Shop connection not found.");
+
+  const [brand, onlineChannel, anyChannel, location] = await Promise.all([
+    db.entity.findFirstOrThrow({ where: { kind: "BRAND" } }),
+    db.salesChannel.findFirst({ where: { kind: "ONLINE" } }),
+    db.salesChannel.findFirstOrThrow(),
+    // Website orders ship from the Alexandria warehouse unless configured
+    // otherwise; the showroom and the warehouse are one location.
+    db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } }),
+  ]);
+  const channel = onlineChannel ?? anyChannel;
+
+  const log = await db.syncLog.create({
+    data: {
+      connectionId: connection.id,
+      objectType: "order",
+      direction: "INBOUND",
+      status: "SUCCESS",
+      processed: input.orders.length,
+    },
+  });
+
+  let created = 0;
+  let duplicates = 0;
+  let failed = 0;
+  const exceptions: string[] = [];
+  const errors: { externalId: string; reason: string }[] = [];
+
+  for (const order of input.orders) {
+    const externalId = String(order.id);
+
+    try {
+      if (order.cancelled_at) {
+        // Cancelled before it ever reached us: recorded, not imported, since
+        // importing then reversing would move stock that never left.
+        duplicates += 1;
+        continue;
+      }
+
+      const mapped = await db.externalMapping.findUnique({
+        where: {
+          connectionId_objectType_externalId: {
+            connectionId: connection.id,
+            objectType: "order",
+            externalId,
+          },
+        },
+      });
+      if (mapped) {
+        duplicates += 1;
+        continue;
+      }
+
+      // --- resolve every SKU before touching stock --------------------
+      const lines: { variantId: string; quantity: number; retailPrice: number; discountPct: number }[] = [];
+      const unknown: string[] = [];
+
+      for (const item of order.line_items) {
+        if (!item.sku) {
+          unknown.push(item.title ?? `line ${item.id}`);
+          continue;
+        }
+        const variant = await db.variant.findUnique({ where: { sku: item.sku.trim().toUpperCase() } });
+        if (!variant) {
+          unknown.push(item.sku);
+          continue;
+        }
+
+        // Shopify gives a discount amount, not a rate; converting keeps the
+        // internal order in the one shape the engine understands.
+        const gross = dec(item.price).times(item.quantity);
+        const discount = dec(item.total_discount ?? "0");
+        const discountPct = gross.isZero() ? dec(0) : discount.div(gross);
+
+        lines.push({
+          variantId: variant.id,
+          quantity: item.quantity,
+          retailPrice: Number(item.price),
+          discountPct: Number(discountPct),
+        });
+      }
+
+      if (unknown.length > 0) {
+        await raiseException({
+          connectionId: connection.id,
+          objectType: "order",
+          externalId,
+          reason: `Unrecognised SKU: ${unknown.join(", ")}. The order was not imported, because guessing which garment was meant would relieve the wrong stock.`,
+          payload: order,
+        });
+        exceptions.push(`${order.name}: ${unknown.join(", ")}`);
+        failed += 1;
+        continue;
+      }
+
+      const customerId = order.customer
+        ? await resolveCustomer(connection.id, order.customer)
+        : null;
+
+      const shipping = (order.shipping_lines ?? []).reduce(
+        (s, l) => s.plus(dec(l.price)), dec(0),
+      );
+
+      const sale = await createSale(
+        {
+          source: "SHOPIFY",
+          externalId,
+          channelId: channel.id,
+          entityId: brand.id,
+          locationId: location.id,
+          customerId,
+          orderDate: new Date(order.created_at),
+          city: order.shipping_address?.city ?? null,
+          shippingAmount: Number(shipping),
+          lines,
+          // Website payment is confirmed by the gateway, not by us. It is
+          // recorded as collected only when Shopify says it was paid.
+          payments:
+            order.financial_status === "paid"
+              ? [
+                  {
+                    method: "CARD" as const,
+                    amount: Number(
+                      lines.reduce(
+                        (s, l) =>
+                          s.plus(
+                            dec(l.retailPrice)
+                              .times(dec(1).minus(dec(l.discountPct)))
+                              .times(l.quantity),
+                          ),
+                        dec(0),
+                      ).plus(shipping),
+                    ),
+                    fee: 0,
+                    collected: true,
+                  },
+                ]
+              : [],
+        },
+        ctx,
+      );
+
+      await db.externalMapping.create({
+        data: {
+          connectionId: connection.id,
+          objectType: "order",
+          externalId,
+          internalId: sale.salesOrderId,
+          externalRef: order.name,
+        },
+      });
+      created += 1;
+    } catch (error) {
+      failed += 1;
+      const reason =
+        error instanceof SalesError || error instanceof ShopifyError
+          ? error.message
+          : "Unexpected error while importing.";
+      errors.push({ externalId, reason });
+      await raiseException({
+        connectionId: connection.id,
+        objectType: "order",
+        externalId,
+        reason,
+        payload: order,
+      });
+    }
+  }
+
+  await db.syncLog.update({
+    where: { id: log.id },
+    data: {
+      created, duplicates, failed,
+      status: failed === 0 ? "SUCCESS" : created > 0 ? "PARTIAL" : "FAILED",
+      errors: errors.length > 0 ? JSON.parse(JSON.stringify(errors)) : undefined,
+      finishedAt: new Date(),
+    },
+  });
+
+  await db.integrationConnection.update({
+    where: { id: connection.id },
+    data: {
+      lastSyncedAt: new Date(),
+      lastError: failed > 0 ? `${failed} order(s) could not be imported.` : null,
+    },
+  });
+
+  await db.$transaction(async (tx) => {
+    await writeAudit(tx, {
+      action: "SHOPIFY_ORDERS_IMPORTED",
+      entityName: "IntegrationConnection",
+      entityId: connection.id,
+      after: { processed: input.orders.length, created, duplicates, failed },
+      ctx,
+    });
+  });
+
+  return { created, duplicates, failed, exceptions };
+}
+
+/**
+ * Finds or creates the customer behind a website order.
+ *
+ * Matched on the Shopify customer id first, then email — never on name, which
+ * is not unique and would merge strangers.
+ */
+async function resolveCustomer(
+  connectionId: string,
+  shopper: NonNullable<ShopifyOrder["customer"]>,
+): Promise<string | null> {
+  const externalId = String(shopper.id);
+
+  const mapped = await db.externalMapping.findUnique({
+    where: {
+      connectionId_objectType_externalId: { connectionId, objectType: "customer", externalId },
+    },
+  });
+  if (mapped) return mapped.internalId;
+
+  const email = shopper.email?.trim().toLowerCase() ?? null;
+  const existing = email
+    ? await db.customer.findFirst({ where: { emailNormalised: email, mergedIntoId: null } })
+    : null;
+
+  const name =
+    [shopper.first_name, shopper.last_name].filter(Boolean).join(" ").trim() ||
+    email ||
+    `Shopify ${externalId}`;
+
+  const customer =
+    existing ??
+    (await db.customer.create({
+      data: {
+        code: `SHOP-${externalId}`,
+        name,
+        email: shopper.email ?? null,
+        phone: shopper.phone ?? null,
+        emailNormalised: email,
+        shopifyCustomerId: externalId,
+        acquiredVia: "SHOPIFY",
+      },
+    }));
+
+  await db.externalMapping.create({
+    data: { connectionId, objectType: "customer", externalId, internalId: customer.id },
+  });
+
+  return customer.id;
+}
+
+/** Pulls recent orders from the shop and imports them. */
+export async function pullOrders(
+  input: { connectionId: string; sinceDays?: number },
+  ctx: AuditContext,
+) {
+  const connection = await db.integrationConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+  });
+
+  const since = new Date(Date.now() - (input.sinceDays ?? 7) * 86_400_000);
+  const data = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+    connection,
+    `orders.json?status=any&updated_at_min=${since.toISOString()}&limit=250`,
+  );
+
+  return importOrders({ connectionId: connection.id, orders: data.orders }, ctx);
+}
+
+/**
+ * Reports what stock Shopify should be told about.
+ *
+ * Deliberately read-only for now: pushing quantities to a live shop can
+ * oversell or hide stock, and that is not something to switch on without the
+ * owner deciding. The figures are shown so the decision can be made on real
+ * numbers.
+ */
+export async function inventoryToPublish(locationCode = "LOC-ALX") {
+  const location = await db.location.findUniqueOrThrow({ where: { code: locationCode } });
+  const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+
+  const lots = await db.inventoryLot.findMany({
+    where: {
+      locationId: location.id,
+      entityId: brand.id,
+      state: "FINISHED_GOODS",
+      remainingQty: { gt: 0 },
+      variantId: { not: null },
+    },
+    include: { variant: { include: { style: true } } },
+  });
+
+  const byVariant = new Map<string, { sku: string; style: string; available: number; linked: boolean }>();
+  for (const lot of lots) {
+    const v = lot.variant!;
+    const row = byVariant.get(v.id);
+    if (row) {
+      row.available += Number(lot.remainingQty);
+      continue;
+    }
+    byVariant.set(v.id, {
+      sku: v.sku,
+      style: v.style.code,
+      available: Number(lot.remainingQty),
+      linked: Boolean(v.shopifyVariantId),
+    });
+  }
+
+  return [...byVariant.values()].sort((a, b) => a.sku.localeCompare(b.sku));
+}
