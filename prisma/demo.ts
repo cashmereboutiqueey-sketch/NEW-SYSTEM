@@ -178,15 +178,30 @@ async function main() {
   console.log(`  production: ${po.orderNumber} — 400 planned, 388 good, 12 rejected`);
 
   // ------------------------------------------------------------- transfer
-  const transfer = await transferToBrand(
-    {
-      variantId: style.variants[0].id, quantity: "388",
-      fromLocationId: facLoc.id, toLocationId: alxLoc.id,
-      transferDate: on(15), costSnapshotId: snapshot.costSnapshotId,
-    },
-    asOwner,
+  //
+  // The showroom takes the sizes it can sell and the tail stays at the
+  // factory, which is what actually happens and what leaves the transfer
+  // queue with something in it.
+  const shipped = outputs.filter((o) => o.goodQty > 0).slice(0, 4);
+  let transferNumber = "";
+  let marginPerUnit = "0";
+  for (const out of shipped) {
+    const transfer = await transferToBrand(
+      {
+        variantId: out.variantId, quantity: String(out.goodQty),
+        fromLocationId: facLoc.id, toLocationId: alxLoc.id,
+        transferDate: on(15), costSnapshotId: snapshot.costSnapshotId,
+      },
+      asOwner,
+    );
+    transferNumber = transfer.transferNumber;
+    marginPerUnit = transfer.marginPerUnit;
+  }
+  const held = outputs.slice(4).reduce((s, o) => s + o.goodQty, 0);
+  console.log(
+    `  transfer: ${shipped.length} invoices to ${transferNumber} — ` +
+      `margin ${Number(marginPerUnit).toFixed(2)}/unit, ${held} left at the factory`,
   );
-  console.log(`  transfer: ${transfer.transferNumber} — margin ${Number(transfer.marginPerUnit).toFixed(2)}/unit`);
 
   // -------------------------------------------------------------- customers
   const customers = [
