@@ -59,6 +59,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "materials", href: "/materials", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "layers" , shipped: true },
       { key: "suppliers", href: "/suppliers", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "truck" , shipped: true },
+      { key: "purchasing", href: "/purchasing", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "file", shipped: true },
       { key: "supplierScore", href: "/suppliers/scorecard", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "star" },
     ],
   },
