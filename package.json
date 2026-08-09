@@ -19,7 +19,8 @@
     "test:db": "vitest run --config vitest.integration.config.ts",
     "test:all": "npm run test && npm run test:db",
     "db:demo": "tsx --conditions=react-server prisma/demo.ts",
-    "db:fresh": "prisma migrate deploy && npm run db:seed && npm run db:demo"
+    "db:fresh": "prisma migrate deploy && npm run db:seed && npm run db:demo",
+    "walkthrough": "tsx --conditions=react-server scripts/walkthrough.ts"
   },
   "repository": {
     "type": "git",

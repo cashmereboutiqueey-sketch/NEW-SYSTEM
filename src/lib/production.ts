@@ -334,12 +334,21 @@ export async function issueForOrder(
  * Garments enter stock at the frozen snapshot cost, not a recomputed one, so
  * what the costing promised is what the balance sheet carries.
  */
+/**
+ * Books the finished garments and closes the order.
+ *
+ * Output is a size curve, not a number: one run of a dress yields so many
+ * black mediums, so many cream larges. Each SKU becomes its own lot, because
+ * that is the granularity stock is counted and sold at. The unit cost is the
+ * same for every size — the snapshot costs the style, not the size — so
+ * splitting the run changes how the output is labelled, never what it cost.
+ */
 export async function completeProductionOrder(
   input: {
     productionOrderId: string;
-    goodQty: number;
+    /** How many good garments of each SKU came off the line. */
+    outputs: { variantId: string; goodQty: number }[];
     rejectedQty?: number;
-    variantId: string;
     locationId: string;
     entityId: string;
     completedDate: Date;
@@ -348,9 +357,10 @@ export async function completeProductionOrder(
   ctx: AuditContext,
 ): Promise<{
   orderNumber: string;
+  goodQty: number;
   costVariance: string;
   fabricVariance: string;
-  finishedLotNumber: string;
+  finishedLotNumbers: string[];
 }> {
   const order = await db.productionOrder.findUnique({
     where: { id: input.productionOrderId },
@@ -363,46 +373,73 @@ export async function completeProductionOrder(
   if (order.status === "COMPLETED") {
     throw new ProductionError(`Order ${order.orderNumber} is already complete.`);
   }
-  if (input.goodQty <= 0) {
+
+  const outputs = input.outputs.filter((o) => o.goodQty > 0);
+  if (outputs.length === 0) {
     throw new ProductionError("Completed quantity must be greater than zero.");
   }
+  if (outputs.some((o) => !Number.isInteger(o.goodQty))) {
+    throw new ProductionError("Garments come off the line whole; quantities must be integers.");
+  }
+  if (new Set(outputs.map((o) => o.variantId)).size !== outputs.length) {
+    throw new ProductionError("The same SKU is listed twice in the output.");
+  }
 
+  const styleVariants = await db.variant.findMany({
+    where: { id: { in: outputs.map((o) => o.variantId) } },
+    select: { id: true, sku: true, styleId: true },
+  });
+  const foreign = styleVariants.find((v) => v.styleId !== order.styleId);
+  if (foreign) {
+    throw new ProductionError(
+      `${foreign.sku} is not a SKU of the style this order was raised for.`,
+    );
+  }
+  if (styleVariants.length !== outputs.length) {
+    throw new ProductionError("One of the output SKUs does not exist.");
+  }
+
+  const goodQty = outputs.reduce((s, o) => s + o.goodQty, 0);
   const snap = order.costSnapshot;
 
   // Split so the receipt can credit WIP for material and the absorption
   // account for conversion — see receiveFinishedGoods.
-  const received = await receiveFinishedGoods(
-    {
-      variantId: input.variantId,
-      locationId: input.locationId,
-      entityId: input.entityId,
-      quantity: String(input.goodQty),
-      unitCost: snap.factoryTotalCost.toString(),
-      materialUnitCost: snap.materialCost.toString(),
-      receivedDate: input.completedDate,
-      productionOrderId: order.id,
-    },
-    ctx,
-  );
+  const finishedLotNumbers: string[] = [];
+  for (const output of outputs) {
+    const received = await receiveFinishedGoods(
+      {
+        variantId: output.variantId,
+        locationId: input.locationId,
+        entityId: input.entityId,
+        quantity: String(output.goodQty),
+        unitCost: snap.factoryTotalCost.toString(),
+        materialUnitCost: snap.materialCost.toString(),
+        receivedDate: input.completedDate,
+        productionOrderId: order.id,
+      },
+      ctx,
+    );
+    finishedLotNumbers.push(received.lotNumber);
+  }
 
   return db.$transaction(async (tx) => {
-    const actualTotalCost = dec(snap.factoryTotalCost).times(input.goodQty);
+    const actualTotalCost = dec(snap.factoryTotalCost).times(goodQty);
     const costVar = variance(order.plannedTotalCost ?? 0, actualTotalCost);
     const fabricVar = variance(order.plannedFabricQty ?? 0, order.actualFabricQty ?? 0);
 
     const actualMinutes = input.actualTotalMinutes
       ? dec(input.actualTotalMinutes)
-      : dec(snap.smvMinutes).times(input.goodQty);
+      : dec(snap.smvMinutes).times(goodQty);
 
     await tx.productionOrder.update({
       where: { id: order.id },
       data: {
         status: "COMPLETED",
-        actualQty: input.goodQty,
+        actualQty: goodQty,
         rejectedQty: input.rejectedQty ?? 0,
         actualFinish: input.completedDate,
         actualTotalMinutes: actualMinutes.toString(),
-        actualSmvPerUnit: actualMinutes.div(input.goodQty).toString(),
+        actualSmvPerUnit: actualMinutes.div(goodQty).toString(),
         actualTotalCost: actualTotalCost.toString(),
         costVariance: costVar.variance.toString(),
         fabricVariance: fabricVar.variance.toString(),
@@ -416,21 +453,28 @@ export async function completeProductionOrder(
       before: { status: order.status, plannedQty: order.plannedQty },
       after: {
         status: "COMPLETED",
-        goodQty: input.goodQty,
+        goodQty,
         rejectedQty: input.rejectedQty ?? 0,
+        // The size curve is part of the record: it is what a buyer asks about
+        // when the mediums sell out and the extra-larges do not.
+        outputs: outputs.map((o) => ({
+          sku: styleVariants.find((v) => v.id === o.variantId)?.sku ?? o.variantId,
+          goodQty: o.goodQty,
+        })),
         actualTotalCost: actualTotalCost.toString(),
         costVariance: costVar.variance.toString(),
         fabricVariance: fabricVar.variance.toString(),
-        finishedLot: received.lotNumber,
+        finishedLots: finishedLotNumbers,
       },
       ctx,
     });
 
     return {
       orderNumber: order.orderNumber,
+      goodQty,
       costVariance: costVar.variance.toString(),
       fabricVariance: fabricVar.variance.toString(),
-      finishedLotNumber: received.lotNumber,
+      finishedLotNumbers,
     };
   });
 }

@@ -215,17 +215,25 @@ Working end to end, with tests and verified in the browser:
 | **Minute rate** | Cost pool read from posted conversion accounts, utilisation and efficiency kept separate, versioned and lockable per month. | `/minute-rate` |
 | **Style costing** | BOM at landed cost, SMV at the frozen rate, margin, transfer price, immutable cost snapshots. | `/costing` |
 | **Inventory** | FIFO by lot across raw / WIP / finished goods, locations, ageing, dead stock, capital tracker. | `/inventory` |
-| **Production** | Orders freeze their cost basis on confirmation; planned vs actual fabric, minutes and waste. | `/production` |
+| **Production** | Raise, confirm, issue against and close a run. Confirming freezes the cost basis; output is booked as a size curve, one lot per SKU. Planned vs actual fabric, minutes and waste. | `/production` |
 | **Sales** | One engine for Shopify, moderator and POS, with till sessions, split payments and COD clearing. | `/sales` |
-| **Group** | Factory→Brand transfer invoicing, intercompany elimination, unrealised profit in unsold stock. | `/reports/group-pnl` |
+| **Group** | Factory→Brand transfer invoicing at the frozen snapshot price, intercompany elimination, unrealised profit in unsold stock. | `/transfers`, `/reports/group-pnl` |
 | **Statements** | Factory and Brand P&L with the trial balance beside them, AP aging by due date. | `/reports/entity-pnl` |
 | **CRM** | RFM, lifetime value from real orders, duplicate detection with human confirmation, consent. | `/customers` |
 | **HR** | Biometric import, derived attendance, payroll accrual reaching the cost pool exactly once. | `/hr` |
 | **Dashboard** | Cash, capital locked, idle-capacity penalty, cash conversion cycle, dead stock, group result. | `/` |
 
-Not built yet: MRP, marketing campaigns and ROAS, printing and document
-templates, bank and channel reconciliation, alert evaluation, the scenario
+Not built yet: bank and channel reconciliation, alert evaluation, the scenario
 simulator, external CMT quoting, and deployment to the VPS.
+
+### The walkthrough
+
+`npm run walkthrough` drives the whole cycle against a freshly seeded database
+— add a supplier, buy fabric, create a product, make it, get it to the till,
+sell it — and reports anything that does not add up. It also checks that every
+step of that cycle has a screen with buttons on it, because the first version
+of this script passed while the production screen was read-only: it was calling
+the services directly, which no user can do.
 
 ### Business decisions
 
@@ -282,6 +290,7 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 | `npm run build` / `npm start` | Production build and serve |
 | `npm test` | Unit tests for the domain logic. No database needed. |
 | `npm run test:db` | Integration tests against a real PostgreSQL instance |
+| `npm run walkthrough` | Drives the whole business cycle end to end and reports gaps |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run db:migrate` | Create and apply a migration |
 | `npm run db:seed` | Load sample data |

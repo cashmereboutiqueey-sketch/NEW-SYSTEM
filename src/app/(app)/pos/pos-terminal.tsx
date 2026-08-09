@@ -166,10 +166,12 @@ export function PosTerminal({
 
         {filtered.length === 0 ? (
           <div className="rounded-xl border border-dashed border-ink-200 py-12 text-center text-sm text-ink-400">
+            {/* What to do about it is said once, in the banner above, and only
+                when there is actually something at the factory to transfer. */}
             {products.length === 0
               ? ar
-                ? "لا يوجد مخزون في هذا الفرع. حوّل بضاعة من المصنع أولًا."
-                : "No stock at this location. Transfer goods from the factory first."
+                ? "لا يوجد مخزون في هذا الفرع."
+                : "No stock at this location."
               : ar
                 ? "لا يوجد صنف مطابق."
                 : "Nothing matches."}

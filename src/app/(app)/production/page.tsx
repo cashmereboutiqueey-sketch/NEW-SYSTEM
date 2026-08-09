@@ -1,11 +1,19 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { t } from "@/lib/i18n";
+import { plannedMaterials } from "@/lib/production";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { variance } from "@/core/production";
 import { dec } from "@/lib/money";
+import {
+  NewOrderForm,
+  ConfirmOrderForm,
+  IssueMaterialForm,
+  CompleteOrderForm,
+} from "./production-forms";
 
 /**
  * Production orders.
@@ -15,25 +23,100 @@ import { dec } from "@/lib/money";
  * table or the sewing line.
  */
 export default async function ProductionPage() {
-  await requireUser();
+  const session = await requireUser();
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const orders = await db.productionOrder.findMany({
-    include: {
-      style: true,
-      costSnapshot: true,
-      minuteRatePeriod: { include: { fiscalPeriod: true } },
-      materialIssues: { include: { material: true } },
-    },
-    orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
-    take: 50,
-  });
+  const mayCreate = can(session.role, "production:create");
+  const mayConfirm = can(session.role, "production:confirm_cost");
+  const mayRecord = can(session.role, "production:record");
 
+  const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
+
+  const [orders, styles, periods, locations] = await Promise.all([
+    db.productionOrder.findMany({
+      include: {
+        style: {
+          include: {
+            variants: {
+              where: { isActive: true },
+              include: { colorCode: true, sizeCode: true },
+              orderBy: { sku: "asc" },
+            },
+          },
+        },
+        costSnapshot: true,
+        minuteRatePeriod: { include: { fiscalPeriod: true } },
+        materialIssues: { include: { material: { include: { uom: true } } } },
+      },
+      orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
+      take: 50,
+    }),
+    db.style.findMany({
+      where: { isActive: true },
+      include: { _count: { select: { bomLines: true, operations: true } } },
+      orderBy: { code: "asc" },
+    }),
+    db.minuteRatePeriod.findMany({
+      where: { entityId: factory.id },
+      include: { fiscalPeriod: true },
+      orderBy: { calculatedAt: "desc" },
+      take: 12,
+    }),
+    db.location.findMany({
+      where: { isActive: true, entityId: factory.id },
+      orderBy: { sortOrder: "asc" },
+    }),
+  ]);
+
+  const draft = orders.filter((o) => o.status === "DRAFT");
   const inFlight = orders.filter(
     (o) => o.status === "CONFIRMED" || o.status === "IN_PRODUCTION",
   );
   const completed = orders.filter((o) => o.status === "COMPLETED");
+
+  // What each open order still needs, against what the warehouse holds.
+  const openWork = await Promise.all(
+    inFlight.map(async (o) => {
+      const planned = await plannedMaterials(o.id);
+      const stock = await db.inventoryLot.groupBy({
+        by: ["materialId"],
+        where: {
+          materialId: { in: planned.map((p) => p.materialId) },
+          entityId: factory.id,
+          state: "RAW_MATERIAL",
+          remainingQty: { gt: 0 },
+        },
+        _sum: { remainingQty: true },
+      });
+
+      const materials = await db.material.findMany({
+        where: { id: { in: planned.map((p) => p.materialId) } },
+        include: { uom: true },
+      });
+
+      return {
+        order: o,
+        materials: planned.map((p) => {
+          const m = materials.find((x) => x.id === p.materialId);
+          const issued = o.materialIssues
+            .filter((i) => i.materialId === p.materialId)
+            .reduce((s, i) => s.plus(dec(i.actualQty)), dec(0));
+          return {
+            id: p.materialId,
+            code: p.materialCode,
+            name: m ? (ar ? m.nameAr : m.nameEn) : p.materialCode,
+            uom: m?.uom.code ?? "",
+            planned: p.requiredQty.toFixed(2),
+            issued: issued.toFixed(2),
+            onHand: dec(
+              stock.find((s) => s.materialId === p.materialId)?._sum.remainingQty ?? 0,
+            ).toFixed(2),
+          };
+        }),
+      };
+    }),
+  );
 
   const plannedInFlight = inFlight.reduce(
     (s, o) => s.plus(dec(o.plannedTotalCost ?? 0)), dec(0),
@@ -41,6 +124,7 @@ export default async function ProductionPage() {
   const unitsCompleted = completed.reduce((s, o) => s + (o.actualQty ?? 0), 0);
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
+  const today = new Date().toISOString().slice(0, 10);
 
   const statusTone: Record<string, "neutral" | "info" | "good" | "warn" | "bad"> = {
     DRAFT: "neutral", CONFIRMED: "info", IN_PRODUCTION: "warn",
@@ -83,6 +167,116 @@ export default async function ProductionPage() {
           value={formatNumber(unitsCompleted, locale)}
         />
       </div>
+
+      {/* ------------------------------------------------------- raise one */}
+      {mayCreate && (
+        <Card className="mb-4" title={ar ? "أمر إنتاج جديد" : "New production order"}>
+          {styles.length === 0 ? (
+            <p className="py-4 text-sm text-ink-500">
+              {ar
+                ? "محتاج تعمل موديل الأول من صفحة الموديلات."
+                : "Create a style first, from the styles page."}
+            </p>
+          ) : (
+            <NewOrderForm
+              locale={locale}
+              today={today}
+              styles={styles.map((s) => ({
+                id: s.id,
+                code: s.code,
+                name: name(s),
+                smv: s.totalSmvMinutes?.toString() ?? "0",
+                hasBom: s._count.bomLines > 0 && s._count.operations > 0,
+              }))}
+            />
+          )}
+        </Card>
+      )}
+
+      {/* --------------------------------------- drafts waiting on a costing */}
+      {mayConfirm &&
+        draft.map((o) => (
+          <Card
+            key={o.id}
+            className="mb-4"
+            title={`${ar ? "أكّد" : "Confirm"} ${o.orderNumber}`}
+            description={`${name(o.style)} · ${formatNumber(o.plannedQty, locale)} ${ar ? "قطعة" : "units"}`}
+          >
+            <ConfirmOrderForm
+              locale={locale}
+              productionOrderId={o.id}
+              periods={periods.map((p) => ({
+                id: p.id,
+                label: `${p.fiscalPeriod.year}-${String(p.fiscalPeriod.month).padStart(2, "0")}`,
+                rate: `${Number(p.actualMinuteRate).toFixed(4)} ${ar ? "ج/دقيقة" : "EGP/min"}`,
+              }))}
+            />
+          </Card>
+        ))}
+
+      {/* ------------------------------- open runs: issue fabric, then close */}
+      {mayRecord &&
+        openWork.map(({ order: o, materials }) => (
+          <Card
+            key={o.id}
+            className="mb-4"
+            title={`${o.orderNumber} · ${name(o.style)}`}
+            description={
+              ar
+                ? `${formatNumber(o.plannedQty, locale)} قطعة · تكلفة الوحدة المجمّدة ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}`
+                : `${formatNumber(o.plannedQty, locale)} units · frozen unit cost ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}`
+            }
+          >
+            <div className="space-y-5">
+              <div>
+                <p className="mb-2 text-xs font-medium text-ink-600">
+                  {ar ? "صرف خامات" : "Issue material"}
+                </p>
+                {materials.length === 0 ? (
+                  <p className="text-sm text-ink-400">
+                    {ar ? "لا توجد خامات في المكونات." : "No materials on the bill."}
+                  </p>
+                ) : (
+                  <IssueMaterialForm
+                    locale={locale}
+                    productionOrderId={o.id}
+                    entityId={factory.id}
+                    today={today}
+                    locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
+                    materials={materials}
+                  />
+                )}
+              </div>
+
+              <div className="border-t border-ink-100 pt-4">
+                <p className="mb-2 text-xs font-medium text-ink-600">
+                  {ar ? "قفل الأمر" : "Close the run"}
+                </p>
+                {o.style.variants.length === 0 ? (
+                  <p className="text-sm text-bad">
+                    {ar
+                      ? "الموديل ده مالوش أكواد مقاسات وألوان. ولّدها من صفحة الموديلات الأول."
+                      : "This style has no SKUs. Generate them from the styles page first."}
+                  </p>
+                ) : (
+                  <CompleteOrderForm
+                    locale={locale}
+                    productionOrderId={o.id}
+                    entityId={factory.id}
+                    plannedQty={o.plannedQty}
+                    today={today}
+                    locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
+                    variants={o.style.variants.map((v) => ({
+                      id: v.id,
+                      sku: v.sku,
+                      label: `${ar ? v.colorCode.nameAr : v.colorCode.nameEn} · ${v.sizeCode.code}`,
+                    }))}
+                  />
+                )}
+              </div>
+            </div>
+          </Card>
+        ))}
 
       {orders.length === 0 ? (
         <Card>

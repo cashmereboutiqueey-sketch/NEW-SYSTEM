@@ -154,10 +154,23 @@ async function main() {
     },
     asOwner,
   );
+  // A run comes off the line as a size curve, not a single number. The middle
+  // sizes carry the volume, which is what makes the sell-through report worth
+  // looking at later.
+  const curve = [0.3, 0.25, 0.2, 0.12, 0.08, 0.05];
+  const outputs = style.variants.map((v, i) => ({
+    variantId: v.id,
+    goodQty: Math.round(388 * (curve[i] ?? 0)),
+  }));
+  // Rounding must not lose or invent a garment.
+  outputs[0].goodQty += 388 - outputs.reduce((s, o) => s + o.goodQty, 0);
+
   await completeProductionOrder(
     {
-      productionOrderId: po.productionOrderId, goodQty: 388, rejectedQty: 12,
-      variantId: style.variants[0].id, locationId: facLoc.id,
+      productionOrderId: po.productionOrderId,
+      outputs: outputs.filter((o) => o.goodQty > 0),
+      rejectedQty: 12,
+      locationId: facLoc.id,
       entityId: factory.id, completedDate: on(14),
     },
     asOwner,

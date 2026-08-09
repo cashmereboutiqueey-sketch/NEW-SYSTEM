@@ -26,6 +26,7 @@ let periodId: string;
 let day: Date;
 let styleId: string;
 let variantId: string;
+let allVariantIds: string[];
 let fabricId: string;
 let locationId: string;
 let rateperiodId: string;
@@ -52,6 +53,7 @@ beforeAll(async () => {
   });
   styleId = style.id;
   variantId = style.variants[0].id;
+  allVariantIds = style.variants.map((v) => v.id);
   fabricId = style.bomLines.find((l) => l.material.type === "FABRIC")!.materialId;
 });
 
@@ -329,26 +331,28 @@ describe("issuing material", () => {
   });
 });
 
+/** Confirms an order and issues fabric against it, ready to be closed. */
+async function runOrder(plannedQty: number, fabricIssued: string) {
+  const { productionOrderId } = await draftOrder(plannedQty);
+  await confirmProductionOrder({ productionOrderId, minuteRatePeriodId: rateperiodId }, ctx);
+  await issueForOrder(
+    {
+      productionOrderId, materialId: fabricId, locationId, entityId: factoryId,
+      quantity: fabricIssued, issueDate: day, piecesCut: plannedQty,
+    },
+    ctx,
+  );
+  return productionOrderId;
+}
+
 describe("completing an order", () => {
-  async function runOrder(plannedQty: number, fabricIssued: string) {
-    const { productionOrderId } = await draftOrder(plannedQty);
-    await confirmProductionOrder({ productionOrderId, minuteRatePeriodId: rateperiodId }, ctx);
-    await issueForOrder(
-      {
-        productionOrderId, materialId: fabricId, locationId, entityId: factoryId,
-        quantity: fabricIssued, issueDate: day, piecesCut: plannedQty,
-      },
-      ctx,
-    );
-    return productionOrderId;
-  }
 
   it("receives garments at the frozen snapshot cost", async () => {
     const productionOrderId = await runOrder(100, "200");
     const result = await completeProductionOrder(
       {
-        productionOrderId, goodQty: 96, rejectedQty: 4,
-        variantId, locationId, entityId: factoryId, completedDate: day,
+        productionOrderId, outputs: [{ variantId, goodQty: 96 }], rejectedQty: 4,
+        locationId, entityId: factoryId, completedDate: day,
       },
       ctx,
     );
@@ -357,7 +361,7 @@ describe("completing an order", () => {
       where: { id: productionOrderId }, include: { costSnapshot: true },
     });
     const lot = await db.inventoryLot.findFirstOrThrow({
-      where: { lotNumber: result.finishedLotNumber },
+      where: { lotNumber: result.finishedLotNumbers[0] },
     });
 
     expect(order.status).toBe("COMPLETED");
@@ -372,8 +376,8 @@ describe("completing an order", () => {
     const productionOrderId = await runOrder(100, "200");
     const result = await completeProductionOrder(
       {
-        productionOrderId, goodQty: 90,
-        variantId, locationId, entityId: factoryId, completedDate: day,
+        productionOrderId, outputs: [{ variantId, goodQty: 90 }],
+        locationId, entityId: factoryId, completedDate: day,
       },
       ctx,
     );
@@ -388,8 +392,8 @@ describe("completing an order", () => {
     const productionOrderId = await runOrder(100, "500");
     const result = await completeProductionOrder(
       {
-        productionOrderId, goodQty: 100,
-        variantId, locationId, entityId: factoryId, completedDate: day,
+        productionOrderId, outputs: [{ variantId, goodQty: 100 }],
+        locationId, entityId: factoryId, completedDate: day,
       },
       ctx,
     );
@@ -405,8 +409,8 @@ describe("completing an order", () => {
     const productionOrderId = await runOrder(100, "200");
     await completeProductionOrder(
       {
-        productionOrderId, goodQty: 100,
-        variantId, locationId, entityId: factoryId, completedDate: day,
+        productionOrderId, outputs: [{ variantId, goodQty: 100 }],
+        locationId, entityId: factoryId, completedDate: day,
       },
       ctx,
     );
@@ -424,12 +428,12 @@ describe("completing an order", () => {
   it("refuses to complete twice", async () => {
     const productionOrderId = await runOrder(100, "200");
     await completeProductionOrder(
-      { productionOrderId, goodQty: 100, variantId, locationId, entityId: factoryId, completedDate: day },
+      { productionOrderId, outputs: [{ variantId, goodQty: 100 }], locationId, entityId: factoryId, completedDate: day },
       ctx,
     );
     await expect(
       completeProductionOrder(
-        { productionOrderId, goodQty: 5, variantId, locationId, entityId: factoryId, completedDate: day },
+        { productionOrderId, outputs: [{ variantId, goodQty: 5 }], locationId, entityId: factoryId, completedDate: day },
         ctx,
       ),
     ).rejects.toThrow(/already complete/i);
@@ -439,9 +443,153 @@ describe("completing an order", () => {
     const { productionOrderId } = await draftOrder();
     await expect(
       completeProductionOrder(
-        { productionOrderId, goodQty: 10, variantId, locationId, entityId: factoryId, completedDate: day },
+        { productionOrderId, outputs: [{ variantId, goodQty: 10 }], locationId, entityId: factoryId, completedDate: day },
         ctx,
       ),
     ).rejects.toThrow(/no frozen cost snapshot/i);
+  });
+});
+
+/**
+ * A run of a dress is cut in a curve: so many mediums, so many larges. What
+ * comes off the line has to be booked that way, because that is how it will be
+ * counted, transferred and sold.
+ */
+describe("output as a size curve", () => {
+  it("books a lot per SKU and totals them as the order's output", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    const curve = [40, 30, 20].slice(0, allVariantIds.length);
+    const outputs = curve.map((goodQty, i) => ({ variantId: allVariantIds[i], goodQty }));
+    const expected = outputs.reduce((s, o) => s + o.goodQty, 0);
+
+    const result = await completeProductionOrder(
+      { productionOrderId, outputs, locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    );
+
+    expect(result.goodQty).toBe(expected);
+    expect(result.finishedLotNumbers).toHaveLength(outputs.length);
+
+    const lots = await db.inventoryLot.findMany({
+      where: { lotNumber: { in: result.finishedLotNumbers } },
+    });
+    expect(lots.map((l) => Number(l.remainingQty)).sort((a, b) => b - a)).toEqual(
+      curve.slice().sort((a, b) => b - a),
+    );
+
+    const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });
+    expect(order.actualQty).toBe(expected);
+  });
+
+  it("costs every size the same, because the snapshot costs the style", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    const outputs = allVariantIds.slice(0, 2).map((variantId, i) => ({
+      variantId, goodQty: i === 0 ? 60 : 30,
+    }));
+
+    const result = await completeProductionOrder(
+      { productionOrderId, outputs, locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    );
+
+    const order = await db.productionOrder.findUniqueOrThrow({
+      where: { id: productionOrderId }, include: { costSnapshot: true },
+    });
+    const lots = await db.inventoryLot.findMany({
+      where: { lotNumber: { in: result.finishedLotNumbers } },
+    });
+
+    const frozen = order.costSnapshot!.factoryTotalCost.toString();
+    for (const lot of lots) expect(lot.unitCost.toString()).toBe(frozen);
+
+    // Splitting the run across sizes must not change what the run cost.
+    const booked = lots.reduce((s, l) => s + Number(l.remainingQty) * Number(l.unitCost), 0);
+    expect(booked).toBeCloseTo(90 * Number(frozen), 2);
+  });
+
+  it("keeps the ledger balanced when output is split", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    await completeProductionOrder(
+      {
+        productionOrderId,
+        outputs: allVariantIds.slice(0, 3).map((variantId, i) => ({
+          variantId, goodQty: [50, 30, 15][i],
+        })),
+        locationId, entityId: factoryId, completedDate: day,
+      },
+      ctx,
+    );
+
+    const [row] = await db.$queryRaw<{ debit: string; credit: string }[]>`
+      SELECT COALESCE(SUM(l."debit"), 0)::text AS debit,
+             COALESCE(SUM(l."credit"), 0)::text AS credit
+      FROM "journal_lines" l
+      JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+      WHERE e."status" = 'POSTED'
+    `;
+    expect(row.debit).toBe(row.credit);
+  });
+
+  it("refuses the same SKU listed twice", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    await expect(
+      completeProductionOrder(
+        {
+          productionOrderId,
+          outputs: [
+            { variantId, goodQty: 10 },
+            { variantId, goodQty: 5 },
+          ],
+          locationId, entityId: factoryId, completedDate: day,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/twice/i);
+  });
+
+  it("refuses a SKU belonging to another style", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    const stranger = await db.variant.findFirstOrThrow({
+      where: { styleId: { not: styleId } },
+    });
+
+    await expect(
+      completeProductionOrder(
+        {
+          productionOrderId,
+          outputs: [{ variantId: stranger.id, goodQty: 10 }],
+          locationId, entityId: factoryId, completedDate: day,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/not a SKU of the style/i);
+  });
+
+  it("refuses fractions of a garment", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    await expect(
+      completeProductionOrder(
+        {
+          productionOrderId,
+          outputs: [{ variantId, goodQty: 10.5 }],
+          locationId, entityId: factoryId, completedDate: day,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/whole/i);
+  });
+
+  it("refuses an empty curve", async () => {
+    const productionOrderId = await runOrder(100, "300");
+    await expect(
+      completeProductionOrder(
+        {
+          productionOrderId,
+          outputs: [{ variantId, goodQty: 0 }],
+          locationId, entityId: factoryId, completedDate: day,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/greater than zero/i);
   });
 });

@@ -87,6 +87,23 @@ export default async function PosPage({
   const products = await sellableStock(till.locationId, brand.id);
   const totals = tillTotals(till);
 
+  // An empty shelf has two very different causes, and the cashier cannot tell
+  // them apart: nothing was ever made, or it was made and is still the
+  // factory's. Say which, because the second one is fixable in a minute.
+  const stuckAtFactory =
+    products.length === 0
+      ? await db.inventoryLot.aggregate({
+          where: {
+            state: "FINISHED_GOODS",
+            remainingQty: { gt: 0 },
+            variantId: { not: null },
+            entity: { kind: "FACTORY" },
+          },
+          _sum: { remainingQty: true },
+        })
+      : null;
+  const waiting = Number(stuckAtFactory?._sum.remainingQty ?? 0);
+
   return (
     <>
       <PageHeader
@@ -119,6 +136,33 @@ export default async function PosPage({
           hint={`${ar ? "افتتاحي" : "float"} ${formatMoney(till.openingFloat, locale)}`}
         />
       </div>
+
+      {waiting > 0 && (
+        <Card className="mb-4" title={ar ? "المعرض فاضي" : "Nothing on the shelf"}>
+          <p className="text-sm text-ink-600">
+            {ar ? (
+              <>
+                فيه <span className="num">{waiting}</span> قطعة تامّة في المصنع، بس لسه ملك
+                المصنع مش البراند، عشان كده مش ظاهرة هنا. حوّلها الأول من{" "}
+                <a href="/transfers" className="underline decoration-ink-300 underline-offset-2">
+                  التحويل للبراند
+                </a>
+                .
+              </>
+            ) : (
+              <>
+                <span className="num">{waiting}</span> finished garments are sitting at the
+                factory. They are still the Factory&apos;s, not the Brand&apos;s, which is why
+                they are not here. Invoice them across from{" "}
+                <a href="/transfers" className="underline decoration-ink-300 underline-offset-2">
+                  Transfer to Brand
+                </a>
+                .
+              </>
+            )}
+          </p>
+        </Card>
+      )}
 
       <div className="mb-4">
         <PosTerminal

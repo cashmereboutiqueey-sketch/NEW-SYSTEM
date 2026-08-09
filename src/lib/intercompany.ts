@@ -45,6 +45,141 @@ async function accountId(tx: Prisma.TransactionClient, code: string): Promise<st
   return a.id;
 }
 
+/**
+ * Finished garments sitting at the factory that the Brand has not taken yet.
+ *
+ * The transfer price is not asked for. Each lot came out of a production
+ * order, and that order froze a cost snapshot before the first garment was
+ * cut; that snapshot is the price. Letting someone type a price here would let
+ * the internal margin be set after the fact, which is exactly the thing a tax
+ * inspector looks for.
+ */
+export async function awaitingTransfer(): Promise<
+  {
+    variantId: string;
+    sku: string;
+    styleCode: string;
+    styleEn: string;
+    styleAr: string;
+    colourEn: string;
+    colourAr: string;
+    size: string;
+    locationId: string;
+    locationEn: string;
+    locationAr: string;
+    quantity: string;
+    factoryCost: string;
+    costSnapshotId: string | null;
+    transferPrice: string | null;
+    marginPerUnit: string | null;
+    retailPrice: string | null;
+    /** Why this line cannot be transferred, if it cannot. */
+    blockedReason: "NO_SNAPSHOT" | null;
+  }[]
+> {
+  const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
+
+  const lots = await db.inventoryLot.findMany({
+    where: {
+      entityId: factory.id,
+      state: "FINISHED_GOODS",
+      remainingQty: { gt: 0 },
+      variantId: { not: null },
+      locationId: { not: null },
+    },
+    include: {
+      location: true,
+      productionOrder: { include: { costSnapshot: true } },
+      variant: {
+        include: { style: true, colorCode: true, sizeCode: true },
+      },
+    },
+    orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
+  });
+
+  // Lots of the same SKU at the same place, priced off the same snapshot, are
+  // one movement. Two runs costed differently stay apart, because merging them
+  // would blur two different transfer prices into an average that matches
+  // neither invoice.
+  const groups = new Map<string, (typeof lots)[number][]>();
+  for (const lot of lots) {
+    const key = `${lot.variantId}|${lot.locationId}|${lot.productionOrder?.costSnapshotId ?? "none"}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(lot);
+    else groups.set(key, [lot]);
+  }
+
+  const rows = [...groups.values()].map((bucket) => {
+    const first = bucket[0];
+    const v = first.variant!;
+    const snapshot = first.productionOrder?.costSnapshot ?? null;
+
+    const quantity = bucket.reduce((s, l) => s.plus(dec(l.remainingQty)), dec(0));
+    const cost = bucket.reduce(
+      (s, l) => s.plus(dec(l.remainingQty).times(dec(l.unitCost))),
+      dec(0),
+    );
+
+    return {
+      variantId: v.id,
+      sku: v.sku,
+      styleCode: v.style.code,
+      styleEn: v.style.nameEn,
+      styleAr: v.style.nameAr,
+      colourEn: v.colorCode.nameEn,
+      colourAr: v.colorCode.nameAr,
+      size: v.sizeCode.code,
+      locationId: first.locationId!,
+      locationEn: first.location!.nameEn,
+      locationAr: first.location!.nameAr,
+      quantity: quantity.toString(),
+      factoryCost: cost.toString(),
+      costSnapshotId: snapshot?.id ?? null,
+      transferPrice: snapshot ? dec(snapshot.transferPrice).toString() : null,
+      marginPerUnit: snapshot
+        ? dec(snapshot.transferPrice).minus(dec(snapshot.factoryTotalCost)).toString()
+        : null,
+      retailPrice: v.style.retailPrice?.toString() ?? null,
+      blockedReason: snapshot ? null : ("NO_SNAPSHOT" as const),
+    };
+  });
+
+  return rows.sort((a, b) => a.sku.localeCompare(b.sku));
+}
+
+/** Transfers already invoiced, newest first. */
+export async function recentTransfers(limit = 25) {
+  const movements = await db.inventoryMovement.findMany({
+    where: { referenceType: "TRANSFER_INVOICE", type: "RECEIPT" },
+    include: {
+      lot: {
+        include: {
+          location: true,
+          variant: { include: { style: true, colorCode: true, sizeCode: true } },
+        },
+      },
+    },
+    orderBy: [{ movementDate: "desc" }, { createdAt: "desc" }],
+    take: limit,
+  });
+
+  return movements.map((m) => ({
+    transferNumber: m.referenceId ?? "—",
+    date: m.movementDate,
+    sku: m.lot.variant?.sku ?? "—",
+    styleEn: m.lot.variant?.style.nameEn ?? "—",
+    styleAr: m.lot.variant?.style.nameAr ?? "—",
+    toLocationEn: m.lot.location?.nameEn ?? "—",
+    toLocationAr: m.lot.location?.nameAr ?? "—",
+    quantity: m.quantity.toString(),
+    transferPrice: m.unitCost.toString(),
+    total: m.totalCost.toString(),
+    // Still unsold means the group has not earned this margin yet.
+    marginPerUnit: m.lot.transferMarginPerUnit?.toString() ?? null,
+    unsoldQty: m.lot.remainingQty.toString(),
+  }));
+}
+
 export async function transferToBrand(
   input: {
     variantId: string;
