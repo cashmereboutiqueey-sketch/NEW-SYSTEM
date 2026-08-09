@@ -65,7 +65,7 @@ export const navigation: NavSection[] = [
   {
     key: "production",
     items: [
-      { key: "collectionPerformance", href: "/styles", phase: 2, scopes: ALL_SCOPES, icon: "shirt" },
+      { key: "collectionPerformance", href: "/styles", phase: 2, scopes: ALL_SCOPES, icon: "shirt" , shipped: true },
       { key: "transferPrice", href: "/costing", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "calculator" , shipped: true },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
       { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" },
