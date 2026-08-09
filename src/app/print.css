@@ -1,0 +1,246 @@
+/**
+ * Print styles.
+ *
+ * Written for paper rather than adapted from the screen, because the two
+ * disagree about almost everything: paper has fixed page sizes, real
+ * millimetres, page breaks, and no scrolling. The recurring failures this
+ * addresses are Arabic that reverses or loses its shaping, barcodes that
+ * scan on screen and not on paper, and tables that split a row across pages.
+ */
+
+/* --------------------------------------------------------------- screen */
+
+.print-preview {
+  background: #f4f4f2;
+  padding: 1.5rem 0;
+}
+
+.print-sheet {
+  background: #fff;
+  margin: 0 auto 1.5rem;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.print-only {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- paper */
+
+@media print {
+  /* The browser adds its own header and footer with a URL and page number.
+     They are noise on an invoice and they steal the margin a printer needs,
+     so the page box is declared explicitly. */
+  @page {
+    size: A4;
+    margin: 12mm 10mm;
+  }
+
+  @page thermal {
+    /* Continuous roll: any height, and no side margin to waste on an 80mm
+       till printer whose printable width is barely 72mm. */
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  @page labels {
+    size: A4;
+    margin: 8mm 6mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    margin: 0;
+    padding: 0;
+    /* Printers render grey text far lighter than a screen does. Forcing pure
+       black keeps small print legible on a cheap laser. */
+    color: #000 !important;
+  }
+
+  /* Everything that is not the document itself. Hidden rather than removed so
+     the same page serves both screen and paper. */
+  .no-print,
+  nav,
+  aside,
+  header.app-header,
+  button,
+  .print-preview > .print-controls {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  .print-preview {
+    background: none;
+    padding: 0;
+  }
+
+  .print-sheet {
+    box-shadow: none;
+    margin: 0;
+    /* One document per sheet. Without this, a second invoice starts halfway
+       down the first one's page. */
+    page-break-after: always;
+  }
+
+  .print-sheet:last-child {
+    page-break-after: auto;
+  }
+
+  /* --- keeping things whole ------------------------------------------- */
+
+  table {
+    /* Repeat the header on every page. A continuation page of unlabelled
+       numbers is unreadable. */
+    page-break-inside: auto;
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  tr,
+  .keep-together {
+    /* A row split across two pages puts the quantity on one page and the
+       price on the next. */
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  h1,
+  h2,
+  h3 {
+    page-break-after: avoid;
+  }
+
+  /* A total stranded alone at the top of a new page reads as though it
+     belongs to nothing. */
+  .totals {
+    page-break-before: avoid;
+    break-inside: avoid;
+  }
+
+  /* --- Arabic -------------------------------------------------------- */
+
+  /* Arabic shaping depends on the font supporting it; a fallback that does
+     not will render disconnected letters. The stack is ordered so a system
+     Arabic face is always reached before a generic sans. */
+  [dir="rtl"],
+  .rtl {
+    direction: rtl;
+    text-align: right;
+    font-family: "Segoe UI", "Tahoma", "Arial", "Noto Naskh Arabic",
+      "Traditional Arabic", sans-serif;
+  }
+
+  /* Money, SKUs and dates stay left-to-right inside Arabic text. Without
+     this an amount reads back to front and a date reverses its parts. */
+  .num,
+  .ltr,
+  [dir="ltr"] {
+    direction: ltr;
+    unicode-bidi: isolate;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- barcodes ------------------------------------------------------- */
+
+  .barcode svg {
+    /* Never scaled. A barcode resized by a percentage no longer has the
+       module width its quiet zone was calculated for. */
+    width: auto;
+    height: auto;
+    max-width: none;
+  }
+
+  .barcode {
+    /* Bars must print as solid black even when the browser is set to save
+       ink, or the scanner sees grey. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* --- ink ------------------------------------------------------------ */
+
+  .sheet-rule {
+    border-color: #000 !important;
+  }
+
+  .muted-print {
+    color: #444 !important;
+  }
+}
+
+/* ------------------------------------------------------------ documents */
+
+.sheet-a4 {
+  width: 190mm;
+  min-height: 273mm;
+  padding: 0;
+  font-size: 10pt;
+  line-height: 1.45;
+}
+
+.sheet-thermal {
+  width: 72mm;
+  padding: 3mm;
+  font-size: 9pt;
+  line-height: 1.35;
+  /* A till roll is a fixed-width, monospaced world; proportional type makes
+     columns of figures fail to line up. */
+  font-family: "Consolas", "Courier New", monospace;
+}
+
+@media print {
+  .sheet-thermal {
+    page: thermal;
+  }
+
+  .sheet-labels {
+    page: labels;
+  }
+}
+
+/* --- label sheet ------------------------------------------------------ */
+
+.sheet-labels {
+  width: 198mm;
+  display: grid;
+  /* Matches a common 63.5 × 38.1mm address-label sheet, three across. */
+  grid-template-columns: repeat(3, 65mm);
+  gap: 0;
+}
+
+.label-cell {
+  width: 65mm;
+  height: 38mm;
+  padding: 2mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  overflow: hidden;
+  break-inside: avoid;
+}
+
+.label-cell .name {
+  font-size: 8pt;
+  line-height: 1.2;
+  max-height: 2.4em;
+  overflow: hidden;
+}
+
+.label-cell .price {
+  font-size: 10pt;
+  font-weight: 600;
+}
