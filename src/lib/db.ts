@@ -23,5 +23,15 @@ function createClient(): PrismaClient {
 export const db = globalForPrisma.prisma ?? createClient();
 
 if (process.env.NODE_ENV !== "production") {
+  // Held on the global so hot reload reuses one client instead of opening a
+  // new pool on every edit, which exhausts the connections within a minute.
+  //
+  // The cost of that, and it has already caught us once: this instance
+  // outlives every recompile. After `prisma generate` — which is to say after
+  // any schema change — the running dev server keeps the client it built at
+  // startup and rejects the new columns with "Unknown argument", even though
+  // the schema, the migration, the generated client on disk and the
+  // typechecker all agree. Restart the dev server. Nothing short of that
+  // replaces it.
   globalForPrisma.prisma = db;
 }

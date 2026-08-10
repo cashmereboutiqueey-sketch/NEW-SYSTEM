@@ -17,7 +17,13 @@ bash scripts/backup.sh                                     # backup, verified by
 npm run walkthrough                                        # the whole business cycle
 ```
 
-**One warning about running them.** The integration suite wipes the database.
+**After any schema change, restart the dev server.** The Prisma client is
+cached on `globalThis` in development and outlives every hot reload, so a
+running server will keep rejecting new columns long after the schema, the
+migration and the generated client agree. This cost a working login once
+already; see below.
+
+**One warning about running the audits.** The integration suite wipes the database.
 An audit script run straight afterwards compares empty tables and passes
 everything trivially, because zero equals zero. That happened once during this
 audit and was caught. Always `npm run db:fresh` before running the books,
@@ -30,7 +36,7 @@ Final verification run, in order:
 |---|---|
 | `npm run typecheck` | clean |
 | `npm run test` | 17 files, 315 tests passed |
-| `npm run test:db` | 16 files, 276 tests passed |
+| `npm run test:db` | 17 files, 295 tests passed |
 | `npm run build` | compiled successfully, 47 pages |
 | `audit-rbac` | authorisation map coherent and enforced |
 | `audit-books` | books agree with themselves and refuse to be edited |
@@ -49,10 +55,10 @@ will run in, because that environment does not exist yet.
 
 | Area | Verdict | How it was established |
 |---|---|---|
-| Backend | **PASS** | 315 unit + 276 integration tests, all passing; nine forced mid-operation failures all rolled back |
+| Backend | **PASS** | 315 unit + 295 integration tests, all passing; nine forced mid-operation failures all rolled back |
 | Database | **PASS** | 84 tables, 141 foreign keys, 246 indexes (151 unique), 13 triggers; integrity queries clean; no `Float` on any money column |
 | Frontend | **PASS** | 47 pages plus the Shopify webhook route build clean; typecheck clean; every screen reached over HTTP with real data |
-| Authentication | **PASS** | bcrypt at 12 rounds; forged, malformed and expired sessions all refused over HTTP; timing equalised for unknown accounts |
+| Authentication | **PASS**, after a miss | bcrypt at 12 rounds; forged, malformed and expired sessions refused over HTTP; 19 integration tests on the sign-in path itself. See "The login the audit did not test" below — this area was originally passed without anyone ever signing in |
 | Authorization | **PASS** | 53 permissions, 104 guards, 63 server actions all guarded, 25 dangerous role/action pairs refused; fifteen page-level holes found and closed |
 | Accounting | **PASS** | Every posted journal balances; posted entries immutable against raw SQL; closed periods refuse postings |
 | Inventory | **PASS** | FIFO verified across lots; the mandated 10/4/2 fabric scenario passes; ledger equals the lots to the piastre |
@@ -69,6 +75,59 @@ will run in, because that environment does not exist yet.
 | Performance | **PASS** | 10,000 customers, 10,000 orders, 20,000 journals: no screen query over 441ms |
 | Backups | **PASS** | Backup taken, restored into a scratch database, then the live database destroyed and fully recovered |
 | Hostinger deployment | **BLOCKED** | No server provisioned yet |
+
+---
+
+## The login the audit did not test
+
+Worth putting first, because it is the most instructive failure here and it was
+found by a user, not by this audit.
+
+Every check in the original audit passed while the application could not be
+signed into at all. Anyone visiting it got a 500 and this:
+
+```
+Unknown argument `failedLogins`. Available options are marked with ?.
+    at authenticate (src/lib/auth.ts:68)
+```
+
+Nothing in the audit caught it, and each miss was reasonable on its own:
+
+- The schema had the columns. The migration was applied. The database had them.
+- `npm run typecheck` was clean — the generated client on disk was correct.
+- `npm run build` compiled.
+- 591 tests passed. **None of them signed in.** There was no test for
+  authentication anywhere in the codebase.
+- The HTTP audit checked `/login` returns 200 — a page that *renders* — and
+  minted its session cookies directly rather than through the login form, so it
+  never touched `authenticate` either.
+
+The cause is in [`src/lib/db.ts`](../src/lib/db.ts). In development the Prisma
+client is cached on `globalThis`, the usual guard against hot reload opening a
+new connection pool on every edit. The cost is that the instance outlives every
+recompile: after `prisma generate`, the running dev server keeps the client it
+built at startup. The schema, the migration, the generated client and the
+typechecker all agreed with each other, and the running process disagreed with
+all four. Only a restart replaces it.
+
+Three things changed as a result:
+
+1. **`src/lib/auth.db.test.ts`** — 19 tests against the real database. Signing
+   in, wrong passwords, unknown addresses, capitalised and space-padded
+   addresses, deactivated accounts, and the lockout: that it counts, that it
+   forgets the run after a success, that it locks on the eighth failure and not
+   the seventh, that it refuses even the correct password while locked, that it
+   releases on expiry, and that it survives a restart because the count is on
+   the row.
+2. **`db:deploy` and `db:fresh` now run `prisma generate`**, so applying a
+   migration cannot leave a stale client behind.
+3. **The trap is written down in `db.ts`** next to the line that causes it.
+
+The lesson generalises past this bug: *"the page returns 200"* is not
+*"the feature works"*. The audit had checked that 18 protected pages redirect
+an anonymous visitor to login, which is a genuine result, and then treated
+authentication as covered — when what had actually been proven was that nobody
+could get in, which was true in a way nobody intended.
 
 ---
 
