@@ -49,10 +49,10 @@ export const navigation: NavSection[] = [
   {
     key: "minuteRate",
     items: [
-      { key: "capacity", href: "/capacity", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "gauge" },
+      { key: "capacity", href: "/capacity", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "gauge" , shipped: true },
       { key: "minuteRate", href: "/minute-rate", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "timer" , shipped: true },
       { key: "mrp", href: "/mrp", phase: 9, scopes: ["FACTORY", "GROUP"], icon: "calendar", shipped: true },
-      { key: "capacityPlanning", href: "/capacity/planning", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "calendar" },
+      { key: "capacityPlanning", href: "/capacity/planning", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "calendar" , shipped: true },
     ],
   },
   {
@@ -71,8 +71,8 @@ export const navigation: NavSection[] = [
       { key: "transferPrice", href: "/costing", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "calculator" , shipped: true },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
       { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true },
-      { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" },
-      { key: "scrap", href: "/production/scrap", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors" },
+      { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" , shipped: true },
+      { key: "scrap", href: "/production/scrap", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors" , shipped: true },
     ],
   },
   {
@@ -105,8 +105,8 @@ export const navigation: NavSection[] = [
   {
     key: "cmt",
     items: [
-      { key: "cmtClients", href: "/cmt/clients", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "users" },
-      { key: "cmtQuote", href: "/cmt/quotes", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "file" },
+      { key: "cmtClients", href: "/cmt/clients", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "users" , shipped: true },
+      { key: "cmtQuote", href: "/cmt/quotes", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "file" , shipped: true },
     ],
   },
   {
