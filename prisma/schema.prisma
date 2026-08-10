@@ -1023,6 +1023,11 @@ model Style {
   targetMarginPct Decimal? @db.Decimal(9, 6)
   isActive        Boolean  @default(true)
 
+  /// The photograph a person recognises the garment by. Stored as a file name
+  /// rather than the bytes: a database that carries every product shot makes
+  /// every backup and restore slower for no gain, and these are not secrets.
+  imageName String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1084,6 +1089,10 @@ model Variant {
   sizeCode    SizeCode  @relation(fields: [sizeCodeId], references: [id])
   sku         String    @unique
   barcode     String?
+
+  /// A shot of this particular colour. Optional: most styles need one photo,
+  /// and falling back to the style's own is better than an empty square.
+  imageName   String?
   shopifyVariantId String?
   isActive    Boolean   @default(true)
 

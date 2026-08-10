@@ -14,6 +14,8 @@ import {
   addOperationAction, removeOperationAction,
 } from "./actions";
 import { VariantForm } from "./variant-form";
+import { PhotoForm } from "./photo-form";
+import { imageUrl } from "@/lib/images";
 
 /**
  * الموديلات — styles.
@@ -101,6 +103,21 @@ export default async function StylesPage({
             title={`${selected.code} — ${name(selected)}`}
             description={`${name(selected.collection)} · ${ar ? "هدر مخطط" : "planned waste"} ${formatPercent(selected.plannedWasteRate, locale)}`}
           >
+            {mayDesign && (
+              <div className="mb-4 border-b border-ink-200 pb-4">
+                <PhotoForm
+                  ar={ar}
+                  styleId={selected.id}
+                  current={imageUrl(selected.imageName)}
+                  label={
+                    ar
+                      ? "الصورة اللي هتظهر للبياع على الكاشير."
+                      : "The photo the till shows the salesperson."
+                  }
+                />
+              </div>
+            )}
+
             <div className="grid gap-3 sm:grid-cols-4">
               <div>
                 <div className="text-xs text-ink-500">{ar ? "الدقائق المعيارية" : "Standard minutes"}</div>

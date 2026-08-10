@@ -103,8 +103,26 @@ log "$TRIGGERS triggers survived the round trip"
 psql_in -d postgres -c "DROP DATABASE IF EXISTS \"$VERIFY_DB\";" >/dev/null
 log "verification copy removed"
 
+# ------------------------------------------------- the photographs as well
+#
+# Product photos are files on disk, not rows. A database backup alone restores
+# a catalogue where every garment is a grey square, which is not a restored
+# catalogue.
+UPLOADS="${UPLOAD_DIR:-data/uploads}"
+if [ -d "$UPLOADS" ]; then
+  PHOTOS="$DIR/uploads-$STAMP.tar.gz"
+  tar -czf "$PHOTOS" -C "$(dirname "$UPLOADS")" "$(basename "$UPLOADS")"
+  COUNT=$(find "$UPLOADS" -type f | wc -l | tr -d ' ')
+  log "wrote $PHOTOS ($COUNT photos)"
+else
+  log "no upload directory at $UPLOADS; nothing to photograph"
+fi
+
 # ------------------------------------------------------------- retention
 find "$DIR" -name "$DB-*.sql.gz" -type f -mtime "+$KEEP_DAYS" -print -delete | while read -r old; do
+  log "removed $old (older than $KEEP_DAYS days)"
+done
+find "$DIR" -name "uploads-*.tar.gz" -type f -mtime "+$KEEP_DAYS" -print -delete | while read -r old; do
   log "removed $old (older than $KEEP_DAYS days)"
 done
 

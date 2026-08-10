@@ -7,6 +7,8 @@ import {
   addOperation, removeOperation, generateVariants, ProductError,
 } from "@/lib/products";
 import type { FormState } from "@/components/entity-form";
+import { db } from "@/lib/db";
+import { storeImage, ImageError } from "@/lib/images";
 
 function toMessage(error: unknown): string {
   if (error instanceof ProductError) return error.message;
@@ -162,6 +164,48 @@ export async function generateVariantsAction(
           : `${result.created} SKUs created.`,
     };
   } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+/**
+ * Attach a photograph to a style, or to one colour of it.
+ *
+ * Uploading is treated as a pricing-and-presentation decision rather than a
+ * stock one, so it sits with whoever manages retail prices. The file itself
+ * is validated by its own bytes in `storeImage`; nothing here trusts what the
+ * browser said it was sending.
+ */
+export async function uploadImageAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    await authorize("retail_price:manage");
+
+    const file = formData.get("photo");
+    if (!(file instanceof File) || file.size === 0) {
+      return { error: "اختار صورة الأول." };
+    }
+
+    const name = await storeImage(file);
+
+    const styleId = String(formData.get("styleId") ?? "");
+    const variantId = String(formData.get("variantId") ?? "");
+
+    if (variantId) {
+      await db.variant.update({ where: { id: variantId }, data: { imageName: name } });
+    } else if (styleId) {
+      await db.style.update({ where: { id: styleId }, data: { imageName: name } });
+    } else {
+      return { error: "مش واضح الصورة دي لإيه." };
+    }
+
+    revalidatePath("/styles");
+    revalidatePath("/pos");
+    return { success: "الصورة اتحفظت." };
+  } catch (error) {
+    if (error instanceof ImageError) return { error: error.message };
     return { error: toMessage(error) };
   }
 }

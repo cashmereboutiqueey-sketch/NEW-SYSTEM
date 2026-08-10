@@ -19,3 +19,6 @@ tsconfig.tsbuildinfo
 
 # Verified database backups
 backups/
+
+# Uploaded product photographs (backed up with the database, not in git)
+data/uploads/

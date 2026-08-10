@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import { dec } from "./money";
+import { imageUrl } from "./images";
 
 /**
  * What the cashier can actually sell.
@@ -48,6 +49,10 @@ export async function sellableStock(locationId: string, entityId: string) {
       available: string;
       /** Suggested price from the style, editable at the till by permission. */
       retailPrice: string | null;
+      /** The colour's own shot, falling back to the style's. */
+      image: string | null;
+      styleId: string;
+      styleImage: string | null;
     }
   >();
 
@@ -71,6 +76,9 @@ export async function sellableStock(locationId: string, entityId: string) {
       size: v.sizeCode.code,
       available: dec(lot.remainingQty).toString(),
       retailPrice: v.style.retailPrice?.toString() ?? null,
+      image: imageUrl(v.imageName) ?? imageUrl(v.style.imageName),
+      styleId: v.styleId,
+      styleImage: imageUrl(v.style.imageName),
     });
   }
 

@@ -18,6 +18,10 @@ type Product = {
   size: string;
   available: string;
   retailPrice: string | null;
+  styleId: string;
+  /** The colour's own shot, or the style's. */
+  image: string | null;
+  styleImage: string | null;
 };
 
 type CartLine = {
@@ -70,6 +74,7 @@ export function PosTerminal({
   const [method, setMethod] = useState("CASH");
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [openStyleId, setOpenStyleId] = useState<string | null>(null);
   const [onAccount, setOnAccount] = useState(false);
   const [paidNow, setPaidNow] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
@@ -100,6 +105,113 @@ export function PosTerminal({
       ),
     [cart],
   );
+
+  /**
+   * The shelf, grouped the way a shop is laid out.
+   *
+   * A flat grid of every colour and size means a wall of near-identical tiles
+   * — the same coat eighteen times — and a cashier hunting through it with a
+   * customer waiting. One card per garment with its photograph, opened to
+   * choose the colour and size, is how the person actually thinks about it.
+   */
+  const styleCards = useMemo(() => {
+    const byStyle = new Map<
+      string,
+      {
+        styleId: string;
+        styleAr: string;
+        styleEn: string;
+        image: string | null;
+        totalAvailable: number;
+        prices: number[];
+        swatches: { key: string; colourAr: string; colourEn: string; hex: string | null }[];
+      }
+    >();
+
+    for (const p of filtered) {
+      const card =
+        byStyle.get(p.styleId) ?? {
+          styleId: p.styleId,
+          styleAr: p.styleAr,
+          styleEn: p.styleEn,
+          // The style's own shot, or the first colour that has one — better a
+          // picture of the wrong colour than an empty square.
+          image: p.styleImage ?? p.image,
+          totalAvailable: 0,
+          prices: [] as number[],
+          swatches: [] as { key: string; colourAr: string; colourEn: string; hex: string | null }[],
+        };
+
+      if (!card.image && p.image) card.image = p.image;
+      card.totalAvailable += Number(p.available);
+      if (p.retailPrice) card.prices.push(Number(p.retailPrice));
+      if (!card.swatches.some((c) => c.key === p.colourEn)) {
+        card.swatches.push({
+          key: p.colourEn,
+          colourAr: p.colourAr,
+          colourEn: p.colourEn,
+          hex: p.hex,
+        });
+      }
+
+      byStyle.set(p.styleId, card);
+    }
+
+    return [...byStyle.values()]
+      .map((c) => {
+        if (c.prices.length === 0) return { ...c, priceLabel: "—" };
+        const low = Math.min(...c.prices);
+        const high = Math.max(...c.prices);
+        return {
+          ...c,
+          // A range only when there is one: "1200" reads better than
+          // "1200–1200" on a tile somebody glances at.
+          priceLabel: low === high ? low.toFixed(2) : `${low.toFixed(2)}–${high.toFixed(2)}`,
+        };
+      })
+      .sort((a, b) => (ar ? a.styleAr.localeCompare(b.styleAr) : a.styleEn.localeCompare(b.styleEn)));
+  }, [filtered, ar]);
+
+  /** The style a cashier has opened, with its colours and their sizes. */
+  const openStyle = useMemo(() => {
+    if (!openStyleId) return null;
+    const rows = filtered.filter((p) => p.styleId === openStyleId);
+    if (rows.length === 0) return null;
+
+    const colours = new Map<
+      string,
+      {
+        key: string;
+        colourAr: string;
+        colourEn: string;
+        hex: string | null;
+        sizes: Product[];
+      }
+    >();
+
+    for (const p of rows) {
+      const c =
+        colours.get(p.colourEn) ?? {
+          key: p.colourEn,
+          colourAr: p.colourAr,
+          colourEn: p.colourEn,
+          hex: p.hex,
+          sizes: [] as Product[],
+        };
+      c.sizes.push(p);
+      colours.set(p.colourEn, c);
+    }
+
+    return {
+      styleAr: rows[0].styleAr,
+      styleEn: rows[0].styleEn,
+      totalAvailable: rows.reduce((s, p) => s + Number(p.available), 0),
+      colours: [...colours.values()].map((c) => ({
+        ...c,
+        sizes: c.sizes.sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true })),
+      })),
+    };
+  }, [filtered, openStyleId]);
 
   const change = Math.max(0, money(Number(tendered || 0) - total));
 
@@ -251,45 +363,126 @@ export function PosTerminal({
                 ? "لا يوجد صنف مطابق."
                 : "Nothing matches."}
           </div>
+        ) : openStyle ? (
+          /* ------------------------------------------- one style, opened */
+          <div>
+            <div className="mb-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setOpenStyleId(null)}
+                className="rounded-lg border border-ink-300 px-3 py-1.5 text-xs font-medium text-ink-700"
+              >
+                {ar ? "‹ رجوع" : "‹ Back"}
+              </button>
+              <span className="text-sm font-semibold text-ink-900">
+                {ar ? openStyle.styleAr : openStyle.styleEn}
+              </span>
+              <span className="num text-xs text-ink-400">
+                {openStyle.totalAvailable} {ar ? "متاح" : "available"}
+              </span>
+            </div>
+
+            {openStyle.colours.map((colour) => (
+              <div key={colour.key} className="mb-4">
+                <div className="mb-2 flex items-center gap-2">
+                  {colour.hex && (
+                    <span
+                      aria-hidden
+                      className="h-3.5 w-3.5 shrink-0 rounded-full border border-ink-200"
+                      style={{ backgroundColor: colour.hex }}
+                    />
+                  )}
+                  <span className="text-sm font-medium text-ink-800">
+                    {ar ? colour.colourAr : colour.colourEn}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {colour.sizes.map((p) => {
+                    const inCart = cart.find((l) => l.variantId === p.variantId)?.quantity ?? 0;
+                    const left = Number(p.available) - inCart;
+                    return (
+                      <button
+                        key={p.variantId}
+                        type="button"
+                        onClick={() => add(p)}
+                        disabled={left <= 0}
+                        className="min-w-[4.5rem] rounded-lg border border-ink-200 bg-white px-3 py-2 text-center transition-colors hover:border-ink-900 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <div className="text-sm font-semibold text-ink-900">{p.size}</div>
+                        <div
+                          className={`num text-[11px] ${left <= 2 ? "text-bad" : "text-ink-400"}`}
+                        >
+                          {left}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
+          /* ------------------------------------ one card per style, as a shop */
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-            {filtered.map((p) => {
-              const inCart = cart.find((l) => l.variantId === p.variantId)?.quantity ?? 0;
-              const left = Number(p.available) - inCart;
-              return (
-                <button
-                  key={p.variantId}
-                  type="button"
-                  onClick={() => add(p)}
-                  disabled={left <= 0}
-                  className="rounded-xl border border-ink-200 bg-white p-3 text-start transition-colors hover:border-ink-400 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <div className="flex items-center gap-2">
-                    {p.hex && (
+            {styleCards.map((s) => (
+              <button
+                key={s.styleId}
+                type="button"
+                onClick={() => setOpenStyleId(s.styleId)}
+                className="overflow-hidden rounded-xl border border-ink-200 bg-white text-start transition-colors hover:border-ink-400"
+              >
+                <div className="aspect-[3/4] w-full bg-ink-100">
+                  {s.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={s.image}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xs text-ink-300">
+                      {ar ? "من غير صورة" : "no photo"}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-2.5">
+                  <div className="truncate text-sm font-medium text-ink-900">
+                    {ar ? s.styleAr : s.styleEn}
+                  </div>
+
+                  <div className="mt-1 flex items-center gap-1">
+                    {s.swatches.slice(0, 6).map((c) => (
                       <span
+                        key={c.key}
                         aria-hidden
-                        className="h-3 w-3 shrink-0 rounded-full border border-ink-200"
-                        style={{ backgroundColor: p.hex }}
+                        title={ar ? c.colourAr : c.colourEn}
+                        className="h-2.5 w-2.5 rounded-full border border-ink-200"
+                        style={{ backgroundColor: c.hex ?? "#d4d4d4" }}
                       />
+                    ))}
+                    {s.swatches.length > 6 && (
+                      <span className="num text-[10px] text-ink-400">
+                        +{s.swatches.length - 6}
+                      </span>
                     )}
-                    <span className="truncate text-sm font-medium text-ink-900">
-                      {ar ? p.styleAr : p.styleEn}
+                  </div>
+
+                  <div className="mt-1.5 flex items-baseline justify-between">
+                    <span className="num text-sm font-semibold">{s.priceLabel}</span>
+                    <span
+                      className={`num text-xs ${
+                        s.totalAvailable <= 3 ? "text-bad" : "text-ink-400"
+                      }`}
+                    >
+                      {s.totalAvailable}
                     </span>
                   </div>
-                  <div className="mt-1 text-xs text-ink-500">
-                    {ar ? p.colourAr : p.colourEn} · {p.size}
-                  </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <span className="num text-sm font-semibold">
-                      {p.retailPrice ? Number(p.retailPrice).toFixed(2) : "—"}
-                    </span>
-                    <span className={`num text-xs ${left <= 3 ? "text-bad" : "text-ink-400"}`}>
-                      {left} {ar ? "متاح" : "left"}
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
+                </div>
+              </button>
+            ))}
           </div>
         )}
       </div>
