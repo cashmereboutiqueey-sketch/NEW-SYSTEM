@@ -1,7 +1,12 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import { checkoutAction, lookupSerialAction, type PosState } from "./actions";
+import {
+  checkoutAction,
+  lookupSerialAction,
+  quickAddCustomerAction,
+  type PosState,
+} from "./actions";
 import { isWellFormedSerial, normaliseTypedSerial } from "@/core/serial";
 import type { Locale } from "@/lib/i18n";
 
@@ -54,6 +59,7 @@ export function PosTerminal({
   channelId,
   canDiscount,
   mayGiveCredit,
+  isExhibition,
   customers,
 }: {
   locale: Locale;
@@ -65,6 +71,8 @@ export function PosTerminal({
   canDiscount: boolean;
   /** Letting somebody walk out owing money is its own decision, and its own right. */
   mayGiveCredit: boolean;
+  /** A bazaar customer is not a showroom customer, and is recorded as such. */
+  isExhibition: boolean;
   customers: { id: string; name: string; phone: string | null }[];
 }) {
   const ar = locale === "ar";
@@ -75,6 +83,22 @@ export function PosTerminal({
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [openStyleId, setOpenStyleId] = useState<string | null>(null);
+
+  /**
+   * The customer list, held locally so somebody added mid-queue appears at
+   * once. Waiting for the page to revalidate would mean the cashier adds a
+   * customer and then cannot find them, which is how the same person ends up
+   * in the database three times.
+   */
+  const [people, setPeople] = useState(customers);
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: "", phone: "" });
+  const [duplicate, setDuplicate] = useState<
+    { id: string; name: string; phone: string | null; code: string } | null
+  >(null);
+  const [customerError, setCustomerError] = useState<string | null>(null);
+  const [savingCustomer, setSavingCustomer] = useState(false);
+
   const [onAccount, setOnAccount] = useState(false);
   const [paidNow, setPaidNow] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
@@ -212,6 +236,43 @@ export function PosTerminal({
       })),
     };
   }, [filtered, openStyleId]);
+
+  /**
+   * Add the person standing at the counter.
+   *
+   * `createAnyway` is what the cashier chose after being shown a match — the
+   * decision that this is a different person on the same family phone. It is
+   * never assumed.
+   */
+  async function saveCustomer(createAnyway: boolean) {
+    setSavingCustomer(true);
+    setCustomerError(null);
+    try {
+      const result = await quickAddCustomerAction({
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        source: isExhibition ? "EXHIBITION" : "POS",
+        createAnyway,
+      });
+
+      if (result.ok) {
+        setPeople((list) => [
+          { id: result.customer.id, name: result.customer.name, phone: result.customer.phone },
+          ...list,
+        ]);
+        setCustomerId(result.customer.id);
+        setAddingCustomer(false);
+        setNewCustomer({ name: "", phone: "" });
+        setDuplicate(null);
+      } else if ("match" in result) {
+        setDuplicate(result.match);
+      } else {
+        setCustomerError(result.message);
+      }
+    } finally {
+      setSavingCustomer(false);
+    }
+  }
 
   const change = Math.max(0, money(Number(tendered || 0) - total));
 
@@ -643,18 +704,114 @@ export function PosTerminal({
             </div>
           )}
 
-          <select
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            className={`${field} mb-2 w-full`}
-          >
-            <option value="">{ar ? "بدون عميل" : "No customer"}</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.phone ? ` — ${c.phone}` : ""}
-              </option>
-            ))}
-          </select>
+          <div className="mb-2 flex items-center gap-2">
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className={`${field} min-w-0 flex-1`}
+            >
+              <option value="">{ar ? "بدون عميل" : "No customer"}</option>
+              {people.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}{c.phone ? ` — ${c.phone}` : ""}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAddingCustomer((v) => !v);
+                setNewCustomer({ name: "", phone: "" });
+                setDuplicate(null);
+                setCustomerError(null);
+              }}
+              title={ar ? "عميل جديد" : "New customer"}
+              className="shrink-0 rounded-lg border border-ink-300 px-3 py-2 text-sm font-semibold text-ink-700"
+            >
+              {addingCustomer ? "×" : "+"}
+            </button>
+          </div>
+
+          {/* ------------------------------------------ a new face at the counter */}
+          {addingCustomer && (
+            <div className="mb-2 rounded-lg border border-ink-200 p-2">
+              <div className="mb-2 grid grid-cols-2 gap-2">
+                <input
+                  value={newCustomer.name}
+                  onChange={(e) =>
+                    setNewCustomer((c) => ({ ...c, name: e.target.value }))
+                  }
+                  placeholder={ar ? "الاسم" : "Name"}
+                  className={field}
+                />
+                <input
+                  value={newCustomer.phone}
+                  onChange={(e) => {
+                    setNewCustomer((c) => ({ ...c, phone: e.target.value }));
+                    // A changed number is a different question, so the old
+                    // answer stops applying.
+                    setDuplicate(null);
+                  }}
+                  placeholder={ar ? "الموبايل" : "Phone"}
+                  dir="ltr"
+                  inputMode="tel"
+                  className={`${field} num`}
+                />
+              </div>
+
+              {duplicate ? (
+                <div className="rounded-lg bg-warn/10 px-2.5 py-2">
+                  <p className="mb-2 text-xs text-warn">
+                    {ar
+                      ? `الرقم ده مسجّل باسم ${duplicate.name}.`
+                      : `That number is already ${duplicate.name}'s.`}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerId(duplicate.id);
+                        setPeople((list) =>
+                          list.some((p) => p.id === duplicate.id)
+                            ? list
+                            : [{ id: duplicate.id, name: duplicate.name, phone: duplicate.phone }, ...list],
+                        );
+                        setAddingCustomer(false);
+                        setDuplicate(null);
+                      }}
+                      className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white"
+                    >
+                      {ar ? "أيوه دي هي" : "That's them"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveCustomer(true)}
+                      disabled={savingCustomer}
+                      className="rounded-lg border border-ink-300 px-3 py-1.5 text-xs text-ink-700 disabled:opacity-50"
+                    >
+                      {ar ? "لأ، دي واحدة تانية" : "No, someone else"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => saveCustomer(false)}
+                  disabled={savingCustomer || !newCustomer.name.trim()}
+                  className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                >
+                  {savingCustomer
+                    ? (ar ? "…" : "…")
+                    : ar ? "ضيف واختار" : "Add and select"}
+                </button>
+              )}
+
+              {customerError && (
+                <p className="mt-2 text-xs text-bad">{customerError}</p>
+              )}
+            </div>
+          )}
 
           {/* ----------------------------------------------- part payment */}
           {mayGiveCredit && (

@@ -8,6 +8,8 @@ import { InventoryError } from "@/lib/inventory";
 import { can } from "@/core/permissions";
 import { findUnitBySerial } from "@/lib/garment-units";
 import { db } from "@/lib/db";
+import { createCustomer } from "@/lib/master-data";
+import { normalisePhone } from "@/core/crm";
 
 export type PosState = {
   error?: string;
@@ -236,5 +238,77 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     };
   } catch (error) {
     return { error: toMessage(error) };
+  }
+}
+
+export type QuickCustomerResult =
+  | { ok: true; customer: { id: string; name: string; phone: string | null } }
+  | {
+      /** Somebody already has that number. The cashier decides who it is. */
+      ok: false;
+      match: { id: string; name: string; phone: string | null; code: string };
+    }
+  | { ok: false; message: string };
+
+/**
+ * Add a customer without leaving the till.
+ *
+ * A queue is exactly where duplicate customer records get made: the cashier
+ * cannot leave the screen mid-sale to check, so they type the name again and
+ * the person's history splits in two. So the phone is checked first — but the
+ * match is offered rather than acted on. A shared family phone is common
+ * enough that silently selecting the wrong sister is worse than asking, and
+ * silently creating a second record is what we are trying to avoid.
+ */
+export async function quickAddCustomerAction(input: {
+  name: string;
+  phone: string;
+  /** Where they walked in, so acquisition reporting means something. */
+  source: "POS" | "EXHIBITION";
+  /** Set once the cashier has seen the match and said it is somebody else. */
+  createAnyway?: boolean;
+}): Promise<QuickCustomerResult> {
+  try {
+    // Whoever can ring up a sale can name the person it belongs to.
+    const session = await authorize("sales_order:create");
+
+    const name = input.name.trim();
+    if (!name) return { ok: false, message: "اكتب الاسم." };
+
+    const phone = input.phone.trim();
+    const normalised = normalisePhone(phone);
+
+    if (normalised && !input.createAnyway) {
+      const existing = await db.customer.findFirst({
+        where: { phoneNormalised: normalised, mergedIntoId: null, isActive: true },
+        select: { id: true, name: true, phone: true, code: true },
+        orderBy: { createdAt: "asc" },
+      });
+      if (existing) return { ok: false, match: existing };
+    }
+
+    const { customer } = await createCustomer(
+      {
+        name,
+        phone: phone || null,
+        // A bazaar customer is not a showroom customer.
+        acquiredVia: input.source,
+      } as never,
+      { userId: session.userId },
+    );
+
+    revalidatePath("/pos");
+    revalidatePath("/customers");
+
+    return {
+      ok: true,
+      customer: { id: customer.id, name: customer.name, phone: customer.phone },
+    };
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      return { ok: false, message: "You do not have permission to add a customer." };
+    }
+    console.error("Unhandled quick-add error:", error);
+    return { ok: false, message: toMessage(error) };
   }
 }

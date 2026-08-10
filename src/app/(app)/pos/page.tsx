@@ -174,6 +174,7 @@ export default async function PosPage({
           channelId={(retailChannel ?? anyChannel).id}
           canDiscount={can(session.role, "sales_order:discount")}
           mayGiveCredit={can(session.role, "sales_order:credit")}
+          isExhibition={till.location.kind === "EXHIBITION"}
           customers={customers}
         />
       </div>
