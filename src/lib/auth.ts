@@ -2,10 +2,13 @@ import "server-only";
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
+import { hashPassword, verifyPassword, IMPOSSIBLE_HASH } from "@/core/password";
 import { getSession, type SessionPayload } from "./session";
 import { can, type Permission } from "@/core/permissions";
 
-const BCRYPT_ROUNDS = 12;
+// Re-exported so existing callers and tests keep one import, while the
+// hashing itself lives somewhere a command line tool can reach.
+export { hashPassword, verifyPassword };
 
 /**
  * How many wrong passwords before an account stops answering, and for how
@@ -20,14 +23,6 @@ const BCRYPT_ROUNDS = 12;
 const MAX_FAILED_LOGINS = 8;
 const LOCKOUT_MINUTES = 15;
 
-export function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, BCRYPT_ROUNDS);
-}
-
-export function verifyPassword(plain: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(plain, hash);
-}
-
 export async function authenticate(
   email: string,
   password: string,
@@ -38,7 +33,7 @@ export async function authenticate(
   if (!user || !user.isActive) {
     // Spend the same time as a real comparison so a missing account and a
     // wrong password are indistinguishable from the outside.
-    await bcrypt.compare(password, "$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva");
+    await bcrypt.compare(password, IMPOSSIBLE_HASH);
     return null;
   }
   if (user.lockedUntil && user.lockedUntil > new Date()) {

@@ -118,6 +118,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "whatIf", href: "/scenarios", phase: 3, scopes: ALL_SCOPES, icon: "sparkles", shipped: true },
       { key: "integrations", href: "/integrations", phase: 9, scopes: ALL_SCOPES, icon: "refresh", shipped: true },
+      { key: "users", href: "/users", phase: 1, scopes: ALL_SCOPES, icon: "users", shipped: true },
       { key: "settings", href: "/settings", phase: 1, scopes: ALL_SCOPES, icon: "settings" , shipped: true },
     ],
   },

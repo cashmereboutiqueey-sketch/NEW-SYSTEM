@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { t } from "@/lib/i18n";
 import { Sidebar } from "@/components/sidebar";
@@ -13,6 +15,20 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
+
+  // Somebody handed this person their password — a new account, or a reset.
+  // Nothing in here is reachable until they replace it, because a password
+  // two people know makes the name on every journal line a guess.
+  //
+  // Checked here rather than in `requireUser` so /change-password, which sits
+  // outside this layout, can still be reached; guarding it there would send
+  // the user in a circle.
+  const account = await db.user.findUnique({
+    where: { id: user.userId },
+    select: { mustChangePassword: true },
+  });
+  if (account?.mustChangePassword) redirect("/change-password");
+
   const { locale, scope } = await getPrefs();
 
   return (

@@ -63,6 +63,12 @@ model User {
   /// why they cannot get in.
   failedLogins Int       @default(0)
   lockedUntil  DateTime?
+
+  /// Set when somebody hands this person a password rather than the person
+  /// choosing one: a new account, or a reset. They cannot reach any screen
+  /// until they replace it, because a password two people know is not a
+  /// password.
+  mustChangePassword Boolean @default(false)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
