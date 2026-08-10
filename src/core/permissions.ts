@@ -56,6 +56,10 @@ export const PERMISSIONS = [
   "sales_order:view",
   "sales_order:create",
   "sales_order:discount",
+  /// Letting a customer walk out owing money. Separate from discounting: a
+  /// cashier may be trusted to take the full price and not to decide who is
+  /// good for a debt.
+  "sales_order:credit",
   "sales_order:refund",
   "pos:operate",
   "pos:close_shift",
@@ -172,7 +176,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
   ],
 
   BRAND_MANAGER: [
-    "sales_order:view", "sales_order:create", "sales_order:discount", "sales_order:refund",
+    "sales_order:view", "sales_order:create", "sales_order:discount",
+    "sales_order:credit", "sales_order:refund",
     "customer:view",
     "campaign:view", "campaign:manage",
     "inventory:view", "inventory:transfer",

@@ -49,6 +49,7 @@ export function PosTerminal({
   entityId,
   channelId,
   canDiscount,
+  mayGiveCredit,
   customers,
 }: {
   locale: Locale;
@@ -58,6 +59,8 @@ export function PosTerminal({
   entityId: string;
   channelId: string;
   canDiscount: boolean;
+  /** Letting somebody walk out owing money is its own decision, and its own right. */
+  mayGiveCredit: boolean;
   customers: { id: string; name: string; phone: string | null }[];
 }) {
   const ar = locale === "ar";
@@ -67,6 +70,8 @@ export function PosTerminal({
   const [method, setMethod] = useState("CASH");
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [onAccount, setOnAccount] = useState(false);
+  const [paidNow, setPaidNow] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -97,6 +102,16 @@ export function PosTerminal({
   );
 
   const change = Math.max(0, money(Number(tendered || 0) - total));
+
+  // What the customer is actually handing over. A blank box while "part now"
+  // is ticked means nothing yet, not the whole price.
+  const collectedNow = onAccount
+    ? Math.min(total, Math.max(0, money(Number(paidNow || 0))))
+    : total;
+  const owed = money(total - collectedNow);
+  // A debt has to have a name on it, so the sale is blocked here rather than
+  // letting the server refuse it after the cashier has taken the money.
+  const creditBlocked = owed > 0 && !customerId;
 
   // The cart is cleared only once a sale has actually been recorded. Clearing
   // it on click would throw away the customer's basket whenever a checkout
@@ -294,6 +309,8 @@ export function PosTerminal({
         <input type="hidden" name="entityId" value={entityId} />
         <input type="hidden" name="channelId" value={channelId} />
         <input type="hidden" name="total" value={total.toFixed(2)} />
+        {/* What is being collected right now; the rest goes on the tab. */}
+        <input type="hidden" name="paidNow" value={collectedNow.toFixed(2)} />
         <input type="hidden" name="method" value={method} />
         <input type="hidden" name="tendered" value={tendered || "0"} />
         <input type="hidden" name="customerId" value={customerId} />
@@ -446,6 +463,59 @@ export function PosTerminal({
             ))}
           </select>
 
+          {/* ----------------------------------------------- part payment */}
+          {mayGiveCredit && (
+            <div className="mb-2 rounded-lg border border-ink-200 p-2">
+              <label className="flex items-center gap-2 text-xs text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={onAccount}
+                  onChange={(e) => {
+                    setOnAccount(e.target.checked);
+                    if (!e.target.checked) setPaidNow("");
+                  }}
+                />
+                {ar ? "الزبون هيدفع جزء دلوقتي والباقي بعدين" : "Paying part now, rest later"}
+              </label>
+
+              {onAccount && (
+                <div className="mt-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max={total}
+                      value={paidNow}
+                      onChange={(e) => setPaidNow(e.target.value)}
+                      placeholder={ar ? "بيدفع كام دلوقتي" : "Paying now"}
+                      dir="ltr"
+                      className={`${field} num flex-1`}
+                    />
+                    <div className="text-end">
+                      <div className="text-xs text-ink-500">{ar ? "الباقي عليه" : "Owes"}</div>
+                      <div
+                        className={
+                          "num text-sm font-semibold " + (owed > 0 ? "text-warn" : "")
+                        }
+                      >
+                        {owed.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {owed > 0 && !customerId && (
+                    <p className="mt-2 rounded-lg bg-bad/10 px-3 py-2 text-xs text-bad">
+                      {ar
+                        ? "لازم تختار العميل — الدين من غير اسم محدش يقدر يطالب بيه."
+                        : "Choose the customer: a debt with no name cannot be chased."}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {!priced && cart.length > 0 && (
             <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
               {ar
@@ -473,12 +543,16 @@ export function PosTerminal({
 
           <button
             type="submit"
-            disabled={pending || cart.length === 0 || !priced}
+            disabled={pending || cart.length === 0 || !priced || creditBlocked}
             className="w-full rounded-lg bg-ink-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
             {pending
               ? (ar ? "جارٍ التسجيل…" : "Recording…")
-              : (ar ? `إتمام البيع · ${total.toFixed(2)}` : `Complete sale · ${total.toFixed(2)}`)}
+              : owed > 0
+                ? (ar
+                    ? `بيع بـ ${collectedNow.toFixed(2)} · وعليه ${owed.toFixed(2)}`
+                    : `Sell · ${collectedNow.toFixed(2)} now, ${owed.toFixed(2)} owed`)
+                : (ar ? `إتمام البيع · ${total.toFixed(2)}` : `Complete sale · ${total.toFixed(2)}`)}
           </button>
         </div>
       </form>

@@ -173,6 +173,18 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       | "CASH" | "CARD" | "WALLET" | "COD";
     const tendered = Number(formData.get("tendered") ?? 0);
 
+    // How much is actually being handed over. Anything short of the total is
+    // credit, and credit is a separate right from ringing up a sale: a cashier
+    // may be trusted to take the full price and not to judge who is good for a
+    // debt. Checked here as well as in the browser, because the browser is not
+    // where permissions live.
+    const total = Number(formData.get("total") ?? 0);
+    const paidNow = Number(formData.get("paidNow") ?? total);
+
+    if (paidNow < total && !can(session.role, "sales_order:credit")) {
+      return { error: "You do not have permission to let a customer pay later." };
+    }
+
     // A sale rung up at a bazaar is a bazaar sale, not a showroom one. The
     // till is the same till, so the source has to come from where it is
     // standing — otherwise every bazaar's takings land in the showroom's
@@ -194,16 +206,19 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
         customerId: (formData.get("customerId") as string) || null,
         orderDate: new Date(),
         lines: cart,
-        payments: [
-          {
-            method,
-            amount: Number(formData.get("total") ?? 0),
-            fee: 0,
-            // Cash and card at the till are collected there and then; a COD
-            // sale from the shop floor is not money in hand yet.
-            collected: method !== "COD",
-          },
-        ],
+        payments:
+          paidNow > 0
+            ? [
+                {
+                  method,
+                  amount: paidNow,
+                  fee: 0,
+                  // Cash and card at the till are collected there and then; a
+                  // COD sale from the shop floor is not money in hand yet.
+                  collected: method !== "COD",
+                },
+              ]
+            : [],
       },
       { userId: session.userId },
     );

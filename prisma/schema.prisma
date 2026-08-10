@@ -2206,6 +2206,14 @@ model Customer {
   email     String?
   city      String?
   creditDays Int          @default(0)
+
+  /// The most this customer may owe at any one time. Zero — the default —
+  /// means no credit at all, which is the right starting point for somebody
+  /// who walked in off the street. Raising it is a decision somebody makes
+  /// about a person they know, so it lives on the customer rather than being
+  /// a blanket policy.
+  creditLimit Decimal     @default(0) @db.Decimal(18, 4)
+
   shopifyCustomerId String?
   isActive  Boolean       @default(true)
   createdAt DateTime      @default(now())
@@ -2335,6 +2343,10 @@ model SalesOrder {
   deliveredDate DateTime? @db.Date
   /// When cash actually landed — feeds collection days in the CCC.
   collectedDate DateTime? @db.Date
+  /// When the unpaid balance falls due, from the customer's agreed terms.
+  /// Set only when the customer left owing something, so an aging report can
+  /// separate "late" from "not yet due" rather than treating all debt alike.
+  dueDate       DateTime? @db.Date
 
   grossAmount    Decimal @db.Decimal(18, 4)
   discountAmount Decimal @default(0) @db.Decimal(18, 4)

@@ -217,13 +217,29 @@ describe("payments", () => {
     expect(await accountBalance("6230")).toBeCloseTo(45, 2);
   });
 
-  it("refuses payments that do not add up to the order", async () => {
+  it("refuses to take more than the order comes to", async () => {
+    // Overpaying is not credit — it is a mistake or a refund waiting to
+    // happen, and either way createSale is the wrong place to resolve it.
+    await expect(
+      createSale(
+        saleInput({
+          payments: [{ method: "CASH", amount: RETAIL * 5, fee: 0, collected: true }],
+        }),
+        { userId: cashierId },
+      ),
+    ).rejects.toThrow(/only comes to/i);
+  });
+
+  it("refuses to leave part of the price on a nameless tab", async () => {
+    // Underpaying is allowed now — it is how somebody pays 1,000 of 1,500 —
+    // but only in a named customer's account, because a debt with nobody's
+    // name on it cannot be chased.
     await expect(
       createSale(
         saleInput({ payments: [{ method: "CASH", amount: 100, fee: 0, collected: true }] }),
         { userId: cashierId },
       ),
-    ).rejects.toThrow(/but the order comes to/i);
+    ).rejects.toThrow(/customer's name/i);
   });
 
   it("invoices at a unit price the customer can verify", async () => {

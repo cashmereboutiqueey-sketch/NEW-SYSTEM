@@ -8,6 +8,7 @@ import { markUnitsSold } from "./garment-units";
 import { writeAudit, type AuditContext } from "./audit";
 import type { DraftLine } from "@/core/ledger";
 import { dec, sum, roundMoney } from "./money";
+import { outstandingForCustomer as customerOutstanding } from "./receivables";
 
 /**
  * The unified Brand order engine.
@@ -228,13 +229,57 @@ export async function createSale(
   // fractions of a piastre, so an order totalling 4,989.3915 is settled in
   // full by 4,989.39. Demanding exact equality here rejects correct payments
   // and reports them with two figures that look identical on screen.
-  if (
-    payments.length > 0 &&
-    !roundMoney(paymentTotal).equals(roundMoney(dueFromCustomer))
-  ) {
+  if (roundMoney(paymentTotal).greaterThan(roundMoney(dueFromCustomer))) {
+    // Paying more than the order comes to is not credit, it is a mistake or a
+    // refund waiting to happen, and either way it is not this function's job.
     throw new SalesError(
-      `Payments total ${paymentTotal.toFixed(2)} but the order comes to ${dueFromCustomer.toFixed(2)}.`,
+      `Payments total ${paymentTotal.toFixed(2)} but the order only comes to ${dueFromCustomer.toFixed(2)}.`,
     );
+  }
+
+  // Whatever the customer did not hand over, they owe. Zero for a normal sale.
+  const owed = roundMoney(dueFromCustomer.minus(paymentTotal));
+  let dueDate: Date | null = null;
+
+  // Taking some of the money and letting the rest ride is a decision somebody
+  // makes at the counter, and it is the one the credit limit exists to govern.
+  //
+  // An order with no payments recorded at all is a different thing: a Shopify
+  // order the courier has not remitted, or a wholesale order awaiting its
+  // invoice. Those are unsettled rather than lent, they have always been
+  // allowed without a named customer, and the aging report still shows them.
+  const partPaid = payments.length > 0 && owed.greaterThan(0);
+
+  if (partPaid) {
+    // A debt nobody can be chased for is a loss with extra steps.
+    if (!data.customerId) {
+      throw new SalesError(
+        "A part-paid sale has to be in a customer's name, otherwise nobody can be asked for the rest.",
+      );
+    }
+
+    const customer = await db.customer.findUnique({
+      where: { id: data.customerId },
+      select: { name: true, creditLimit: true, creditDays: true },
+    });
+    if (!customer) throw new SalesError("Customer not found.");
+
+    const alreadyOwed = await customerOutstanding(data.customerId);
+    const wouldOwe = alreadyOwed.plus(owed);
+
+    if (wouldOwe.greaterThan(dec(customer.creditLimit))) {
+      throw new SalesError(
+        `${customer.name} would owe ${wouldOwe.toFixed(2)}, over their ${dec(customer.creditLimit).toFixed(2)} limit` +
+          (alreadyOwed.greaterThan(0)
+            ? ` — ${alreadyOwed.toFixed(2)} of it from before.`
+            : "."),
+      );
+    }
+
+    // Their agreed terms, not a house default: an aging report is only
+    // useful if "late" means late for this particular customer.
+    dueDate = new Date(data.orderDate);
+    dueDate.setDate(dueDate.getDate() + customer.creditDays);
   }
 
   // Relieved first: a sale that cannot be fulfilled must not book revenue.
@@ -275,6 +320,7 @@ export async function createSale(
         shopifyOrderId: data.source === "SHOPIFY" ? data.externalId ?? null : null,
         status: "CONFIRMED",
         orderDate: data.orderDate,
+        dueDate: owed.greaterThan(0) ? dueDate : null,
         grossAmount: grossAmount.toString(),
         discountAmount: discountAmount.toString(),
         netAmount: netAmount.toString(),
@@ -354,15 +400,18 @@ export async function createSale(
       });
     }
 
-    // With no payment recorded the customer owes the money, so it is a
-    // receivable rather than an assumption that cash arrived.
-    const settlements =
-      payments.length > 0
-        ? payments.map((p) => ({
-            code: fundsAccount(p.method, p.collected),
-            amount: p.amount,
-          }))
-        : [{ code: ACC.RECEIVABLE, amount: dueFromCustomer }];
+    // Every pound of the order has to land somewhere: in a drawer, in a
+    // clearing account, or on the customer's tab. `owed` is whatever the
+    // payments did not cover — the whole order when nothing was paid, part of
+    // it when they paid something on account, nothing on a normal sale.
+    const settlements = payments.map((p) => ({
+      code: fundsAccount(p.method, p.collected),
+      amount: p.amount,
+    }));
+
+    if (owed.greaterThan(0)) {
+      settlements.push({ code: ACC.RECEIVABLE, amount: owed });
+    }
 
     for (const s of settlements) {
       revenueLines.push({
