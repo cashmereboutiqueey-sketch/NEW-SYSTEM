@@ -17,6 +17,28 @@ bash scripts/backup.sh                                     # backup, verified by
 npm run walkthrough                                        # the whole business cycle
 ```
 
+**One warning about running them.** The integration suite wipes the database.
+An audit script run straight afterwards compares empty tables and passes
+everything trivially, because zero equals zero. That happened once during this
+audit and was caught. Always `npm run db:fresh` before running the books,
+atomicity or volume audits, and disbelieve any reconciliation that reports 0.00
+across the board.
+
+Final verification run, in order:
+
+| | |
+|---|---|
+| `npm run typecheck` | clean |
+| `npm run test` | 17 files, 315 tests passed |
+| `npm run test:db` | 16 files, 276 tests passed |
+| `npm run build` | compiled successfully, 47 pages |
+| `audit-rbac` | authorisation map coherent and enforced |
+| `audit-books` | books agree with themselves and refuse to be edited |
+| `audit-atomicity` | every failed operation rolled back completely |
+| `audit-http` | the running application refused every attack |
+| `audit-volume` | every screen query inside its budget |
+| `backup.sh` | backup verified by restoring it |
+
 ---
 
 ## System status
@@ -27,11 +49,11 @@ will run in, because that environment does not exist yet.
 
 | Area | Verdict | How it was established |
 |---|---|---|
-| Backend | **PASS** | 315 unit + 276 integration tests; nine forced mid-operation failures all rolled back |
-| Database | **PASS** | 84 tables, 141 foreign keys, 151 unique indexes, 13 triggers; integrity queries clean; no `Float` on any money column |
-| Frontend | **PASS** | 47 routes build and render; every screen reached over HTTP with real data |
+| Backend | **PASS** | 315 unit + 276 integration tests, all passing; nine forced mid-operation failures all rolled back |
+| Database | **PASS** | 84 tables, 141 foreign keys, 246 indexes (151 unique), 13 triggers; integrity queries clean; no `Float` on any money column |
+| Frontend | **PASS** | 47 pages plus the Shopify webhook route build clean; typecheck clean; every screen reached over HTTP with real data |
 | Authentication | **PASS** | bcrypt at 12 rounds; forged, malformed and expired sessions all refused over HTTP; timing equalised for unknown accounts |
-| Authorization | **PASS** | 53 permissions, 82 guards, 25 dangerous role/action pairs refused; fifteen page-level holes found and closed |
+| Authorization | **PASS** | 53 permissions, 104 guards, 63 server actions all guarded, 25 dangerous role/action pairs refused; fifteen page-level holes found and closed |
 | Accounting | **PASS** | Every posted journal balances; posted entries immutable against raw SQL; closed periods refuse postings |
 | Inventory | **PASS** | FIFO verified across lots; the mandated 10/4/2 fabric scenario passes; ledger equals the lots to the piastre |
 | Factory | **PASS** | Minute rate reproduces the documented worked example; WIP now clears to exactly zero per run |
@@ -44,7 +66,7 @@ will run in, because that environment does not exist yet.
 | MRP | **PASS** | Requirements, urgency and MOQ rounding verified; orders are raised only when a person ticks them |
 | Marketing | **PASS** | Campaign spend, ROAS and contribution ROAS from posted figures |
 | Security | **PASS** | See below |
-| Performance | **PASS** | 10,000 customers, 10,000 orders, 20,000 journals: no screen query over 470ms |
+| Performance | **PASS** | 10,000 customers, 10,000 orders, 20,000 journals: no screen query over 441ms |
 | Backups | **PASS** | Backup taken, restored into a scratch database, then the live database destroyed and fully recovered |
 | Hostinger deployment | **BLOCKED** | No server provisioned yet |
 
@@ -128,13 +150,12 @@ Two of these were closed during the audit rather than accepted:
 - `sales_orders.customerId` had no index. At ten thousand orders a customer's
   history took 1.8ms; it now takes 0.22ms. Harmless today, unpleasant at half a
   million rows.
-- Twelve permissions are defined but nothing checks them yet
+- Ten permissions are defined but nothing checks them yet
   (`journal:post`, `journal:reverse`, `expense:approve`, `payment:approve`,
   `account:manage`, `purchase_order:approve`, `sales_order:refund`,
-  `employee:view`, `payroll:approve`, `cmt_quote:view`, `user:manage`,
-  `audit:view`). They belong to approval flows and screens not yet built. They
-  are not holes — nothing grants access on their absence — but they are
-  promises the system does not yet keep.
+  `payroll:approve`, `user:manage`, `audit:view`). They belong to approval
+  flows and screens not yet built. They are not holes — nothing grants access
+  on their absence — but they are promises the system does not yet keep.
 
 ---
 
@@ -183,21 +204,36 @@ approval limit with nobody approving · closing a run against a SKU from another
 style.
 
 **All nine failed cleanly with nothing written**, and the ledger still balanced
-afterwards.
+at 1,883,203.35 afterwards — the same figure as before the nine attacks.
 
 ### The ledger agrees with what it summarises
 
-| Check | Result |
-|---|---|
-| Raw materials (1310) against the lots | matches |
-| Work in progress (1320) against the lots | **0.00** — clears exactly |
-| Factory finished goods (1330) | matches |
-| Brand finished goods (1340) | matches |
-| Payables against unpaid expenses plus deliveries | matches |
-| Brand cost of sales against the order lines | matches |
-| Courier clearing against outstanding payments | matches |
-| Gateway clearing against outstanding payments | matches |
-| Assets = liabilities + equity + profit | matches |
+Run against a freshly loaded demonstration cycle (`npm run db:fresh`), which
+puts real trading through the system rather than comparing empty tables:
+
+| Check | Ledger balance | Result |
+|---|---|---|
+| Raw materials (1310) against the lots | 184,501.96 | agrees |
+| Work in progress (1320) against the lots | **0.00** | clears exactly |
+| Factory finished goods (1330) | 20,167.02 | agrees |
+| Brand finished goods (1340) | 154,681.02 | agrees |
+| Payables against unpaid expenses plus deliveries | 713,100.00 + 333,428.16 | agrees |
+| Brand cost of sales against the order lines | 4,759.42 | agrees |
+| Courier clearing against outstanding payments | 2,993.44 | agrees |
+| Gateway clearing against outstanding payments | **0.00** | agrees |
+| Assets = liabilities + equity + profit | 523,645.71 | balances |
+
+Total posted ledger: 1,883,203.35 on each side.
+
+The two zeros are the point. Work in progress at exactly 0.00 is the P1 fix
+holding: material charged at actual and relieved at standard now leaves nothing
+stranded. Gateway clearing at 0.00 is the collected-payments fix: card money
+taken at the till reaches the bank instead of sitting forever in "the gateway
+owes us".
+
+An empty database passes every one of these checks trivially, since 0 = 0. The
+integration suite wipes the database, so these figures were produced after
+reloading data specifically to avoid that.
 
 ### Segregation of duties
 
@@ -214,31 +250,51 @@ map can prevent on its own.
 - All 18 protected pages send an anonymous visitor to the login page.
 - A token signed with the wrong secret, a malformed token and an expired
   session are all refused.
+- Seven roles were checked against the pages they may and may not open.
 - Five injection and traversal attempts — SQL in a query parameter, `../..` in
   a path, a script tag in an entity name — were handled without a 500, without
   reflecting the script tag, and with the users table intact.
 - No secret and no database URL appears in any rendered page.
 - No secret appears in any of the 11 client-side bundles.
 
+One caveat worth stating plainly. The test for whether salaries are *withheld*
+rather than merely hidden could not be completed as designed: the production
+role cannot open `/hr` at all, so there is no response to inspect for a leaked
+figure. What is proven is that the page is unreachable to it and that a role
+holding `salary:view` does receive the figures. If a screen is ever added that
+shows staff to a role without `salary:view`, that test becomes meaningful and
+should be run.
+
 ### Under weight
 
-10,000 customers, 10,000 sales orders, 20,000 journal entries, 40,037 journal
-lines.
+10,000 customers, 10,000 sales orders, 20,000 journal entries, 40,018 journal
+lines — loaded in 64 seconds.
 
 | Query | Time |
 |---|---|
-| Customer list, first page | 24ms |
-| Sales list with joins, first page | 112ms |
-| Trial balance over every posted line | 72ms |
-| Ledger balance check | 31ms |
-| Stock on hand by lot | 23ms |
-| Owner dashboard | 469ms |
+| Customer list, first page | 17ms |
+| Sales list with joins, first page | 73ms |
+| Trial balance over every posted line | 55ms |
+| Ledger balance check | 27ms |
+| Stock on hand by lot | 13ms |
+| Outstanding courier money | 23ms |
+| Audit log, most recent page | 8ms |
+| Owner dashboard | 441ms |
 | Payables aging | 12ms |
-| Thirteen-week cash forecast | 102ms |
-| One customer's history (indexed) | 0.22ms |
-| A scanned garment tag | 0.04ms |
+| Thirteen-week cash forecast | 95ms |
+| One customer's history (indexed) | 0.137ms |
+| A scanned garment tag | 0.036ms |
+| An order looked up by number | 0.179ms |
 
-Nothing came close to the one-second budget.
+Nothing came close to the one-second budget. The owner dashboard is the
+heaviest thing in the system at 441ms, which is expected — it is the one screen
+that reads across every part of the business.
+
+Index use is judged by selectivity, not by plan shape. Nearly every order
+belongs to one entity, so reading the orders table and sorting is the *correct*
+plan for an unfiltered list and an index would rightly be ignored there. What
+must not read everything is a needle: one customer out of ten thousand, one
+scanned tag, one order number. All three use an index.
 
 ### Backups are restorable
 
@@ -247,9 +303,16 @@ scratch database, checking that the ledger still balances inside it and that
 the thirteen triggers survived. **If the restore fails, the dump is deleted**
 rather than left to be trusted.
 
-Proven end to end during this audit: the live database was destroyed
+Latest run: a 1,171KB dump, restored into a scratch database holding 20,000
+journals, 40,018 lines and 23 lots, ledger balancing at 2,082,643.35, with all
+13 triggers surviving the round trip.
+
+Proven end to end earlier in this audit: the live database was destroyed
 (`DROP SCHEMA public CASCADE`) and fully recovered from the backup —
 20,000 journal entries before, 20,000 after, books balancing.
+
+`backups/` is git-ignored. A database dump is the whole business in one file
+and must not go near the repository.
 
 ---
 
