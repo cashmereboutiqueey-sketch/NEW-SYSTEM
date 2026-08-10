@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -16,7 +16,7 @@ import { createSupplierAction, toggleSupplierAction } from "./actions";
  * working capital the business appears to need.
  */
 export default async function SuppliersPage() {
-  const session = await requireUser();
+  const session = await requirePermission("purchase_order:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const mayEdit = can(session.role, "purchase_order:create");

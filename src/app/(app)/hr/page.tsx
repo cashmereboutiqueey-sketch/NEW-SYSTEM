@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
@@ -19,7 +19,7 @@ import { createEmployeeAction, setEmploymentStatusAction } from "./actions";
  * device actually recorded.
  */
 export default async function HrPage() {
-  const session = await requireUser();
+  const session = await requirePermission("employee:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const seeSalary = can(session.role, "salary:view");

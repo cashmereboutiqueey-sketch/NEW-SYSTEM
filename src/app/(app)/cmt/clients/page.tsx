@@ -1,5 +1,5 @@
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { clientsWithHistory } from "@/lib/cmt";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -14,7 +14,7 @@ import { ClientForm } from "../cmt-forms";
  * good CMT client makes the Brand's own garments cheaper.
  */
 export default async function CmtClientsPage() {
-  const session = await requireUser();
+  const session = await requirePermission("cmt_quote:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

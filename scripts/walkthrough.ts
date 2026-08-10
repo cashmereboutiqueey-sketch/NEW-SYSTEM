@@ -10,10 +10,12 @@ import { createSupplier, createMaterial } from "../src/lib/master-data";
 import { createPurchaseOrder, receiveGoods } from "../src/lib/purchasing";
 import { createStyle, addBomLine, addOperation, generateVariants } from "../src/lib/products";
 import { createExpense } from "../src/lib/expenses";
+import { receiveMaterial } from "../src/lib/inventory";
 import { calculatePeriodMinuteRate } from "../src/lib/minute-rate";
 import { createCostSnapshot } from "../src/lib/costing";
 import {
   createProductionOrder, confirmProductionOrder, issueForOrder, completeProductionOrder,
+  plannedMaterials,
 } from "../src/lib/production";
 import { sellableStock, openTillFor } from "../src/lib/pos";
 import { openPosSession, createSale, closePosSession } from "../src/lib/sales";
@@ -194,13 +196,30 @@ await confirmProductionOrder(
 );
 ok(`${order.orderNumber} confirmed for 120`);
 
+// The whole bill goes to the floor, not just the cloth: finished goods
+// relieve work in progress for every line of it, and a run that was never
+// issued its trims is refused rather than quietly leaving WIP negative.
 const needed = 2.4 * 120 * 1.1;
 await issueForOrder({
   productionOrderId: order.productionOrderId, materialId: fabric.id,
   locationId: facLoc.id, entityId: factory.id,
   quantity: needed.toFixed(2), issueDate: on(14), piecesCut: 120,
 }, ctx);
-ok(`issued ${needed.toFixed(1)} m of fabric`);
+
+for (const line of await plannedMaterials(order.productionOrderId)) {
+  if (line.materialId === fabric.id) continue;
+  await receiveMaterial({
+    materialId: line.materialId, locationId: facLoc.id, entityId: factory.id,
+    quantity: (Number(line.requiredQty) * 2).toFixed(4),
+    unitCost: "6.5", receivedDate: on(13),
+  }, ctx);
+  await issueForOrder({
+    productionOrderId: order.productionOrderId, materialId: line.materialId,
+    locationId: facLoc.id, entityId: factory.id,
+    quantity: Number(line.requiredQty).toFixed(4), issueDate: on(14),
+  }, ctx);
+}
+ok(`issued ${needed.toFixed(1)} m of fabric and the rest of the bill`);
 
 // A real run comes off the line as a size curve.
 const madeSkus = await db.variant.findMany({

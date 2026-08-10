@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
@@ -28,7 +28,7 @@ export default async function StylesPage({
 }: {
   searchParams: Promise<{ style?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("production:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const params = await searchParams;

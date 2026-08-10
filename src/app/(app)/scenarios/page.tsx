@@ -1,5 +1,5 @@
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { buildBaseline, recentScenarios } from "@/lib/scenarios";
 import { PageHeader, Card, DataTable, Badge } from "@/components/ui";
@@ -36,7 +36,7 @@ function describeAssumptions(assumptions: unknown): string {
 }
 
 export default async function ScenariosPage() {
-  const session = await requireUser();
+  const session = await requirePermission("scenario:run");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

@@ -10,6 +10,7 @@ import {
   confirmProductionOrder,
   issueForOrder,
   completeProductionOrder,
+  plannedMaterials,
 } from "./production";
 import { despatchToBrand, receiveAtBrand, awaitingDespatch } from "./intercompany";
 import { createSale } from "./sales";
@@ -131,6 +132,37 @@ beforeEach(async () => {
 
 afterAll(async () => { await wipe(); await db.$disconnect(); });
 
+/**
+ * Issues every line of the bill of materials for a run.
+ *
+ * Not just the fabric: finished goods relieve work in progress for the whole
+ * bill, so issuing only the cloth would leave the trims unaccounted for and
+ * the run would rightly refuse to close.
+ */
+async function issueWholeBom(productionOrderId: string, locationId: string, entityId: string, when: Date) {
+  const required = await plannedMaterials(productionOrderId);
+  for (const line of required) {
+    const material = await db.material.findUniqueOrThrow({ where: { id: line.materialId } });
+    await receiveMaterial(
+      {
+        materialId: line.materialId, locationId, entityId,
+        quantity: (Number(line.requiredQty) * 2).toFixed(4),
+        unitCost: material.basePrice.toString(),
+        receivedDate: when,
+      },
+      ctx,
+    );
+    await issueForOrder(
+      {
+        productionOrderId, materialId: line.materialId,
+        locationId, entityId,
+        quantity: Number(line.requiredQty).toFixed(4), issueDate: when,
+      },
+      ctx,
+    );
+  }
+}
+
 /** Makes a run and hands back the serials it produced. */
 async function makeRun(curve: number[]): Promise<string[]> {
   const total = curve.reduce((s, n) => s + n, 0);
@@ -140,14 +172,7 @@ async function makeRun(curve: number[]): Promise<string[]> {
   await confirmProductionOrder(
     { productionOrderId: order.productionOrderId, minuteRatePeriodId: rateperiodId }, ctx,
   );
-  await issueForOrder(
-    {
-      productionOrderId: order.productionOrderId, materialId: fabricId,
-      locationId: factoryLocationId, entityId: factoryId,
-      quantity: String(total * 3), issueDate: day, piecesCut: total,
-    },
-    ctx,
-  );
+  await issueWholeBom(order.productionOrderId, factoryLocationId, factoryId, day);
   const done = await completeProductionOrder(
     {
       productionOrderId: order.productionOrderId,

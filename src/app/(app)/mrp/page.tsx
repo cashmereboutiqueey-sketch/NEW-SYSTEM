@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { RaiseOrdersForm } from "./order-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -24,7 +24,7 @@ export default async function MrpPage({
 }: {
   searchParams: Promise<{ drafts?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("production:view");
   const { locale } = await getPrefs();
   const mayOrder = can(session.role, "purchase_order:create");
   const ar = locale === "ar";

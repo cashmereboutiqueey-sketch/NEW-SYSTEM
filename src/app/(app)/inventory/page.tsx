@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can, ROLES, type Role } from "@/core/permissions";
 import { countSheet, approvalThreshold, recentAdjustments } from "@/lib/stocktake";
 import { t } from "@/lib/i18n";
@@ -23,7 +23,7 @@ export default async function InventoryPage({
 }: {
   searchParams: Promise<{ count?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("inventory:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const asOf = new Date();

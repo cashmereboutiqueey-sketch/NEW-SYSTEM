@@ -1,3 +1,7 @@
+// The database client must never be reachable from a client component:
+// importing it there would pull the connection string into the browser
+// bundle. This import makes that a build failure rather than a leak.
+import "server-only";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 

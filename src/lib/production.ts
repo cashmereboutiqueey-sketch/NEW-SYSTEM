@@ -1,13 +1,17 @@
 import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
-import { nextDocumentNumber } from "./ledger";
+import { nextDocumentNumber, postEntry } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 import { mintUnitsForOutput } from "./garment-units";
 import { createCostSnapshot } from "./costing";
 import { issueMaterialToProduction, receiveFinishedGoods } from "./inventory";
 import { explodeBom, variance, actualWasteRate } from "@/core/production";
 import { dec } from "./money";
+
+/** Work in progress, and where its unrelieved remainder is cleared to. */
+const ACC_WIP = "1320";
+const ACC_MATERIAL_VARIANCE = "5150";
 
 /**
  * Production orders.
@@ -405,6 +409,35 @@ export async function completeProductionOrder(
   const goodQty = outputs.reduce((s, o) => s + o.goodQty, 0);
   const snap = order.costSnapshot;
 
+  // A run cannot be closed for material that was never issued. The check is on
+  // quantity, not value: material bought below the standard the snapshot froze
+  // is an ordinary price difference, and refusing on that would block a
+  // perfectly good run every time purchasing negotiated well.
+  const issues = await db.materialIssue.findMany({
+    where: { productionOrderId: order.id },
+    select: { materialId: true, actualQty: true, unitCost: true },
+  });
+  const issuedIds = new Set(issues.map((i) => i.materialId));
+
+  const style = await db.style.findUniqueOrThrow({
+    where: { id: order.styleId },
+    include: { bomLines: { include: { material: true } } },
+  });
+  const notIssued = style.bomLines
+    .filter((l) => !issuedIds.has(l.materialId))
+    .map((l) => l.material.code);
+
+  if (notIssued.length > 0) {
+    throw new ProductionError(
+      `Nothing has been issued for ${notIssued.join(", ")}. Closing the run now would relieve work in progress for material that never entered the building.`,
+    );
+  }
+
+  const issuedValue = issues.reduce(
+    (s, i) => s.plus(dec(i.actualQty).times(dec(i.unitCost))),
+    dec(0),
+  );
+
   // Split so the receipt can credit WIP for material and the absorption
   // account for conversion — see receiveFinishedGoods.
   const finishedLotNumbers: string[] = [];
@@ -428,6 +461,52 @@ export async function completeProductionOrder(
       lotId: received.lotId,
       variantId: output.variantId,
       quantity: output.goodQty,
+    });
+  }
+
+  // Work in progress was charged with what the material actually cost and has
+  // just been relieved at the frozen standard. Whatever is left is the
+  // difference between the two, and it has to be cleared or WIP carries a
+  // balance for a run that finished.
+  //
+  // Under-relieved (material cost more than standard) is an unfavourable
+  // variance and a debit; over-relieved is favourable and a credit.
+  const relievedValue = dec(snap.materialCost).times(goodQty);
+  const materialVariance = issuedValue.minus(relievedValue).toDecimalPlaces(4);
+
+  if (!materialVariance.isZero()) {
+    await db.$transaction(async (tx) => {
+      const account = async (code: string) => {
+        const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
+        if (!a) throw new ProductionError(`Account ${code} is missing from the chart of accounts.`);
+        return a.id;
+      };
+
+      const unfavourable = materialVariance.greaterThan(0);
+      await postEntry(tx, {
+        entityId: input.entityId,
+        postingDate: input.completedDate,
+        sourceType: "PRODUCTION_OUTPUT",
+        sourceId: order.id,
+        memo: `Material cost variance on ${order.orderNumber}`,
+        ctx,
+        lines: [
+          {
+            accountId: await account(ACC_MATERIAL_VARIANCE),
+            debit: unfavourable ? materialVariance : undefined,
+            credit: unfavourable ? undefined : materialVariance.abs(),
+            entityId: input.entityId,
+            description: `Issued ${issuedValue.toFixed(2)} against ${relievedValue.toFixed(2)} at standard`,
+          },
+          {
+            accountId: await account(ACC_WIP),
+            credit: unfavourable ? materialVariance : undefined,
+            debit: unfavourable ? undefined : materialVariance.abs(),
+            entityId: input.entityId,
+            description: `Work in progress cleared on ${order.orderNumber}`,
+          },
+        ],
+      });
     });
   }
 
@@ -490,6 +569,7 @@ export async function completeProductionOrder(
         actualTotalCost: actualTotalCost.toString(),
         costVariance: costVar.variance.toString(),
         fabricVariance: fabricVar.variance.toString(),
+        materialVariance: materialVariance.toString(),
         finishedLots: finishedLotNumbers,
         firstSerial: serials[0] ?? null,
         lastSerial: serials[serials.length - 1] ?? null,

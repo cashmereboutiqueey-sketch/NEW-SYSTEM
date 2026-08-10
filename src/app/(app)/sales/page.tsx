@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { sellableStock } from "@/lib/pos";
 import { t } from "@/lib/i18n";
@@ -21,7 +21,7 @@ import { ModeratorOrderForm } from "./moderator-form";
  * the P&L, not on this screen.
  */
 export default async function SalesPage() {
-  const session = await requireUser();
+  const session = await requirePermission("sales_order:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

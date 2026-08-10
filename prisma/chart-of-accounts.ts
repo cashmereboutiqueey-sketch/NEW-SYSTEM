@@ -123,6 +123,11 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "5100", nameEn: "Factory COGS — materials", nameAr: "تكلفة الخامات المنصرفة", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_MATERIAL" },
   { code: "5200", nameEn: "Factory COGS — conversion", nameAr: "تكلفة التشغيل المحملة", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_CONVERSION" },
   { code: "5300", nameEn: "Brand COGS at transfer price", nameAr: "تكلفة البضاعة بسعر التحويل", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "BRAND", reportingCategory: "INTERCOMPANY", isIntercompany: true },
+  // Standard costing leaves a difference: work in progress is charged with what
+  // material actually cost, and finished goods relieve it at the frozen
+  // standard. The gap is a real number about buying and cutting, and it has to
+  // land somewhere or work in progress never clears.
+  { code: "5150", nameEn: "Material cost variance", nameAr: "انحراف تكلفة الخامات", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_VARIANCE" },
   { code: "5400", nameEn: "Scrap and abnormal loss", nameAr: "الهالك والفاقد غير الطبيعي", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_LOSS" },
   // A stocktake that finds fewer garments than the books claim has to go
   // somewhere, and it is not the factory's loss once the Brand has taken the

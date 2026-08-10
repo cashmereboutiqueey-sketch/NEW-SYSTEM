@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge } from "@/components/ui";
@@ -16,7 +16,7 @@ import { SettingForm } from "./setting-form";
  * until someone moved it" is a question that gets asked months later.
  */
 export default async function SettingsPage() {
-  const session = await requireUser();
+  const session = await requirePermission("settings:manage");
   const { locale } = await getPrefs();
   const mayEdit = can(session.role, "settings:manage");
 

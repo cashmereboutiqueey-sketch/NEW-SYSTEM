@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { capacityPicture } from "@/lib/factory-floor";
 import { configurablePeriods } from "@/lib/capacity";
@@ -18,7 +18,7 @@ import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
  * problem. Multiplying them into one "productivity" number hides which.
  */
 export default async function CapacityPage() {
-  const session = await requireUser();
+  const session = await requirePermission("minute_rate:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

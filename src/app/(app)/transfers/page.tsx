@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { awaitingDespatch, awaitingIntake, recentTransfers } from "@/lib/intercompany";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -20,7 +20,7 @@ import { DespatchForm } from "./transfer-form";
  * shop will count against.
  */
 export default async function TransfersPage() {
-  const session = await requireUser();
+  const session = await requirePermission("inventory:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

@@ -21,6 +21,7 @@ import { createCostSnapshot } from "../src/lib/costing";
 import { receiveMaterial } from "../src/lib/inventory";
 import {
   createProductionOrder, confirmProductionOrder, issueForOrder, completeProductionOrder,
+  plannedMaterials,
 } from "../src/lib/production";
 import { despatchToBrand, receiveAtBrand } from "../src/lib/intercompany";
 import { createSale, openPosSession, closePosSession } from "../src/lib/sales";
@@ -144,16 +145,45 @@ async function main() {
     { productionOrderId: po.productionOrderId, minuteRatePeriodId: rate.minuteRatePeriodId },
     asOwner,
   );
-  // Issued 12% over the waste-free standard, so the variance report is real.
-  const issued = Number(fabric.standardConsumption) * RUN * 1.12;
-  await issueForOrder(
-    {
-      productionOrderId: po.productionOrderId, materialId: fabric.materialId,
-      locationId: facLoc.id, entityId: factory.id,
-      quantity: issued.toFixed(4), issueDate: on(5), piecesCut: RUN,
-    },
-    asOwner,
-  );
+  // Every line of the bill of materials is issued, not just the cloth: finished
+  // goods relieve work in progress for all of it, and issuing only the fabric
+  // would drive WIP negative by the value of the trims.
+  //
+  // The quantities come from the BOM explosion rather than the raw standard,
+  // because that is what the cost snapshot relieves against — the standard
+  // plus the planned waste. Issuing the waste-free figure looks tidy and
+  // leaves the run short by exactly the waste allowance.
+  const required = await plannedMaterials(po.productionOrderId);
+
+  for (const line of required) {
+    const isFabric = line.materialId === fabric.materialId;
+    // A little over on the cloth, so the variance report has something real.
+    const quantity = Number(line.requiredQty) * (isFabric ? 1.04 : 1);
+
+    if (!isFabric) {
+      const material = await db.material.findUniqueOrThrow({ where: { id: line.materialId } });
+      await receiveMaterial(
+        {
+          materialId: line.materialId, locationId: facLoc.id, entityId: factory.id,
+          quantity: (quantity * 1.2).toFixed(4),
+          unitCost: material.basePrice.toString(),
+          receivedDate: on(2),
+        },
+        asOwner,
+      );
+    }
+
+    await issueForOrder(
+      {
+        productionOrderId: po.productionOrderId, materialId: line.materialId,
+        locationId: facLoc.id, entityId: factory.id,
+        quantity: quantity.toFixed(4), issueDate: on(5),
+        piecesCut: isFabric ? RUN : undefined,
+      },
+      asOwner,
+    );
+  }
+
   // A run comes off the line as a size curve, not a single number. The middle
   // sizes carry the volume, which is what makes the sell-through report worth
   // looking at later.

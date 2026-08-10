@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -14,7 +14,7 @@ import { ExpenseForm } from "./expense-form";
  * two so any figure can be traced from this screen to the general ledger.
  */
 export default async function ExpensesPage() {
-  const session = await requireUser();
+  const session = await requirePermission("expense:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { authenticate } from "@/lib/auth";
+import { authenticate, requireUser } from "@/lib/auth";
 import {
   createSession,
   destroySession,
@@ -54,6 +54,11 @@ export async function logoutAction(): Promise<void> {
 const scopeSchema = z.enum(ENTITY_SCOPES);
 
 export async function setEntityScopeAction(formData: FormData): Promise<void> {
+  // Only meaningful once signed in — every screen guards its own data by
+  // permission, so the lens grants nothing on its own, but a mutation that
+  // anyone on the internet can call is not worth leaving open.
+  await requireUser();
+
   const parsed = scopeSchema.safeParse(formData.get("scope"));
   if (!parsed.success) return;
   await setPrefs({ scope: parsed.data });

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber } from "@/lib/money";
@@ -16,7 +16,7 @@ import { PurchaseOrderForm, GoodsReceiptForm } from "./purchase-forms";
  * intent was written down first.
  */
 export default async function PurchasingPage() {
-  const session = await requireUser();
+  const session = await requirePermission("purchase_order:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

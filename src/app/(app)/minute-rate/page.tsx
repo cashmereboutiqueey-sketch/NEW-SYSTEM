@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -15,7 +15,7 @@ import { CalculateForm, LockForm } from "./minute-rate-form";
  * it represents. Nothing here is asserted without its inputs beside it.
  */
 export default async function MinuteRatePage() {
-  const session = await requireUser();
+  const session = await requirePermission("minute_rate:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

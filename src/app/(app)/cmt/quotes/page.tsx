@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { quotingBasis, recentQuotes } from "@/lib/cmt";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -17,7 +17,7 @@ import { QuoteForm, QuoteStatusForm } from "../cmt-forms";
  * both figures are frozen onto the quote so it can be defended later.
  */
 export default async function CmtQuotesPage() {
-  const session = await requireUser();
+  const session = await requirePermission("cmt_quote:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

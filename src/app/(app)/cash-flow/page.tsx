@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { cashForecast } from "@/lib/cash-flow";
 import { ScheduledItemForm, StopItemForm } from "./scheduled-form";
@@ -20,7 +20,7 @@ export default async function CashFlowPage({
 }: {
   searchParams: Promise<{ entity?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("journal:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;

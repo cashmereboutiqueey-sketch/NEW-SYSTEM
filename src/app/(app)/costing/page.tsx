@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -22,7 +22,7 @@ export default async function CostingPage({
 }: {
   searchParams: Promise<{ style?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("transfer_price:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const params = await searchParams;

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import {
   awaitingSettlement,
@@ -39,7 +39,7 @@ export default async function ReconciliationPage({
 }: {
   searchParams: Promise<{ tab?: string; statement?: string }>;
 }) {
-  const session = await requireUser();
+  const session = await requirePermission("journal:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;

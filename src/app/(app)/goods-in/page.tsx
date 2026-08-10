@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { awaitingIntake } from "@/lib/intercompany";
 import { PageHeader, Card, DataTable, StatTile } from "@/components/ui";
@@ -20,7 +20,7 @@ import { IntakeForm } from "./intake-form";
  *   - nothing reaches a shelf without a barcode on it.
  */
 export default async function GoodsInPage() {
-  const session = await requireUser();
+  const session = await requirePermission("inventory:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

@@ -337,6 +337,10 @@ describe("issuing material", () => {
 async function runOrder(plannedQty: number, fabricIssued: string) {
   const { productionOrderId } = await draftOrder(plannedQty);
   await confirmProductionOrder({ productionOrderId, minuteRatePeriodId: rateperiodId }, ctx);
+
+  // The fabric goes out at the quantity each test is about; the rest of the
+  // bill goes out at standard, because a run cannot be closed for material
+  // that was never issued and every test here ends by closing one.
   await issueForOrder(
     {
       productionOrderId, materialId: fabricId, locationId, entityId: factoryId,
@@ -344,6 +348,28 @@ async function runOrder(plannedQty: number, fabricIssued: string) {
     },
     ctx,
   );
+
+  for (const line of await plannedMaterials(productionOrderId)) {
+    if (line.materialId === fabricId) continue;
+    const material = await db.material.findUniqueOrThrow({ where: { id: line.materialId } });
+    await receiveMaterial(
+      {
+        materialId: line.materialId, locationId, entityId: factoryId,
+        quantity: (Number(line.requiredQty) * 2).toFixed(4),
+        unitCost: material.basePrice.toString(),
+        receivedDate: day,
+      },
+      ctx,
+    );
+    await issueForOrder(
+      {
+        productionOrderId, materialId: line.materialId, locationId, entityId: factoryId,
+        quantity: Number(line.requiredQty).toFixed(4), issueDate: day,
+      },
+      ctx,
+    );
+  }
+
   return productionOrderId;
 }
 
@@ -401,9 +427,13 @@ describe("completing an order", () => {
     );
 
     const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });
-    // 500 metres issued against whatever the BOM planned.
+
+    // The variance is what was actually issued against what was planned. The
+    // style carries a shell and a lining, both of which are fabric, so the
+    // figure is not simply the 500 metres this test forced through the shell.
+    expect(Number(order.actualFabricQty)).toBeGreaterThan(500);
     expect(Number(result.fabricVariance)).toBeCloseTo(
-      500 - Number(order.plannedFabricQty), 4,
+      Number(order.actualFabricQty) - Number(order.plannedFabricQty), 4,
     );
   });
 

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requireUser } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { openAlerts } from "@/lib/alerts";
 import { PageHeader, Card, Badge, StatTile } from "@/components/ui";
@@ -14,7 +14,7 @@ import { RunAlertsForm, AcknowledgeForm } from "./alert-forms";
  * That is what keeps the list short enough to be read.
  */
 export default async function AlertsPage() {
-  const session = await requireUser();
+  const session = await requirePermission("alert:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

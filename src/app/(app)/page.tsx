@@ -21,8 +21,18 @@ export default async function DashboardPage() {
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const d = await ownerDashboard();
+  // The landing page cannot be guarded with requirePermission — that redirects
+  // to "/" and would loop. So each band is gated on its own capability, and
+  // nothing is fetched for a role that may not see any of it: a cashier
+  // arriving here should not have the company's cash position computed, let
+  // alone rendered.
+  const seeMoney = can(session.role, "journal:view");
+  const seeFactory = can(session.role, "minute_rate:view");
+  const seeBrand = can(session.role, "sales_order:view");
   const seeGroup = can(session.role, "report:group");
+  const seeAnything = seeMoney || seeFactory || seeBrand || seeGroup;
+
+  const d = seeAnything ? await ownerDashboard() : null;
 
   const tile = (href: string, node: React.ReactNode) => (
     <Link href={href} className="block transition-opacity hover:opacity-80">
@@ -41,6 +51,18 @@ export default async function DashboardPage() {
         }
       />
 
+      {!d && (
+        <Card>
+          <p className="py-8 text-center text-sm text-ink-500">
+            {ar
+              ? "مفيش أرقام تخصك على الشاشة دي. استعمل القايمة عشان توصل لشغلك."
+              : "There are no figures here for your role. Use the menu to reach your work."}
+          </p>
+        </Card>
+      )}
+
+      {d && seeMoney && (
+      <>
       {/* --- money --- */}
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {tile("/reports/entity-pnl", (
@@ -74,7 +96,11 @@ export default async function DashboardPage() {
           />
         ))}
       </div>
+      </>
+      )}
 
+      {d && seeFactory && (
+      <>
       {/* --- the factory's central number --- */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
         <Card
@@ -162,7 +188,11 @@ export default async function DashboardPage() {
           </Link>
         </Card>
       </div>
+      </>
+      )}
 
+      {d && seeBrand && (
+      <>
       {/* --- trading --- */}
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {tile("/sales", (
@@ -201,7 +231,10 @@ export default async function DashboardPage() {
           />
         ))}
       </div>
+      </>
+      )}
 
+      {d && (seeGroup || seeBrand) && (
       <div className="grid gap-4 lg:grid-cols-2">
         {seeGroup && (
           <Card
@@ -252,6 +285,7 @@ export default async function DashboardPage() {
           </Card>
         )}
 
+        {seeBrand && (
         <Card
           title={ar ? "أعمار البضاعة الجاهزة" : "Finished goods ageing"}
           description={
@@ -287,7 +321,9 @@ export default async function DashboardPage() {
             </p>
           )}
         </Card>
+        )}
       </div>
+      )}
     </>
   );
 }
