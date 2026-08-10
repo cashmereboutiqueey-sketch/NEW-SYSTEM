@@ -72,6 +72,23 @@ const FUNDS_ACCOUNT: Record<string, string> = {
   STORE_CREDIT: ACC.RECEIVABLE,
 };
 
+/**
+ * Where a payment actually sits, which depends on whether it has been
+ * collected as well as on how it was taken.
+ *
+ * A clearing account means somebody else is holding the money, and its balance
+ * is what they owe. Sending a payment there when it has already been received
+ * leaves it stranded: nothing will ever clear it, and the reconciliation screen
+ * reports a courier debt that was settled the moment the sale was rung up.
+ */
+function fundsAccount(method: string, collected: boolean): string {
+  if (!collected) return FUNDS_ACCOUNT[method];
+  if (method === "STORE_CREDIT") return ACC.RECEIVABLE;
+  if (method === "CASH") return ACC.POS_DRAWER;
+  // Collected by any other means means it has reached the bank.
+  return ACC.BANK;
+}
+
 export const createSaleSchema = z.object({
   source: z.enum(["SHOPIFY", "MODERATOR", "POS", "EXHIBITION", "WHOLESALE", "MANUAL"]),
   channelId: z.string().min(1),
@@ -341,7 +358,10 @@ export async function createSale(
     // receivable rather than an assumption that cash arrived.
     const settlements =
       payments.length > 0
-        ? payments.map((p) => ({ code: FUNDS_ACCOUNT[p.method], amount: p.amount }))
+        ? payments.map((p) => ({
+            code: fundsAccount(p.method, p.collected),
+            amount: p.amount,
+          }))
         : [{ code: ACC.RECEIVABLE, amount: dueFromCustomer }];
 
     for (const s of settlements) {
@@ -391,7 +411,12 @@ export async function createSale(
             description: `Processor and courier fees ${orderNumber}`,
           },
           {
-            accountId: await accountId(tx, FUNDS_ACCOUNT[payments[0].method]),
+            // Deducted from wherever that payment landed, so the fee comes
+            // off the same balance the money went into.
+            accountId: await accountId(
+              tx,
+              fundsAccount(payments[0].method, payments[0].collected),
+            ),
             credit: totalFees,
             entityId: data.entityId,
             description: `Fees deducted at source ${orderNumber}`,

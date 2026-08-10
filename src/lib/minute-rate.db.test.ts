@@ -48,6 +48,8 @@ async function wipe() {
   try {
     await db.minuteRateComponent.deleteMany({});
     await db.minuteRatePeriod.deleteMany({});
+    await db.bankStatementLine.deleteMany({});
+    await db.bankStatement.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.expensePayment.deleteMany({});

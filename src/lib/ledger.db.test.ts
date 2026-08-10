@@ -38,6 +38,8 @@ afterAll(async () => {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.bankStatementLine.deleteMany({});
+    await db.bankStatement.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.auditLog.deleteMany({ where: { entityName: "JournalEntry" } });

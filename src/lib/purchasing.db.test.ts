@@ -47,6 +47,8 @@ async function wipe() {
     await db.purchaseOrder.deleteMany({});
     await db.inventoryMovement.deleteMany({});
     await db.inventoryLot.deleteMany({});
+    await db.bankStatementLine.deleteMany({});
+    await db.bankStatement.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.auditLog.deleteMany({});

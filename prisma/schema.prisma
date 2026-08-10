@@ -66,6 +66,8 @@ model User {
   journalsPosted   JournalEntry[] @relation("JournalPostedBy")
   posSessions      PosSession[]
   salesOrders      SalesOrder[]   @relation("SalesOrderCreatedBy")
+  settlements    Settlement[]
+  bankStatements BankStatement[]
 
   @@map("users")
 }
@@ -165,6 +167,8 @@ model Entity {
   employees          Employee[]
   payrollRuns        PayrollRun[]
   garmentUnits GarmentUnit[]
+  settlements    Settlement[]
+  bankStatements BankStatement[]
 
   @@map("entities")
 }
@@ -427,6 +431,7 @@ model JournalLine {
   appliedTaxRate Decimal? @db.Decimal(9, 6)
 
   description String?
+  bankStatementLine BankStatementLine?
 
   @@unique([journalEntryId, lineNumber])
   @@index([accountId])
@@ -2170,6 +2175,7 @@ model SalesChannel {
 
   salesOrders SalesOrder[]
   customers   Customer[]
+  settlements Settlement[]
 
   @@map("sales_channels")
 }
@@ -2375,6 +2381,7 @@ model SalesPayment {
   reference    String?
   collectedAt  DateTime?
   createdAt    DateTime      @default(now())
+  settlementLine SettlementLine?
 
   @@index([salesOrderId])
   @@index([status, method])
@@ -2691,4 +2698,135 @@ model ScenarioResult {
 
   @@index([scenarioId])
   @@map("scenario_results")
+}
+
+// ===========================================================================
+// RECONCILIATION — proving the books against what the bank and the couriers
+// actually did
+// ===========================================================================
+
+enum SettlementProvider {
+  COURIER
+  PAYMENT_GATEWAY
+}
+
+enum SettlementStatus {
+  DRAFT
+  POSTED
+}
+
+/// A remittance from a courier or a card processor.
+///
+/// Money taken on the customer's doorstep is the courier's until they pay it
+/// over, which is why it sits in a clearing account rather than in cash. This
+/// is the document that clears it: the operator ticks the orders the
+/// remittance covers, and anything not ticked stays outstanding and visible
+/// instead of being quietly absorbed into a total that looked about right.
+model Settlement {
+  id               String             @id @default(cuid())
+  settlementNumber String             @unique
+  provider         SettlementProvider
+  channelId        String?
+  channel          SalesChannel?      @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  entityId         String
+  entity           Entity             @relation(fields: [entityId], references: [id])
+
+  /// The courier's own batch number, so a query can be traced back to them.
+  reference      String?
+  settlementDate DateTime @db.Date
+
+  /// What the ticked payments should have brought in, net of the fees already
+  /// booked when the sale was recorded.
+  expectedAmount Decimal @db.Decimal(18, 4)
+  /// What actually landed in the bank.
+  netReceived    Decimal @db.Decimal(18, 4)
+  /// netReceived − expectedAmount. Negative means they paid short.
+  variance       Decimal @db.Decimal(18, 4)
+  varianceNote   String?
+
+  status         SettlementStatus @default(DRAFT)
+  journalEntryId String?
+  postedAt       DateTime?
+
+  createdByUserId String?
+  createdBy       User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  lines SettlementLine[]
+
+  @@index([provider, settlementDate])
+  @@index([status])
+  @@map("settlements")
+}
+
+model SettlementLine {
+  id           String     @id @default(cuid())
+  settlementId String
+  settlement   Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  /// One payment can only be settled once, which the database enforces rather
+  /// than the screen: the same batch pasted in twice would otherwise clear the
+  /// same money against the bank twice.
+  salesPaymentId String       @unique
+  salesPayment   SalesPayment @relation(fields: [salesPaymentId], references: [id])
+
+  expectedAmount Decimal @db.Decimal(18, 4)
+
+  @@index([settlementId])
+  @@map("settlement_lines")
+}
+
+enum BankLineStatus {
+  UNMATCHED
+  MATCHED
+  /// Real, but with no counterpart in the books yet — a bank charge nobody
+  /// recorded. Kept apart from matched so it stays on somebody's list.
+  EXPLAINED
+}
+
+/// A period of a bank account as the bank reports it.
+model BankStatement {
+  id String @id @default(cuid())
+
+  /// The chart account this statement belongs to, by code rather than id so a
+  /// statement is readable without a join.
+  accountCode String
+  entityId    String
+  entity      Entity @relation(fields: [entityId], references: [id])
+
+  statementDate  DateTime @db.Date
+  openingBalance Decimal  @db.Decimal(18, 4)
+  closingBalance Decimal  @db.Decimal(18, 4)
+  reference      String?
+
+  createdByUserId String?
+  createdBy       User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  lines BankStatementLine[]
+
+  @@index([accountCode, statementDate])
+  @@map("bank_statements")
+}
+
+model BankStatementLine {
+  id              String        @id @default(cuid())
+  bankStatementId String
+  bankStatement   BankStatement @relation(fields: [bankStatementId], references: [id], onDelete: Cascade)
+
+  valueDate   DateTime @db.Date
+  description String
+  reference   String?
+  /// Signed: positive money in, negative money out. One column rather than
+  /// two, because a bank line is one movement and splitting it invites a row
+  /// with both filled in.
+  amount      Decimal  @db.Decimal(18, 4)
+
+  status              BankLineStatus @default(UNMATCHED)
+  matchedJournalLineId String?       @unique
+  matchedJournalLine   JournalLine?  @relation(fields: [matchedJournalLineId], references: [id], onDelete: SetNull)
+  note                String?
+
+  @@index([bankStatementId, status])
+  @@map("bank_statement_lines")
 }

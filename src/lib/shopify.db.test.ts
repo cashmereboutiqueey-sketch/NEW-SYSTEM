@@ -46,12 +46,16 @@ async function wipe() {
     await db.externalMapping.deleteMany({});
     await db.syncLog.deleteMany({});
     await db.integrationConnection.deleteMany({});
+    await db.settlementLine.deleteMany({});
+    await db.settlement.deleteMany({});
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
     await db.salesOrder.deleteMany({});
     await db.customer.deleteMany({ where: { code: { startsWith: "SHOP-" } } });
     await db.inventoryMovement.deleteMany({});
     await db.inventoryLot.deleteMany({});
+    await db.bankStatementLine.deleteMany({});
+    await db.bankStatement.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.auditLog.deleteMany({});

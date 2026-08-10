@@ -234,7 +234,9 @@ Working end to end, with tests and verified in the browser:
 | **What-if** | A measured month with one thing changed: cloth, wages, utilisation, discount, returns. | `/scenarios` |
 | **External CMT** | Clients and quoting, with the full-capacity rate enforced as a hard floor. | `/cmt/clients`, `/cmt/quotes` |
 
-Not built yet: bank and channel reconciliation, and deployment to the VPS.
+| **Reconciliation** | Courier and gateway remittances cleared order by order against the clearing accounts, and bank statements matched line by line against the ledger. | `/reconciliation` |
+
+Not built yet: deployment to the VPS.
 
 Every screen in the navigation now has a page, and every screen that should
 accept input does. The audit that proves it runs as part of `npm run
@@ -248,6 +250,23 @@ sell it — and reports anything that does not add up. It also checks that every
 step of that cycle has a screen with buttons on it, because the first version
 of this script passed while the production screen was read-only: it was calling
 the services directly, which no user can do.
+
+### Money somebody else is holding
+
+Cash taken on a customer's doorstep is the courier's until they pay it over,
+so it is posted to a clearing account rather than to cash. The balance of that
+account is exactly what they owe, which is what makes it reconcilable at all.
+
+Remittances are cleared order by order, never by total. A batch that is 4,000
+light against a total looks like a fee; against a list it is a specific parcel
+nobody was paid for, and the answer is to leave that order unticked so it stays
+outstanding rather than explaining the gap away.
+
+Building this surfaced a real defect in the sales code: the account a payment
+went to was chosen by method alone, ignoring whether it had been collected. A
+card sale rung up at the till went to the gateway clearing account and stayed
+there, showing as a debt the gateway had already settled. It now goes to the
+bank, and a test pins it.
 
 ### Two rates, and why external work is strategic
 

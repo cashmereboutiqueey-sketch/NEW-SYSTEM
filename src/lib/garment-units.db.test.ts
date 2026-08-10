@@ -74,6 +74,8 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
     await db.garmentUnit.deleteMany({});
+    await db.settlementLine.deleteMany({});
+    await db.settlement.deleteMany({});
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
     await db.salesOrder.deleteMany({});
@@ -87,6 +89,8 @@ async function wipe() {
     await db.costSnapshot.deleteMany({});
     await db.minuteRateComponent.deleteMany({});
     await db.minuteRatePeriod.deleteMany({});
+    await db.bankStatementLine.deleteMany({});
+    await db.bankStatement.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.expense.deleteMany({});
