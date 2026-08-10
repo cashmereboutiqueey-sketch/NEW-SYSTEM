@@ -56,6 +56,13 @@ model User {
   locale       String    @default("ar")
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
+
+  /// Consecutive failed sign-ins, and the moment the account frees up again.
+  /// Held on the row rather than in memory so a restart does not hand an
+  /// attacker a clean slate, and so a lockout is visible to whoever is asked
+  /// why they cannot get in.
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -2347,6 +2354,9 @@ model SalesOrder {
   @@index([status])
   @@index([source, orderDate])
   @@index([createdByUserId])
+  /// Every customer screen asks for one person's history out of all of them.
+  /// Without this it reads the whole order table to find a handful of rows.
+  @@index([customerId, orderDate])
   @@map("sales_orders")
 }
 

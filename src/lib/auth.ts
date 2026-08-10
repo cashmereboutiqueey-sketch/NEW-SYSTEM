@@ -7,6 +7,19 @@ import { can, type Permission } from "@/core/permissions";
 
 const BCRYPT_ROUNDS = 12;
 
+/**
+ * How many wrong passwords before an account stops answering, and for how
+ * long.
+ *
+ * Hashing at twelve rounds already costs an attacker about a quarter of a
+ * second per guess, which is a brake but not a stop: left alone that is still
+ * hundreds of thousands of attempts a week. The lockout is deliberately short
+ * — long enough to make guessing hopeless, short enough that locking a
+ * colleague out by accident is a nuisance rather than a phone call.
+ */
+const MAX_FAILED_LOGINS = 8;
+const LOCKOUT_MINUTES = 15;
+
 export function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
@@ -28,12 +41,35 @@ export async function authenticate(
     await bcrypt.compare(password, "$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva");
     return null;
   }
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    // Deliberately the same silence as a wrong password: saying "locked"
+    // confirms the address exists and tells an attacker their guessing landed.
+    await bcrypt.compare(password, user.passwordHash);
+    return null;
+  }
+
   const ok = await verifyPassword(password, user.passwordHash);
-  if (!ok) return null;
+
+  if (!ok) {
+    const failed = user.failedLogins + 1;
+    await db.user.update({
+      where: { id: user.id },
+      data: {
+        failedLogins: failed,
+        lockedUntil:
+          failed >= MAX_FAILED_LOGINS
+            ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000)
+            : user.lockedUntil,
+      },
+    });
+    return null;
+  }
 
   await db.user.update({
     where: { id: user.id },
-    data: { lastLoginAt: new Date() },
+    // A successful sign-in clears the count: the run of failures was somebody
+    // mistyping, not an attack.
+    data: { lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null },
   });
 
   return {

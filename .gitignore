@@ -16,3 +16,6 @@ tsconfig.tsbuildinfo
 
 # Production build output, kept apart from the dev server (see next.config.ts)
 .next-build/
+
+# Verified database backups
+backups/
