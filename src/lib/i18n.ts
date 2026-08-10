@@ -43,6 +43,7 @@ export const dictionary = {
   goodsIn: { ar: "الوارد من المصنع", en: "Goods in" },
   exhibitions: { ar: "البازارات", en: "Bazaars" },
   customerCredit: { ar: "ذمم العملاء", en: "Customer credit" },
+  customOrders: { ar: "أوردرات خاصة", en: "Made to order" },
   reconciliation: { ar: "التسويات", en: "Reconciliation" },
   moderatorOrder: { ar: "أوردر مودريتور", en: "Moderator order" },
   contributionMargin: { ar: "هامش المساهمة", en: "Contribution margin" },

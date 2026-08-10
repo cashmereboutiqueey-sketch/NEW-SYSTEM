@@ -76,6 +76,7 @@ model User {
   settlements    Settlement[]
   bankStatements BankStatement[]
 
+  customOrders CustomOrder[]
   @@map("users")
 }
 
@@ -177,6 +178,7 @@ model Entity {
   settlements    Settlement[]
   bankStatements BankStatement[]
 
+  customOrders CustomOrder[]
   @@map("entities")
 }
 
@@ -1092,6 +1094,7 @@ model Variant {
   journalLines         JournalLine[]
   garmentUnits         GarmentUnit[]
 
+  customOrders CustomOrder[]
   @@unique([styleId, colorCodeId, sizeCodeId])
   @@index([sku])
   @@map("variants")
@@ -1241,6 +1244,7 @@ model ProductionOrder {
 
   @@index([status, orderDate])
   @@index([styleId])
+  customOrder CustomOrder?
   @@map("production_orders")
 }
 
@@ -1474,6 +1478,7 @@ model Location {
   salesOrders       SalesOrder[]
   garmentUnits      GarmentUnit[]
 
+  customOrders CustomOrder[]
   @@index([kind, isActive])
   @@index([parentLocationId])
   @@map("locations")
@@ -2253,6 +2258,7 @@ model Customer {
   @@index([phoneNormalised])
   @@index([emailNormalised])
   @@index([mergedIntoId])
+  customOrders CustomOrder[]
   @@map("customers")
 }
 
@@ -2372,6 +2378,7 @@ model SalesOrder {
 
   @@unique([source, externalId])
   @@index([channelId, orderDate])
+  customOrder CustomOrder?
   @@index([status])
   @@index([source, orderDate])
   @@index([createdByUserId])
@@ -2388,6 +2395,10 @@ enum PaymentMethod {
   BANK_TRANSFER
   WALLET
   STORE_CREDIT
+  /// Money the customer paid before the garment existed. It sat as a
+  /// liability from the day it was taken; settling the sale with it clears
+  /// that liability rather than bringing new cash in, which already arrived.
+  DEPOSIT
 }
 
 enum PaymentStatus {
@@ -2503,6 +2514,75 @@ enum CMTQuoteStatus {
 /// Hard rule: `quotedMinuteRate` may never fall below the period's
 /// `fullCapacityMinuteRate`. Below that, the quote does not even recover
 /// overhead at full capacity and every minute sold makes things worse.
+/// Somebody wants a garment the shop does not have and the factory can make.
+///
+/// Kept apart from SalesOrder on purpose: there is nothing to sell yet. No
+/// stock exists, so nothing can be relieved and no revenue can be recognised.
+/// A deposit taken today is money held against a promise — a liability — and
+/// only becomes revenue on the day the customer walks out with the garment.
+/// The SalesOrder is created then, and not before.
+model CustomOrder {
+  id          String            @id @default(cuid())
+  orderNumber String            @unique
+  status      CustomOrderStatus @default(PENDING)
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  /// Exactly what they asked for: style, colour and size.
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  quantity  Int
+
+  agreedUnitPrice Decimal @db.Decimal(18, 4)
+  agreedTotal     Decimal @db.Decimal(18, 4)
+  /// Taken up front and held as a liability until the garment is handed over.
+  depositAmount   Decimal @default(0) @db.Decimal(18, 4)
+
+  entityId   String
+  entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  /// Where the customer will collect it.
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  /// The run raised to make it. One custom order, one run: a bespoke piece
+  /// is not batched with the season's production.
+  productionOrderId String?          @unique
+  productionOrder   ProductionOrder? @relation(fields: [productionOrderId], references: [id], onDelete: SetNull)
+
+  /// Set the day it is handed over, which is the day it becomes a sale.
+  salesOrderId String?     @unique
+  salesOrder   SalesOrder? @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+
+  promisedDate DateTime? @db.Date
+  deliveredAt  DateTime? @db.Date
+  cancelledAt  DateTime? @db.Date
+  cancelReason String?
+
+  notes           String?
+  createdByUserId String?
+  createdBy       User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, status])
+  @@index([status, promisedDate])
+  @@map("custom_orders")
+}
+
+enum CustomOrderStatus {
+  /// Agreed with the customer, nothing made yet.
+  PENDING
+  /// A production run has been raised against it.
+  IN_PRODUCTION
+  /// Made and waiting on the customer.
+  READY
+  /// Handed over. There is a SalesOrder from this point on.
+  DELIVERED
+  CANCELLED
+}
+
 model CMTQuote {
   id          String         @id @default(cuid())
   quoteNumber String         @unique

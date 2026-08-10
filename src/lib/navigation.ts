@@ -86,6 +86,7 @@ export const navigation: NavSection[] = [
       { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true },
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true },
+      { key: "customOrders", href: "/custom-orders", phase: 7, scopes: ["BRAND", "GROUP"], icon: "scissors", shipped: true },
       { key: "customerCredit", href: "/receivables", phase: 7, scopes: ["BRAND", "GROUP"], icon: "wallet", shipped: true },
       { key: "marketing", href: "/marketing", phase: 10, scopes: ["BRAND", "GROUP"], icon: "sparkles", shipped: true },
       { key: "recovery", href: "/recovery", phase: 10, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true },

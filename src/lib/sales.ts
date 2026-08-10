@@ -41,6 +41,8 @@ const ACC = {
   GATEWAY_CLEARING: "1130",
   COD_CLEARING: "1135",
   RECEIVABLE: "1210",
+  /// Money taken before the garment existed: a promise, not income.
+  CUSTOMER_DEPOSITS: "2400",
   DISCOUNTS: "4200",
   COGS_BRAND: "5300",
   FG_BRAND: "1340",
@@ -71,6 +73,7 @@ const FUNDS_ACCOUNT: Record<string, string> = {
   BANK_TRANSFER: ACC.BANK,
   WALLET: ACC.GATEWAY_CLEARING,
   STORE_CREDIT: ACC.RECEIVABLE,
+  DEPOSIT: ACC.CUSTOMER_DEPOSITS,
 };
 
 /**
@@ -83,6 +86,12 @@ const FUNDS_ACCOUNT: Record<string, string> = {
  * reports a courier debt that was settled the moment the sale was rung up.
  */
 function fundsAccount(method: string, collected: boolean): string {
+  // A deposit is the one method where no money moves now. It arrived weeks
+  // ago and has been sitting as a liability ever since; settling the sale
+  // with it discharges that promise. Sending it to cash would count the same
+  // pound twice — once when it was taken, once when the garment was handed
+  // over — and leave the liability standing forever.
+  if (method === "DEPOSIT") return ACC.CUSTOMER_DEPOSITS;
   if (!collected) return FUNDS_ACCOUNT[method];
   if (method === "STORE_CREDIT") return ACC.RECEIVABLE;
   if (method === "CASH") return ACC.POS_DRAWER;
@@ -121,7 +130,9 @@ export const createSaleSchema = z.object({
   payments: z
     .array(
       z.object({
-        method: z.enum(["CASH", "CARD", "COD", "BANK_TRANSFER", "WALLET", "STORE_CREDIT"]),
+        method: z.enum([
+          "CASH", "CARD", "COD", "BANK_TRANSFER", "WALLET", "STORE_CREDIT", "DEPOSIT",
+        ]),
         amount: z.coerce.number().positive(),
         fee: z.coerce.number().min(0).default(0),
         /** COD is pending until the courier remits; card at a till is not. */
