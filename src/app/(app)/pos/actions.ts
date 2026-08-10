@@ -7,6 +7,7 @@ import { LedgerError } from "@/lib/ledger";
 import { InventoryError } from "@/lib/inventory";
 import { can } from "@/core/permissions";
 import { findUnitBySerial } from "@/lib/garment-units";
+import { db } from "@/lib/db";
 
 export type PosState = {
   error?: string;
@@ -172,12 +173,23 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       | "CASH" | "CARD" | "WALLET" | "COD";
     const tendered = Number(formData.get("tendered") ?? 0);
 
+    // A sale rung up at a bazaar is a bazaar sale, not a showroom one. The
+    // till is the same till, so the source has to come from where it is
+    // standing — otherwise every bazaar's takings land in the showroom's
+    // revenue account and no channel report can tell them apart.
+    const locationId = String(formData.get("locationId") ?? "");
+    const location = await db.location.findUnique({
+      where: { id: locationId },
+      select: { kind: true },
+    });
+    const source = location?.kind === "EXHIBITION" ? "EXHIBITION" : "POS";
+
     const result = await createSale(
       {
-        source: "POS",
+        source,
         channelId: String(formData.get("channelId") ?? ""),
         entityId: String(formData.get("entityId") ?? ""),
-        locationId: String(formData.get("locationId") ?? ""),
+        locationId,
         posSessionId: String(formData.get("posSessionId") ?? ""),
         customerId: (formData.get("customerId") as string) || null,
         orderDate: new Date(),

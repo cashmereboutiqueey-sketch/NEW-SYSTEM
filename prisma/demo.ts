@@ -27,6 +27,11 @@ import { despatchToBrand, receiveAtBrand } from "../src/lib/intercompany";
 import { createSale, openPosSession, closePosSession } from "../src/lib/sales";
 import { upsertCustomerContact } from "../src/lib/crm";
 import {
+  openExhibition,
+  sendToExhibition,
+  sendableStock,
+} from "../src/lib/exhibitions";
+import {
   importPunches, deriveAttendance, adjustAttendance,
   preparePayrollRun, approveAndPostPayroll,
 } from "../src/lib/payroll";
@@ -428,6 +433,42 @@ async function main() {
   );
   const posted = await approveAndPostPayroll({ payrollRunId: run.payrollRunId }, asOwner);
   console.log(`  payroll: ${run.runNumber} — charged ${Number(posted.totalCharged).toFixed(2)}`);
+
+  // A bazaar in progress: stock has gone out and has not come back yet, so
+  // the reconciliation screen has something real to reconcile. It is left
+  // open on purpose — a closed one would show nothing worth looking at.
+  const bazaar = await openExhibition(
+    {
+      nameAr: "بازار الساحل الشمالي",
+      nameEn: "North Coast Bazaar",
+      city: "سيدي عبد الرحمن",
+      opensAt: on(20),
+      closesAt: on(23),
+      parentLocationId: alxLoc.id,
+    },
+    asOwner,
+  );
+
+  const canGo = (await sendableStock(alxLoc.id)).filter(
+    (s) => Number(s.available) > 0,
+  );
+  if (canGo.length > 0) {
+    // Half of what the showroom holds, so the shop is not emptied for it.
+    const sent = await sendToExhibition(
+      {
+        exhibitionId: bazaar.id,
+        lines: canGo.slice(0, 4).map((s) => ({
+          variantId: s.variantId,
+          quantity: String(Math.max(1, Math.floor(Number(s.available) / 2))),
+        })),
+        sendDate: on(20),
+      },
+      asOwner,
+    );
+    console.log(
+      `  bazaar: ${bazaar.code} — ${sent.totalQty} pieces out, ${Number(sent.totalCost).toFixed(2)} at cost`,
+    );
+  }
 
   // The minute rate is recalculated so it now includes the posted payroll.
   const finalRate = await calculatePeriodMinuteRate(

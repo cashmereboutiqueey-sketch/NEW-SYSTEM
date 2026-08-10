@@ -1459,6 +1459,14 @@ model Location {
   closesAt DateTime?    @db.Date
   sortOrder Int         @default(0)
 
+  /// Where a temporary location's stock came from, and where whatever does
+  /// not sell goes back to. Named explicitly rather than inferred from the
+  /// movements, because a bazaar stocked from two branches must still return
+  /// each garment to the branch that owns the shelf space for it.
+  parentLocationId String?
+  parent           Location?  @relation("LocationParent", fields: [parentLocationId], references: [id], onDelete: Restrict)
+  children         Location[] @relation("LocationParent")
+
   inventoryLots     InventoryLot[]
   movementsFrom     InventoryMovement[] @relation("MovementFrom")
   movementsTo       InventoryMovement[] @relation("MovementTo")
@@ -1467,6 +1475,7 @@ model Location {
   garmentUnits      GarmentUnit[]
 
   @@index([kind, isActive])
+  @@index([parentLocationId])
   @@map("locations")
 }
 

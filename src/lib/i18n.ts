@@ -41,6 +41,7 @@ export const dictionary = {
   transferPrice: { ar: "سعر التحويل", en: "Transfer price" },
   transferToBrand: { ar: "الشحن للبراند", en: "Despatch to Brand" },
   goodsIn: { ar: "الوارد من المصنع", en: "Goods in" },
+  exhibitions: { ar: "البازارات", en: "Bazaars" },
   reconciliation: { ar: "التسويات", en: "Reconciliation" },
   moderatorOrder: { ar: "أوردر مودريتور", en: "Moderator order" },
   contributionMargin: { ar: "هامش المساهمة", en: "Contribution margin" },
