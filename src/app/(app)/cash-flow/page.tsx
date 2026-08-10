@@ -1,7 +1,9 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { cashForecast } from "@/lib/cash-flow";
+import { ScheduledItemForm, StopItemForm } from "./scheduled-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney } from "@/lib/money";
 
@@ -18,17 +20,27 @@ export default async function CashFlowPage({
 }: {
   searchParams: Promise<{ entity?: string }>;
 }) {
-  await requirePermission("journal:view");
+  const session = await requireUser();
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;
+
+  const mayManage = can(session.role, "expense:create");
 
   const entity =
     query.entity === "FACTORY" || query.entity === "BRAND"
       ? await db.entity.findFirst({ where: { kind: query.entity } })
       : null;
 
-  const forecast = await cashForecast(entity?.id ?? null);
+  const [forecast, entities, scheduled] = await Promise.all([
+    cashForecast(entity?.id ?? null),
+    db.entity.findMany({ where: { kind: { in: ["FACTORY", "BRAND"] } }, orderBy: { nameEn: "asc" } }),
+    db.scheduledCashItem.findMany({
+      where: { isActive: true, ...(entity ? { entityId: entity.id } : {}) },
+      include: { entity: true },
+      orderBy: [{ direction: "asc" }, { dayOfMonth: "asc" }],
+    }),
+  ]);
 
   const kindLabel: Record<string, string> = ar
     ? {
@@ -123,6 +135,53 @@ export default async function CashFlowPage({
               </>
             )}
           </p>
+        </Card>
+      )}
+
+      {mayManage && (
+        <Card
+          className="mb-4"
+          title={ar ? "بنود دورية" : "Scheduled payments"}
+          description={
+            ar
+              ? "الإيجار والرواتب والأقساط — مالهاش فاتورة لسه، بس أكيد هتتدفع"
+              : "Rent, payroll, instalments — no invoice yet, but they will certainly need paying"
+          }
+        >
+          <ScheduledItemForm
+            locale={locale}
+            today={new Date().toISOString().slice(0, 10)}
+            entities={entities.map((e) => ({ id: e.id, label: ar ? e.nameAr : e.nameEn }))}
+          />
+
+          {scheduled.length > 0 && (
+            <ul className="mt-4 divide-y divide-ink-100 text-sm">
+              {scheduled.map((item) => (
+                <li key={item.id} className="flex flex-wrap items-center gap-3 py-2">
+                  <Badge tone={item.direction === "INFLOW" ? "good" : "neutral"}>
+                    {item.direction === "INFLOW" ? (ar ? "داخل" : "In") : ar ? "خارج" : "Out"}
+                  </Badge>
+                  <span className="flex-1">
+                    {ar ? item.nameAr : item.nameEn}
+                    <span className="ms-2 text-xs text-ink-400">
+                      {ar ? item.entity.nameAr : item.entity.nameEn}
+                    </span>
+                  </span>
+                  <span className="num">{formatMoney(item.amount, locale)}</span>
+                  <span className="text-xs text-ink-500">
+                    {item.frequency === "MONTHLY"
+                      ? ar ? `كل شهر يوم ${item.dayOfMonth}` : `monthly on the ${item.dayOfMonth}`
+                      : item.frequency === "QUARTERLY"
+                        ? ar ? "ربع سنوي" : "quarterly"
+                        : item.frequency === "ANNUAL"
+                          ? ar ? "سنوي" : "annual"
+                          : ar ? "مرة واحدة" : "one-off"}
+                  </span>
+                  <StopItemForm locale={locale} itemId={item.id} />
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       )}
 

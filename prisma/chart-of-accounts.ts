@@ -124,6 +124,11 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "5200", nameEn: "Factory COGS — conversion", nameAr: "تكلفة التشغيل المحملة", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_CONVERSION" },
   { code: "5300", nameEn: "Brand COGS at transfer price", nameAr: "تكلفة البضاعة بسعر التحويل", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "BRAND", reportingCategory: "INTERCOMPANY", isIntercompany: true },
   { code: "5400", nameEn: "Scrap and abnormal loss", nameAr: "الهالك والفاقد غير الطبيعي", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_LOSS" },
+  // A stocktake that finds fewer garments than the books claim has to go
+  // somewhere, and it is not the factory's loss once the Brand has taken the
+  // goods. Kept separate from scrap: cloth cut wrong and stock that walked out
+  // of a showroom are different problems with different answers.
+  { code: "5450", nameEn: "Brand stock loss and shrinkage", nameAr: "عجز وفاقد مخزون البراند", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "BRAND", reportingCategory: "COGS_LOSS" },
   { code: "5500", nameEn: "Rework cost", nameAr: "تكلفة إعادة التشغيل", type: "COGS", normalBalance: "DEBIT", parent: "5000", scope: "FACTORY", reportingCategory: "COGS_LOSS" },
 
   // ---------------------------------------------------------------------

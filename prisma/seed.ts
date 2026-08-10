@@ -426,6 +426,19 @@ async function main() {
       descriptionAr: "الصيغة المستخدمة بالفعل — يفرضها مولّد ومدقق موحّد.",
     },
 
+    {
+      key: "inventory.adjustmentApprovalLimit",
+      value: "5000",
+      type: "DECIMAL" as const,
+      group: "Inventory",
+      labelEn: "Stock adjustment approval limit",
+      labelAr: "حد اعتماد تسوية المخزون",
+      descriptionEn:
+        "Above this value a stock difference needs a second person to approve it. Whoever counts the stock cannot also sign off the difference.",
+      descriptionAr:
+        "فوق القيمة دي فرق الجرد محتاج شخص تاني يعتمده. اللي بيعدّ المخزون مايقدرش يعتمد الفرق بنفسه.",
+    },
+
     // --- brand unit economics -----------------------------------------
     // The costs that leave with a garment but are not in the transfer price.
     // Configured because they cannot be read off a single order line.

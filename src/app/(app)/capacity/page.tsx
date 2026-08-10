@@ -1,7 +1,10 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { capacityPicture } from "@/lib/factory-floor";
+import { configurablePeriods } from "@/lib/capacity";
+import { CapacityForm } from "./capacity-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
 
@@ -15,12 +18,17 @@ import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
  * problem. Multiplying them into one "productivity" number hides which.
  */
 export default async function CapacityPage() {
-  await requirePermission("minute_rate:view");
+  const session = await requireUser();
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
+  const maySet = can(session.role, "minute_rate:calculate");
+
   const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
-  const periods = await capacityPicture(factory.id);
+  const [periods, configurable] = await Promise.all([
+    capacityPicture(factory.id),
+    configurablePeriods(factory.id),
+  ]);
   const current = periods[0];
 
   return (
@@ -33,6 +41,33 @@ export default async function CapacityPage() {
             : "Minutes available, booked and idle — utilisation is a sales problem, efficiency is a floor problem"
         }
       />
+
+      {maySet && (
+        <Card
+          className="mb-4"
+          title={ar ? "إعداد الطاقة" : "Set the capacity"}
+          description={
+            ar
+              ? "الأرقام دي هي أساس تكلفة الدقيقة، يعني أساس سعر كل قطعة — أي تغيير فيها بيتسجّل"
+              : "These five numbers decide the minute rate and therefore every garment's price — each change is recorded"
+          }
+        >
+          <CapacityForm
+            locale={locale}
+            entityId={factory.id}
+            periods={configurable.map((p) => ({
+              fiscalPeriodId: p.fiscalPeriodId,
+              label: p.label,
+              editable: p.editable,
+              operators: p.operators,
+              workingDays: p.workingDays?.toString() ?? null,
+              hoursPerDay: p.hoursPerDay?.toString() ?? null,
+              utilisationRate: p.utilisationRate?.toString() ?? null,
+              efficiencyRate: p.efficiencyRate?.toString() ?? null,
+            }))}
+          />
+        </Card>
+      )}
 
       {!current ? (
         <Card>

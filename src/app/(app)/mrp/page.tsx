@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { can } from "@/core/permissions";
+import { RaiseOrdersForm } from "./order-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { materialRequirements, capacityOutlook } from "@/lib/mrp";
@@ -10,16 +12,21 @@ import { materialRequirements, capacityOutlook } from "@/lib/mrp";
  * تخطيط الاحتياجات — MRP.
  *
  * Answers one question honestly: for the production already committed to,
- * what is short and when does it need ordering? Suggestions are never
- * commitments — nothing here raises a purchase order.
+ * what is short and when does it need ordering?
+ *
+ * A suggestion becomes an order only when somebody ticks it and says so. The
+ * quantities are then re-read from the plan rather than taken from the page,
+ * because a screen left open while stock moved would otherwise order against
+ * figures that have since changed.
  */
 export default async function MrpPage({
   searchParams,
 }: {
   searchParams: Promise<{ drafts?: string }>;
 }) {
-  await requirePermission("production:view");
+  const session = await requireUser();
   const { locale } = await getPrefs();
+  const mayOrder = can(session.role, "purchase_order:create");
   const ar = locale === "ar";
   const params = await searchParams;
   const includeDrafts = params.drafts === "1";
@@ -232,11 +239,37 @@ export default async function MrpPage({
         {plan.suggestions.length > 0 && (
           <p className="mt-3 text-xs text-ink-500">
             {ar
-              ? "الأرقام دي مبنية على أوامر الإنتاج المؤكدة وما تم صرفه فعلًا — راجعها وبعدين اعمل أمر الشراء من صفحة المشتريات."
-              : "These figures come from confirmed production orders and what has already been issued — review them, then raise the order from the purchasing screen."}
+              ? "الأرقام دي مبنية على أوامر الإنتاج المؤكدة وما تم صرفه فعلًا."
+              : "These figures come from confirmed production orders and what has already been issued."}
           </p>
         )}
       </Card>
+
+      {mayOrder && plan.suggestions.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "اعمل أوامر الشراء" : "Raise the orders"}
+          description={
+            ar
+              ? "أمر واحد لكل مورد — التوريدة بتوصل بعربية واحدة مهما كانت الخامات"
+              : "One order per supplier — the delivery arrives on one lorry however many materials it carries"
+          }
+        >
+          <RaiseOrdersForm
+            locale={locale}
+            lines={plan.suggestions.map((s) => ({
+              materialId: s.materialId,
+              code: s.materialCode,
+              name: ar ? s.materialNameAr : s.materialNameEn,
+              uom: s.uom,
+              suggestedQty: s.suggestedQty.toString(),
+              estimatedCost: s.estimatedCost.toString(),
+              supplier: s.supplier ? (ar ? s.supplier.ar : s.supplier.en) : null,
+              urgency: s.urgency,
+            }))}
+          />
+        </Card>
+      )}
 
       {plan.lowStock.length > 0 && (
         <Card

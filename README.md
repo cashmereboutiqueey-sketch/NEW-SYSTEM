@@ -227,12 +227,18 @@ Working end to end, with tests and verified in the browser:
 | **Working capital** | AP aging, cash conversion cycle with every leg measured, break-even per style, GMROI by collection, dead stock by age. | `/expenses/aging`, `/reports/cash-cycle`, `/reports/break-even`, `/reports/gmroi`, `/inventory/dead-stock` |
 | **Commercial analysis** | Sell-through against what was made, markdown analysis reading what discounting actually ate, supplier scorecard putting price, lateness and quality side by side. | `/sales/sell-through`, `/sales/markdown`, `/suppliers/scorecard` |
 | **Factory floor** | Capacity and its booking, line and stage efficiency, scrap with its recovery rate. | `/capacity`, `/capacity/planning`, `/production/lines`, `/production/scrap` |
-| **Cash forecast** | Thirteen weeks of obligations already on the books — no sales projection. | `/cash-flow` |
+| **Cash forecast** | Thirteen weeks of obligations already on the books — no sales projection. Rent, payroll and instalments are entered here as scheduled items. | `/cash-flow` |
+| **Stocktake** | Count a shelf and post the difference. A shortfall above a configured limit needs a second person, and whoever counted cannot approve it. Tagged garments that are missing are marked lost, so the till refuses them. | `/inventory` |
+| **Capacity** | Operators, days, hours, utilisation and efficiency — the five numbers the whole minute rate rests on. A period whose rate is locked cannot be re-configured. | `/capacity` |
 | **Alerts** | Eleven rules that evaluate against real data and deduplicate by condition, so a problem seen three mornings running is one alert. | `/alerts` |
 | **What-if** | A measured month with one thing changed: cloth, wages, utilisation, discount, returns. | `/scenarios` |
 | **External CMT** | Clients and quoting, with the full-capacity rate enforced as a hard floor. | `/cmt/clients`, `/cmt/quotes` |
 
 Not built yet: bank and channel reconciliation, and deployment to the VPS.
+
+Every screen in the navigation now has a page, and every screen that should
+accept input does. The audit that proves it runs as part of `npm run
+walkthrough`.
 
 ### The walkthrough
 
