@@ -2502,6 +2502,12 @@ model CMTClient {
   phone      String?
   email      String?
   creditDays Int     @default(0)
+
+  /// The smallest run this particular client may place. Null means the house
+  /// minimum applies. Set per client because a long-standing customer bringing
+  /// repeat work is worth taking a short run for, and a stranger is not.
+  minimumQuantity Int?
+
   isActive   Boolean @default(true)
   notes      String?
   createdAt  DateTime @default(now())

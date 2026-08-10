@@ -6,6 +6,7 @@ import { quotingBasis, recentQuotes } from "@/lib/cmt";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
 import { QuoteForm, QuoteStatusForm } from "../cmt-forms";
+import { RateCard } from "./rate-card";
 
 /**
  * عروض أسعار التصنيع — pricing somebody else's garments.
@@ -86,6 +87,25 @@ export default async function CmtQuotesPage() {
               hint={`${formatNumber(wonMinutes, locale)} ${ar ? "دقيقة" : "minutes"}`}
             />
           </div>
+
+          <Card
+            className="mb-4"
+            title={ar ? "أقل كمية وبكام" : "How few, and for how much"}
+            description={
+              ar
+                ? "الجدول اللي تقراه للعميل على التليفون — الكمية، سعر القطعة، والمدة."
+                : "The table to read a client down the phone: quantity, unit price, lead time."
+            }
+          >
+            <RateCard
+              ar={ar}
+              clients={clients.map((c) => ({
+                id: c.id,
+                name: c.name,
+                minimumQuantity: c.minimumQuantity,
+              }))}
+            />
+          </Card>
 
           {mayQuote && (
             <Card className="mb-4" title={ar ? "عرض سعر جديد" : "New quote"}>

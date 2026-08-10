@@ -439,6 +439,34 @@ async function main() {
         "فوق القيمة دي فرق الجرد محتاج شخص تاني يعتمده. اللي بيعدّ المخزون مايقدرش يعتمد الفرق بنفسه.",
     },
 
+    // --- cutting and making for other labels ---------------------------
+    // Why a short run costs more per garment, expressed as two numbers a
+    // person can argue with rather than as a rule of thumb.
+    {
+      key: "cmt.setupMinutes",
+      value: "480",
+      type: "DECIMAL" as const,
+      group: "CMT",
+      labelEn: "Setup minutes per run",
+      labelAr: "دقائق التجهيز للأمر",
+      descriptionEn:
+        "Marker making, cutting the pattern, threading and changing the line over. The same work whether the run is fifty pieces or five thousand, which is exactly why a small run costs more each.",
+      descriptionAr:
+        "عمل الماركر وقص الباترون وتجهيز الخط. نفس الشغل سواء الأمر خمسين قطعة أو خمس آلاف، وده بالظبط سبب إن الكمية الصغيرة أغلى للقطعة.",
+    },
+    {
+      key: "cmt.minimumQuantity",
+      value: "100",
+      type: "INTEGER" as const,
+      group: "CMT",
+      labelEn: "Minimum run",
+      labelAr: "أقل كمية للتصنيع",
+      descriptionEn:
+        "The smallest run the factory will take. A client may be given their own lower minimum when the relationship is worth it.",
+      descriptionAr:
+        "أقل كمية المصنع بيشتغلها. ممكن عميل معيّن يتحدد له حد أقل لو العلاقة تستاهل.",
+    },
+
     // --- brand unit economics -----------------------------------------
     // The costs that leave with a garment but are not in the transfer price.
     // Configured because they cannot be read off a single order line.

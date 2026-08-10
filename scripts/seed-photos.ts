@@ -75,7 +75,7 @@ if (styles.length === 0) {
 for (const style of styles) {
   const png = solidPng(300, 400, colourFor(style.code));
   const name = await storeImage(
-    new File([png], `${style.code}.png`, { type: "image/png" }),
+    new File([png.buffer as ArrayBuffer], `${style.code}.png`, { type: "image/png" }),
   );
   await db.style.update({ where: { id: style.id }, data: { imageName: name } });
   console.log(`${style.code} → ${name}`);

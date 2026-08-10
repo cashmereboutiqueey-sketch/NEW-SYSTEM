@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "./db";
-import { dec, safeDiv } from "./money";
+import { dec, safeDiv, type Decimal } from "./money";
 import { nextDocumentNumber } from "./ledger";
 import { isQuoteAboveFloor } from "@/core/minute-rate";
 import { writeAudit, type AuditContext } from "./audit";
@@ -129,6 +129,16 @@ export async function createQuote(
   exceedsFreeCapacity: boolean;
 }> {
   if (input.quantity <= 0) throw new CMTError("A quote needs a quantity.");
+
+  // Below the minimum the setup swamps the sewing, and the run costs the line
+  // more in changeover than it earns. Checked against this client's own
+  // minimum, which may be lower than the house one for somebody worth it.
+  const minimum = await minimumQuantityFor(input.clientId);
+  if (input.quantity < minimum) {
+    throw new CMTError(
+      `${input.quantity} pieces is below the minimum of ${minimum} for this client.`,
+    );
+  }
 
   const smv = dec(input.smvPerUnit);
   const rate = dec(input.quotedMinuteRate);
@@ -293,4 +303,152 @@ export async function setQuoteStatus(
       ctx,
     });
   });
+}
+
+// -------------------------------------------------- what to tell a client
+
+/**
+ * Setup minutes: the work a run costs before a single garment is sewn.
+ *
+ * Marker making, cutting the pattern, threading and changing the line over.
+ * It is the same whether the run is fifty pieces or five thousand, which is
+ * the entire reason a small run costs more per garment — not greed, and worth
+ * being able to show a client on a table.
+ */
+export const CMT_SETUP_MINUTES = "cmt.setupMinutes";
+export const CMT_MINIMUM_QUANTITY = "cmt.minimumQuantity";
+
+async function setting(key: string, fallback: string): Promise<Decimal> {
+  const row = await db.setting.findUnique({ where: { key } });
+  return dec(row?.value ?? fallback);
+}
+
+/**
+ * The smallest run the factory will take from this client.
+ *
+ * Their own minimum wins when they have one, because the answer to "how few
+ * can you do" is a relationship question before it is an engineering one.
+ */
+export async function minimumQuantityFor(clientId?: string | null): Promise<number> {
+  const house = (await setting(CMT_MINIMUM_QUANTITY, "100")).toNumber();
+  if (!clientId) return house;
+
+  const client = await db.cMTClient.findUnique({
+    where: { id: clientId },
+    select: { minimumQuantity: true },
+  });
+  return client?.minimumQuantity ?? house;
+}
+
+/**
+ * How long a run will take, from capacity that actually exists.
+ *
+ * Minutes per day comes off the same period the rate does — operators, hours,
+ * utilisation — so a promised date is anchored to the factory as measured
+ * rather than as hoped for. Whatever is already booked is subtracted first: a
+ * date that ignores the queue is a date that will be missed.
+ */
+export async function leadTimeDays(totalMinutes: Decimal): Promise<{
+  days: number;
+  minutesPerDay: Decimal;
+  freeMinutes: Decimal;
+  fitsInPeriod: boolean;
+} | null> {
+  const basis = await quotingBasis();
+  if (!basis) return null;
+
+  const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
+  const period = await db.minuteRatePeriod.findFirst({
+    where: { entityId: factory.id },
+    orderBy: { calculatedAt: "desc" },
+  });
+  if (!period) return null;
+
+  const workingDays = dec(period.workingDays);
+  const minutesPerDay = workingDays.greaterThan(0)
+    ? dec(period.grossAvailableMinutes).dividedBy(workingDays)
+    : dec(0);
+
+  const days = minutesPerDay.greaterThan(0)
+    ? Math.ceil(totalMinutes.dividedBy(minutesPerDay).toNumber())
+    : 0;
+
+  return {
+    days,
+    minutesPerDay,
+    freeMinutes: basis.freeMinutes,
+    fitsInPeriod: basis.freeMinutes.greaterThanOrEqualTo(totalMinutes),
+  };
+}
+
+/**
+ * The answer to "how few can you make, and for how much".
+ *
+ * One table a person can read down the phone. The price falls with quantity
+ * for exactly one reason and it is shown in its own column: the setup is
+ * spread over more garments. Nothing here is a discount somebody invented.
+ *
+ *   unit price = (SMV + setup ÷ quantity) × minute rate
+ */
+export async function rateCard(input: {
+  smvPerUnit: string;
+  clientId?: string | null;
+  /** Above the floor, as a fraction. 0.15 is a fifteen per cent margin. */
+  marginOverFloor?: string;
+  quantities?: number[];
+}) {
+  const basis = await quotingBasis();
+  if (!basis) return null;
+
+  const smv = dec(input.smvPerUnit);
+  if (smv.lessThanOrEqualTo(0)) throw new CMTError("The garment needs a minute value.");
+
+  const setupMinutes = await setting(CMT_SETUP_MINUTES, "480");
+  const minimum = await minimumQuantityFor(input.clientId);
+  const margin = dec(input.marginOverFloor ?? "0.15");
+
+  const rate = basis.floorMinuteRate.times(dec(1).plus(margin));
+
+  // The client's own minimum first, then the usual conversation points.
+  const quantities = (input.quantities ?? [minimum, 250, 500, 1000, 2000])
+    .filter((q) => q >= minimum)
+    .sort((a, b) => a - b);
+
+  const tiers = [];
+  for (const quantity of quantities) {
+    const setupPerUnit = setupMinutes.dividedBy(quantity);
+    const minutesPerUnit = smv.plus(setupPerUnit);
+    const totalMinutes = minutesPerUnit.times(quantity);
+    // Rounded to the piastre first, then multiplied — the same rule invoices
+    // follow. A client reading this table has to be able to take the printed
+    // unit price, multiply by the quantity and land on the printed total,
+    // rather than on a number only the system can reproduce.
+    const unitPrice = minutesPerUnit.times(rate).toDecimalPlaces(2);
+
+    const lead = await leadTimeDays(totalMinutes);
+
+    tiers.push({
+      quantity,
+      setupPerUnit: setupPerUnit.toDecimalPlaces(4).toString(),
+      minutesPerUnit: minutesPerUnit.toDecimalPlaces(4).toString(),
+      totalMinutes: totalMinutes.toDecimalPlaces(2).toString(),
+      unitPrice: unitPrice.toString(),
+      total: unitPrice.times(quantity).toDecimalPlaces(2).toString(),
+      leadDays: lead?.days ?? null,
+      /** False when the month's free minutes cannot absorb it. */
+      capacityAvailable: lead?.fitsInPeriod ?? false,
+    });
+  }
+
+  return {
+    minimumQuantity: minimum,
+    setupMinutes: setupMinutes.toString(),
+    smvPerUnit: smv.toString(),
+    floorMinuteRate: basis.floorMinuteRate.toDecimalPlaces(4).toString(),
+    quotedMinuteRate: rate.toDecimalPlaces(4).toString(),
+    marginOverFloorPct: margin.times(100).toDecimalPlaces(2).toString(),
+    freeMinutes: basis.freeMinutes.toDecimalPlaces(0).toString(),
+    period: basis.label,
+    tiers,
+  };
 }
