@@ -98,15 +98,44 @@ if (payablesLedger.minus(owed).abs().greaterThan(0.05)) {
   ok(`payables match: ${owedOnExpenses.toFixed(2)} expenses + ${owedOnDeliveries.toFixed(2)} deliveries`);
 }
 
-// Cost of sales: the account must equal what the order lines relieved.
+// Cost of sales: what the order lines relieved, less what came back.
+//
+// A return relieves cost of sales for a sale that was undone, so comparing
+// against the order lines alone reports a difference the size of every return
+// ever taken. The lines are the record of what was sold; they are not amended
+// when a garment comes back, and should not be.
 const soldCost = (await db.salesOrderLine.findMany({ select: { lineCost: true } })).reduce(
   (s, l) => s.plus(dec(l.lineCost)),
   dec(0),
 );
+
+const returned = await db.return.findMany({
+  select: { salesOrderId: true, variantId: true, quantity: true },
+});
+let returnedCost = dec(0);
+for (const r of returned) {
+  // The cost the garment left at, frozen on the line that sold it — which is
+  // exactly what the return credited.
+  const line = await db.salesOrderLine.findFirst({
+    where: { salesOrderId: r.salesOrderId, variantId: r.variantId },
+    select: { unitCost: true },
+  });
+  if (line) returnedCost = returnedCost.plus(dec(line.unitCost).times(r.quantity));
+}
+
+const netSoldCost = soldCost.minus(returnedCost);
 const cogsLedger = await balanceOf("5300");
-if (cogsLedger.minus(soldCost).abs().greaterThan(0.05)) {
-  bad(`brand COGS: ledger ${cogsLedger.toFixed(2)} vs order lines ${soldCost.toFixed(2)}`);
-} else ok(`brand COGS matches the order lines: ${cogsLedger.toFixed(2)}`);
+if (cogsLedger.minus(netSoldCost).abs().greaterThan(0.05)) {
+  bad(
+    `brand COGS: ledger ${cogsLedger.toFixed(2)} vs order lines less returns ${netSoldCost.toFixed(2)}`,
+  );
+} else {
+  ok(
+    returnedCost.greaterThan(0)
+      ? `brand COGS matches the order lines less ${returnedCost.toFixed(2)} returned: ${cogsLedger.toFixed(2)}`
+      : `brand COGS matches the order lines: ${cogsLedger.toFixed(2)}`,
+  );
+}
 
 // Clearing: what couriers and gateways owe must equal the pending payments.
 const pending = await db.salesPayment.findMany({
@@ -122,6 +151,39 @@ for (const [code, expected, what] of [["1135", cod, "couriers"], ["1130", gatewa
   if (ledger.minus(expected).abs().greaterThan(0.05)) {
     bad(`${what}: ledger ${ledger.toFixed(2)} vs outstanding payments ${expected.toFixed(2)}`);
   } else ok(`what ${what} owe matches the ledger: ${ledger.toFixed(2)}`);
+}
+
+// Customers: account 1210 must equal what the orders say is still owed.
+//
+// This check exists because it was missing when credit was built, and the
+// first thing written against it — a refund set against a customer's balance
+// — credited the ledger without settling the order. The two views disagreed
+// and nothing noticed. A balance derived one way and posted another has to be
+// reconciled, or the derivation is decoration.
+const customerOrders = await db.salesOrder.findMany({
+  where: { status: { not: "CANCELLED" } },
+  select: {
+    netAmount: true,
+    shippingAmount: true,
+    payments: { select: { amount: true } },
+  },
+});
+const owedByCustomers = customerOrders.reduce((total, o) => {
+  const due = dec(o.netAmount).plus(dec(o.shippingAmount));
+  const paid = o.payments.reduce((s, p) => s.plus(dec(p.amount)), dec(0));
+  const owed = due.minus(paid);
+  // Overpaid orders are somebody else's problem; they do not net against
+  // what other customers owe.
+  return owed.greaterThan(0) ? total.plus(owed) : total;
+}, dec(0));
+
+const receivableLedger = await balanceOf("1210");
+if (receivableLedger.minus(owedByCustomers).abs().greaterThan(0.05)) {
+  bad(
+    `customers: ledger ${receivableLedger.toFixed(2)} vs what the orders say they owe ${owedByCustomers.toFixed(2)}`,
+  );
+} else {
+  ok(`what customers owe matches the ledger: ${receivableLedger.toFixed(2)}`);
 }
 
 /* ───────────────── 2. the accounting equation holds ────────────────────── */
