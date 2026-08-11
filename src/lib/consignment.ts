@@ -668,3 +668,37 @@ export async function totalOwedToConsignors(): Promise<Decimal> {
   });
   return sales.reduce((s, x) => s.plus(dec(x.ownerAmount)), dec(0));
 }
+
+/**
+ * Consigned goods the till can sell, at this location.
+ *
+ * Shaped to sit beside `sellableStock` in the terminal, because to a cashier
+ * with a customer waiting they are simply things on the rail. The difference
+ * is entirely in what happens afterwards, and that is the system's problem
+ * rather than theirs.
+ */
+export async function sellableConsignedStock(locationId: string) {
+  const items = await db.consignmentItem.findMany({
+    where: { locationId },
+    include: { consignor: true },
+    orderBy: { receivedDate: "asc" },
+  });
+
+  return items
+    .map((i) => {
+      const rate = rateFor(i, i.consignor);
+      return {
+        itemId: i.id,
+        itemCode: i.itemCode,
+        description: i.description,
+        size: i.size ?? "",
+        colour: i.colour ?? "",
+        consignorId: i.consignorId,
+        consignorName: i.consignor.name,
+        retailPrice: dec(i.retailPrice).toString(),
+        commissionRate: rate.toString(),
+        available: i.quantityReceived - i.quantitySold - i.quantityReturned,
+      };
+    })
+    .filter((i) => i.available > 0);
+}

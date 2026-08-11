@@ -6,6 +6,7 @@ import { can } from "@/core/permissions";
 import { PageHeader, Card, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber } from "@/lib/money";
 import { sellableStock, openTillFor, tillTotals } from "@/lib/pos";
+import { sellableConsignedStock } from "@/lib/consignment";
 import { PosTerminal } from "./pos-terminal";
 import { OpenTillForm, CloseTillForm } from "./till-forms";
 
@@ -106,6 +107,8 @@ export default async function PosPage({
   }
 
   const products = await sellableStock(till.locationId, brand.id);
+  // Goods held for other people, on the same rail and in the same grid.
+  const consigned = await sellableConsignedStock(till.locationId);
   const totals = tillTotals(till);
 
   // An empty shelf has two very different causes, and the cashier cannot tell
@@ -197,6 +200,7 @@ export default async function PosPage({
           canDiscount={can(session.role, "sales_order:discount")}
           mayGiveCredit={can(session.role, "sales_order:credit")}
           isExhibition={till.location.kind === "EXHIBITION"}
+          consigned={consigned}
           customers={customers}
         />
       </div>

@@ -29,6 +29,35 @@ type Product = {
   styleImage: string | null;
 };
 
+/**
+ * Something on the rail that belongs to somebody else.
+ *
+ * It sits in the same grid as everything else, because to a cashier with a
+ * customer waiting it is simply a dress. The difference is all in what
+ * happens afterwards, which is the system's problem and not theirs.
+ */
+type ConsignedProduct = {
+  itemId: string;
+  itemCode: string;
+  description: string;
+  size: string;
+  colour: string;
+  consignorName: string;
+  retailPrice: string;
+  commissionRate: string;
+  available: number;
+};
+
+type ConsignedLine = {
+  itemId: string;
+  label: string;
+  consignorName: string;
+  quantity: number;
+  retailPrice: number;
+  available: number;
+  commissionRate: number;
+};
+
 type CartLine = {
   variantId: string;
   sku: string;
@@ -60,6 +89,7 @@ export function PosTerminal({
   canDiscount,
   mayGiveCredit,
   isExhibition,
+  consigned,
   customers,
 }: {
   locale: Locale;
@@ -73,6 +103,8 @@ export function PosTerminal({
   mayGiveCredit: boolean;
   /** A bazaar customer is not a showroom customer, and is recorded as such. */
   isExhibition: boolean;
+  /** Goods held for other people, sellable here and owned by nobody here. */
+  consigned: ConsignedProduct[];
   customers: { id: string; name: string; phone: string | null }[];
 }) {
   const ar = locale === "ar";
@@ -83,6 +115,7 @@ export function PosTerminal({
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [openStyleId, setOpenStyleId] = useState<string | null>(null);
+  const [consignedLines, setConsignedLines] = useState<ConsignedLine[]>([]);
 
   /**
    * The customer list, held locally so somebody added mid-queue appears at
@@ -119,7 +152,7 @@ export function PosTerminal({
     );
   }, [products, query]);
 
-  const total = useMemo(
+  const ownTotal = useMemo(
     () =>
       money(
         cart.reduce(
@@ -129,6 +162,63 @@ export function PosTerminal({
       ),
     [cart],
   );
+
+  const consignedTotal = useMemo(
+    () => money(consignedLines.reduce((s, l) => s + money(l.retailPrice) * l.quantity, 0)),
+    [consignedLines],
+  );
+
+  /** What the customer pays: one number, whoever owns the garments. */
+  const total = money(ownTotal + consignedTotal);
+
+  /** What the shop actually earns on the consigned half. */
+  const consignedCommission = useMemo(
+    () =>
+      money(
+        consignedLines.reduce(
+          (s, l) => s + money(money(l.retailPrice) * l.quantity * l.commissionRate),
+          0,
+        ),
+      ),
+    [consignedLines],
+  );
+
+  const filteredConsigned = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return consigned;
+    return consigned.filter(
+      (c) =>
+        c.description.toLowerCase().includes(q) ||
+        c.description.includes(query.trim()) ||
+        c.consignorName.toLowerCase().includes(q) ||
+        c.consignorName.includes(query.trim()) ||
+        c.itemCode.toLowerCase().includes(q),
+    );
+  }, [consigned, query]);
+
+  function addConsigned(item: ConsignedProduct) {
+    setConsignedLines((lines) => {
+      const existing = lines.find((l) => l.itemId === item.itemId);
+      if (existing) {
+        if (existing.quantity >= item.available) return lines;
+        return lines.map((l) =>
+          l.itemId === item.itemId ? { ...l, quantity: l.quantity + 1 } : l,
+        );
+      }
+      return [
+        ...lines,
+        {
+          itemId: item.itemId,
+          label: [item.description, item.colour, item.size].filter(Boolean).join(" · "),
+          consignorName: item.consignorName,
+          quantity: 1,
+          retailPrice: Number(item.retailPrice),
+          available: item.available,
+          commissionRate: Number(item.commissionRate),
+        },
+      ];
+    });
+  }
 
   /**
    * The shelf, grouped the way a shop is laid out.
@@ -294,8 +384,11 @@ export function PosTerminal({
   useEffect(() => {
     if (!lastReceipt) return;
     setCart([]);
+    setConsignedLines([]);
     setTendered("");
     setCustomerId("");
+    setOnAccount(false);
+    setPaidNow("");
     searchRef.current?.focus();
   }, [lastReceipt]);
 
@@ -546,6 +639,57 @@ export function PosTerminal({
             ))}
           </div>
         )}
+
+        {/* ------------------------------------- goods held for other people */}
+        {filteredConsigned.length > 0 && !openStyle && (
+          <div className="mt-5">
+            <div className="mb-2 flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-ink-800">
+                {ar ? "بضاعة أمانة" : "On consignment"}
+              </h3>
+              <span className="text-xs text-ink-400">
+                {ar ? "مش بضاعتك — بتاخد نسبة" : "not yours — you take a share"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+              {filteredConsigned.map((c) => {
+                const inCart =
+                  consignedLines.find((l) => l.itemId === c.itemId)?.quantity ?? 0;
+                const left = c.available - inCart;
+                return (
+                  <button
+                    key={c.itemId}
+                    type="button"
+                    onClick={() => addConsigned(c)}
+                    disabled={left <= 0}
+                    className="rounded-xl border border-dashed border-warn/60 bg-warn/5 p-3 text-start transition-colors hover:border-warn disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <div className="truncate text-sm font-medium text-ink-900">
+                      {c.description}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-ink-500">
+                      {[c.colour, c.size].filter(Boolean).join(" \u00b7 ")}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-warn">
+                      {c.consignorName}
+                    </div>
+                    <div className="mt-1.5 flex items-baseline justify-between">
+                      <span className="num text-sm font-semibold">
+                        {Number(c.retailPrice).toFixed(2)}
+                      </span>
+                      <span
+                        className={`num text-xs ${left <= 2 ? "text-bad" : "text-ink-400"}`}
+                      >
+                        {left}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* -------------------------------------------------------------- cart */}
@@ -558,6 +702,17 @@ export function PosTerminal({
             discountPct: l.discountPct,
           })),
         )} />
+        <input
+          type="hidden"
+          name="consignedCart"
+          value={JSON.stringify(
+            consignedLines.map((l) => ({
+              itemId: l.itemId,
+              quantity: l.quantity,
+              retailPrice: l.retailPrice,
+            })),
+          )}
+        />
         <input type="hidden" name="posSessionId" value={posSessionId} />
         <input type="hidden" name="locationId" value={locationId} />
         <input type="hidden" name="entityId" value={entityId} />
@@ -657,10 +812,89 @@ export function PosTerminal({
             </ul>
           )}
 
+          {/* --------------------------- the half belonging to other people */}
+          {consignedLines.length > 0 && (
+            <ul className="mt-3 space-y-1.5 border-t border-dashed border-warn/50 pt-2">
+              {consignedLines.map((l) => (
+                <li key={l.itemId} className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-ink-900">{l.label}</div>
+                    <div className="text-[11px] text-warn">
+                      {ar ? "أمانة · " : "consigned · "}
+                      {l.consignorName}
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConsignedLines((lines) =>
+                          lines
+                            .map((x) =>
+                              x.itemId === l.itemId
+                                ? { ...x, quantity: x.quantity - 1 }
+                                : x,
+                            )
+                            .filter((x) => x.quantity > 0),
+                        )
+                      }
+                      className="h-6 w-6 rounded border border-ink-200 text-xs"
+                    >
+                      −
+                    </button>
+                    <span className="num w-5 text-center text-sm">{l.quantity}</span>
+                    <button
+                      type="button"
+                      disabled={l.quantity >= l.available}
+                      onClick={() =>
+                        setConsignedLines((lines) =>
+                          lines.map((x) =>
+                            x.itemId === l.itemId
+                              ? { ...x, quantity: x.quantity + 1 }
+                              : x,
+                          ),
+                        )
+                      }
+                      className="h-6 w-6 rounded border border-ink-200 text-xs disabled:opacity-30"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <span className="num w-20 shrink-0 text-end text-sm">
+                    {money(l.retailPrice * l.quantity).toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
           <div className="mt-3 flex items-baseline justify-between border-t border-ink-300 pt-2">
             <span className="font-semibold">{ar ? "الإجمالي" : "Total"}</span>
             <span className="num text-xl font-semibold">{total.toFixed(2)}</span>
           </div>
+
+          {/* What the shop actually earns, when part of the basket is not its
+              own. The takings and the earnings are different numbers here, and
+              a cashier reading only the total would think the day went better
+              than it did. */}
+          {consignedLines.length > 0 && (
+            <div className="mt-1 space-y-0.5 text-xs">
+              <div className="flex items-baseline justify-between text-ink-500">
+                <span>{ar ? "منها بضاعتك" : "of which yours"}</span>
+                <span className="num">{ownTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-baseline justify-between text-warn">
+                <span>{ar ? "بضاعة أمانة" : "consigned"}</span>
+                <span className="num">{consignedTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-baseline justify-between text-good">
+                <span>{ar ? "عمولتك منها" : "your commission"}</span>
+                <span className="num">{consignedCommission.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ------------------------------------------------------- payment */}
@@ -814,7 +1048,7 @@ export function PosTerminal({
           )}
 
           {/* ----------------------------------------------- part payment */}
-          {mayGiveCredit && (
+          {mayGiveCredit && consignedLines.length === 0 && (
             <div className="mb-2 rounded-lg border border-ink-200 p-2">
               <label className="flex items-center gap-2 text-xs text-ink-700">
                 <input
@@ -866,6 +1100,14 @@ export function PosTerminal({
             </div>
           )}
 
+          {consignedLines.length > 0 && (
+            <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+              {ar
+                ? "في بضاعة أمانة في السلة — لازم تتدفع كاملة، مفيش آجل عليها."
+                : "Consigned goods in the basket must be paid in full — no credit on them."}
+            </p>
+          )}
+
           {!priced && cart.length > 0 && (
             <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
               {ar
@@ -893,7 +1135,12 @@ export function PosTerminal({
 
           <button
             type="submit"
-            disabled={pending || cart.length === 0 || !priced || creditBlocked}
+            disabled={
+              pending ||
+              (cart.length === 0 && consignedLines.length === 0) ||
+              !priced ||
+              creditBlocked
+            }
             className="w-full rounded-lg bg-ink-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
             {pending

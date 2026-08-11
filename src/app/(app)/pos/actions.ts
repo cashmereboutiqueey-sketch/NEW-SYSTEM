@@ -8,6 +8,7 @@ import { InventoryError } from "@/lib/inventory";
 import { can } from "@/core/permissions";
 import { findUnitBySerial } from "@/lib/garment-units";
 import { db } from "@/lib/db";
+import { sellConsignedItem, ConsignmentError } from "@/lib/consignment";
 import { createCustomer } from "@/lib/master-data";
 import { normalisePhone } from "@/core/crm";
 
@@ -18,6 +19,27 @@ export type PosState = {
   receipt?: { orderNumber: string; total: string; change: string };
 };
 
+/** Rounds the way the invoice does, so the split lands on the piastre. */
+const round = (n: number) => Math.round(n * 100) / 100;
+
+/** What is genuinely left of a consigned item, checked before anything moves. */
+async function consignedAvailability(itemId: string) {
+  const item = await db.consignmentItem.findUnique({
+    where: { id: itemId },
+    select: {
+      description: true,
+      quantityReceived: true,
+      quantitySold: true,
+      quantityReturned: true,
+    },
+  });
+  if (!item) return { description: "الصنف", available: 0 };
+  return {
+    description: item.description,
+    available: item.quantityReceived - item.quantitySold - item.quantityReturned,
+  };
+}
+
 function toMessage(error: unknown): string {
   if (
     error instanceof SalesError ||
@@ -26,6 +48,7 @@ function toMessage(error: unknown): string {
   ) {
     return error.message;
   }
+  if (error instanceof ConsignmentError) return error.message;
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   if (error && typeof error === "object" && "issues" in error) {
     return (error as { issues: { message: string }[] }).issues
@@ -86,6 +109,21 @@ type CartLine = {
   discountPct: number;
   /** Tags the cashier scanned for this line, if they scanned rather than tapped. */
   scannedSerials?: string[];
+};
+
+/**
+ * A consigned garment in the same basket.
+ *
+ * A customer buying two dresses of the shop and one of somebody else pays
+ * once and walks out with three. To the cashier it is one sale; underneath it
+ * has to be two documents, because almost nothing about the two halves is the
+ * same — one relieves stock and earns the whole price, the other relieves
+ * nothing and earns a commission.
+ */
+type ConsignedCartLine = {
+  itemId: string;
+  quantity: number;
+  retailPrice: number;
 };
 
 export type ScanResult =
@@ -162,7 +200,12 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     const session = await authorize("pos:operate");
 
     const cart: CartLine[] = JSON.parse(String(formData.get("cart") ?? "[]"));
-    if (cart.length === 0) return { error: "The cart is empty." };
+    const consignedCart: ConsignedCartLine[] = JSON.parse(
+      String(formData.get("consignedCart") ?? "[]"),
+    );
+    if (cart.length === 0 && consignedCart.length === 0) {
+      return { error: "The cart is empty." };
+    }
 
     // Discounting is a separate capability from ringing up a sale, so a
     // cashier cannot mark stock down on their own authority.
@@ -187,6 +230,24 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       return { error: "You do not have permission to let a customer pay later." };
     }
 
+    // The payment splits by ownership. Each document carries its own share, so
+    // the drawer receives the whole basket across two journals and neither
+    // side claims money belonging to the other.
+    const consignedTotal = round(
+      consignedCart.reduce((sum, l) => sum + l.retailPrice * l.quantity, 0),
+    );
+    const ownTotal = round(total - consignedTotal);
+
+    // Goods belonging to somebody else cannot go out on credit. The shop owes
+    // their owner a share from the moment they leave, and letting a customer
+    // pay later means owing real money against a debt not yet collected.
+    if (consignedCart.length > 0 && paidNow < total) {
+      return {
+        error:
+          "بضاعة الأمانة لازم تتدفع كاملة — انت مدين لصاحبها من ساعة ما تخرج من المحل.",
+      };
+    }
+
     // A sale rung up at a bazaar is a bazaar sale, not a showroom one. The
     // till is the same till, so the source has to come from where it is
     // standing — otherwise every bazaar's takings land in the showroom's
@@ -198,41 +259,94 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     });
     const source = location?.kind === "EXHIBITION" ? "EXHIBITION" : "POS";
 
-    const result = await createSale(
-      {
-        source,
-        channelId: String(formData.get("channelId") ?? ""),
-        entityId: String(formData.get("entityId") ?? ""),
-        locationId,
-        posSessionId: String(formData.get("posSessionId") ?? ""),
-        customerId: (formData.get("customerId") as string) || null,
-        orderDate: new Date(),
-        lines: cart,
-        payments:
-          paidNow > 0
-            ? [
-                {
-                  method,
-                  amount: paidNow,
-                  fee: 0,
-                  // Cash and card at the till are collected there and then; a
-                  // COD sale from the shop floor is not money in hand yet.
-                  collected: method !== "COD",
-                },
-              ]
-            : [],
-      },
-      { userId: session.userId },
-    );
+    const posSessionId = String(formData.get("posSessionId") ?? "");
+    const customerId = (formData.get("customerId") as string) || null;
+    const now = new Date();
+
+    // Every consigned line is checked for availability before anything is
+    // recorded, so the common failure — the last one of something already
+    // sold — is caught while the basket is still only a basket.
+    for (const line of consignedCart) {
+      const check = await consignedAvailability(line.itemId);
+      if (line.quantity > check.available) {
+        return {
+          error:
+            check.available <= 0
+              ? `${check.description}: خلصت خلاص.`
+              : `${check.description}: فاضل ${check.available} بس.`,
+        };
+      }
+    }
+
+    // The goods the shop owns go first. If a consigned line then fails, no
+    // money has been misrecorded: that part of the basket simply was not rung
+    // up, and the cashier is told which item to ring again. Neither document
+    // is ever left half-written.
+    let orderNumber: string | null = null;
+    if (cart.length > 0) {
+      const result = await createSale(
+        {
+          source,
+          channelId: String(formData.get("channelId") ?? ""),
+          entityId: String(formData.get("entityId") ?? ""),
+          locationId,
+          posSessionId,
+          customerId,
+          orderDate: now,
+          lines: cart,
+          payments:
+            paidNow > 0
+              ? [
+                  {
+                    method,
+                    // Only the share belonging to the shop.
+                    amount: Math.min(paidNow, ownTotal),
+                    fee: 0,
+                    // Cash and card at the till are collected there and then;
+                    // a COD sale from the shop floor is not money in hand yet.
+                    collected: method !== "COD",
+                  },
+                ]
+              : [],
+        },
+        { userId: session.userId },
+      );
+      orderNumber = result.orderNumber;
+    }
+
+    const consignedSales: string[] = [];
+    let commission = 0;
+    for (const line of consignedCart) {
+      const sale = await sellConsignedItem(
+        {
+          itemId: line.itemId,
+          quantity: line.quantity,
+          soldPrice: String(line.retailPrice),
+          paymentMethod: method,
+          customerId,
+          posSessionId,
+          saleDate: now,
+        },
+        { userId: session.userId, reason: null },
+      );
+      consignedSales.push(sale.saleNumber);
+      commission += Number(sale.commission);
+    }
 
     revalidatePath("/pos");
-    const change = Math.max(0, tendered - Number(result.netAmount));
+    revalidatePath("/consignment");
+
+    const change = Math.max(0, tendered - total);
+    const reference = orderNumber ?? consignedSales[0] ?? "";
 
     return {
-      success: `Sale ${result.orderNumber} recorded.`,
+      success:
+        consignedSales.length > 0
+          ? `${reference} — منها ${consignedSales.length} صنف أمانة، عمولتك ${commission.toFixed(2)}.`
+          : `Sale ${reference} recorded.`,
       receipt: {
-        orderNumber: result.orderNumber,
-        total: Number(result.netAmount).toFixed(2),
+        orderNumber: reference,
+        total: total.toFixed(2),
         change: change.toFixed(2),
       },
     };
