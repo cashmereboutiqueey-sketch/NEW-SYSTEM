@@ -16,6 +16,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { createExpense, payExpense } from "../src/lib/expenses";
+import { approveExpense } from "../src/lib/approvals";
 import { calculatePeriodMinuteRate } from "../src/lib/minute-rate";
 import { createCostSnapshot } from "../src/lib/costing";
 import { receiveMaterial } from "../src/lib/inventory";
@@ -96,6 +97,16 @@ async function main() {
       asOwner,
     );
     if (code === "BRD-SOFTWARE") {
+      // Over the approval limit, so it cannot simply be paid. The owner
+      // raised it and approves it, which is allowed but never silent: the
+      // reason is recorded and the audit entry says an override happened.
+      await approveExpense(
+        {
+          expenseId: e.expenseId,
+          overrideReason: "المالك اعتمدها بنفسه — مفيش معتمد مالي في البيانات التجريبية",
+        },
+        asOwner,
+      );
       await payExpense(
         { expenseId: e.expenseId, amount, paidDate: on(20), method: "BANK" },
         asOwner,

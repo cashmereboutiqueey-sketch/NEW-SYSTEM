@@ -2,6 +2,7 @@ import "dotenv/config";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { approveExpense } from "./approvals";
 import { createExpense, payExpense, ExpenseError } from "./expenses";
 
 /**
@@ -174,12 +175,34 @@ describe("recording an expense", () => {
   });
 });
 
+
+/**
+ * Paying, with the approval that now comes before it.
+ *
+ * These tests are about payment mechanics — the liability, the journal, the
+ * part payments. Anything sizeable needs approving first, so that step lives
+ * here; the approval rules are covered in approvals.db.test.ts.
+ *
+ * An expense that does not exist is left to `payExpense` to complain about,
+ * rather than being intercepted with a different error.
+ */
+async function pay(
+  input: Parameters<typeof payExpense>[0],
+  context: typeof ctx = ctx,
+) {
+  const expense = await db.expense.findUnique({ where: { id: input.expenseId } });
+  if (expense && !expense.approvedAt) {
+    await approveExpense({ expenseId: input.expenseId }, context);
+  }
+  return payExpense(input, context);
+}
+
 describe("paying an expense", () => {
   it("settles the liability without touching the original cost", async () => {
     const created = await createExpense(rentInput(), ctx);
     const paidDate = new Date(openDate.getTime() + 5 * 86_400_000);
 
-    const payment = await payExpense(
+    const payment = await pay(
       { expenseId: created.expenseId, amount: 55000, paidDate, method: "BANK" },
       ctx,
     );
@@ -207,7 +230,7 @@ describe("paying an expense", () => {
   it("supports partial payment and tracks the balance", async () => {
     const created = await createExpense(rentInput(), ctx);
 
-    const first = await payExpense(
+    const first = await pay(
       { expenseId: created.expenseId, amount: 20000, paidDate: openDate, method: "BANK" },
       ctx,
     );
@@ -216,7 +239,7 @@ describe("paying an expense", () => {
     let expense = await db.expense.findUniqueOrThrow({ where: { id: created.expenseId } });
     expect(expense.paidAmount.toString()).toBe("20000");
 
-    const second = await payExpense(
+    const second = await pay(
       { expenseId: created.expenseId, amount: 35000, paidDate: openDate, method: "CASH" },
       ctx,
     );
@@ -229,7 +252,7 @@ describe("paying an expense", () => {
   it("rejects an overpayment rather than creating a negative payable", async () => {
     const created = await createExpense(rentInput(), ctx);
     await expect(
-      payExpense(
+      pay(
         { expenseId: created.expenseId, amount: 55000.01, paidDate: openDate, method: "BANK" },
         ctx,
       ),
@@ -238,13 +261,13 @@ describe("paying an expense", () => {
 
   it("rejects paying an already settled expense", async () => {
     const created = await createExpense(rentInput(), ctx);
-    await payExpense(
+    await pay(
       { expenseId: created.expenseId, amount: 55000, paidDate: openDate, method: "BANK" },
       ctx,
     );
 
     await expect(
-      payExpense(
+      pay(
         { expenseId: created.expenseId, amount: 1, paidDate: openDate, method: "BANK" },
         ctx,
       ),
@@ -253,7 +276,7 @@ describe("paying an expense", () => {
 
   it("credits cash rather than bank when paid in cash", async () => {
     const created = await createExpense(rentInput(), ctx);
-    await payExpense(
+    await pay(
       { expenseId: created.expenseId, amount: 55000, paidDate: openDate, method: "CASH" },
       ctx,
     );
@@ -267,7 +290,7 @@ describe("paying an expense", () => {
 
   it("rejects an unknown expense", async () => {
     await expect(
-      payExpense({ expenseId: "does-not-exist", amount: 10, paidDate: openDate, method: "BANK" }, ctx),
+      pay({ expenseId: "does-not-exist", amount: 10, paidDate: openDate, method: "BANK" }, ctx),
     ).rejects.toThrow(ExpenseError);
   });
 });
@@ -280,8 +303,8 @@ describe("subledger reconciles to the general ledger", () => {
     await createExpense(rentInput({ amount: 12000, description: "Utilities" }), ctx);
     const c = await createExpense(rentInput({ amount: 8000, description: "Maintenance" }), ctx);
 
-    await payExpense({ expenseId: a.expenseId, amount: 55000, paidDate: openDate, method: "BANK" }, ctx);
-    await payExpense({ expenseId: c.expenseId, amount: 3000, paidDate: openDate, method: "BANK" }, ctx);
+    await pay({ expenseId: a.expenseId, amount: 55000, paidDate: openDate, method: "BANK" }, ctx);
+    await pay({ expenseId: c.expenseId, amount: 3000, paidDate: openDate, method: "BANK" }, ctx);
 
     const expenses = await db.expense.findMany();
     const outstandingPerSubledger = expenses.reduce(
@@ -303,7 +326,7 @@ describe("subledger reconciles to the general ledger", () => {
 
   it("keeps the whole ledger in balance after every posting", async () => {
     const e = await createExpense(rentInput(), ctx);
-    await payExpense({ expenseId: e.expenseId, amount: 25000, paidDate: openDate, method: "BANK" }, ctx);
+    await pay({ expenseId: e.expenseId, amount: 25000, paidDate: openDate, method: "BANK" }, ctx);
 
     const [row] = await db.$queryRaw<{ debit: string; credit: string }[]>`
       SELECT COALESCE(SUM(l."debit"), 0)::text AS debit,

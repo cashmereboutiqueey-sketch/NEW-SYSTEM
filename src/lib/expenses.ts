@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { postEntry, LedgerError } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
+import { expensePayable } from "./approvals";
 import { dec } from "./money";
 import { violatesSeparationOfDuties } from "@/core/permissions";
 
@@ -118,6 +119,7 @@ export async function createExpense(
 
     const expense = await tx.expense.create({
       data: {
+        createdByUserId: ctx.userId,
         entityId: data.entityId,
         costCategoryId: category.id,
         fiscalPeriodId: period.id,
@@ -211,6 +213,12 @@ export async function payExpense(
       },
     });
     if (!expense) throw new ExpenseError("Expense not found.");
+
+    // Checked here rather than only on the approvals screen, so money cannot
+    // leave by a route that skips the inbox — an import, a script, a second
+    // screen somebody adds later.
+    const payable = await expensePayable(expense.id);
+    if (!payable.ok) throw new ExpenseError(payable.reason ?? "This expense cannot be paid yet.");
 
     const outstanding = dec(expense.amount).minus(dec(expense.paidAmount));
     const payment = dec(data.amount);

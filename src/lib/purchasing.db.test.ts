@@ -2,6 +2,7 @@ import "dotenv/config";
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { approvePurchaseOrder } from "./approvals";
 import { createPurchaseOrder, receiveGoods, PurchasingError } from "./purchasing";
 import { dec } from "./money";
 
@@ -62,8 +63,16 @@ async function wipe() {
 beforeEach(wipe);
 afterAll(async () => { await wipe(); await db.$disconnect(); });
 
-const order = (over: Partial<Parameters<typeof createPurchaseOrder>[0]> = {}) =>
-  createPurchaseOrder(
+/**
+ * An order ready to receive against.
+ *
+ * These tests are about receiving mechanics — landed cost, price variance,
+ * partial delivery. A large order now needs approving before goods can be
+ * booked in, so that step happens here rather than in every test; the
+ * approval rules themselves are covered in approvals.db.test.ts.
+ */
+const order = async (over: Partial<Parameters<typeof createPurchaseOrder>[0]> = {}) => {
+  const created = await createPurchaseOrder(
     {
       supplierId, orderDate: day, expectedDate: day,
       lines: [{ materialId, quantity: 500, unitPrice: 95 }],
@@ -71,6 +80,21 @@ const order = (over: Partial<Parameters<typeof createPurchaseOrder>[0]> = {}) =>
     },
     { userId },
   );
+
+  const raised = await db.purchaseOrder.findUniqueOrThrow({
+    where: { id: created.purchaseOrderId },
+  });
+  if (raised.status === "DRAFT") {
+    // Raised by `userId` and approved by them, which is an override the
+    // service allows only with a stated reason.
+    await approvePurchaseOrder(
+      { purchaseOrderId: created.purchaseOrderId, overrideReason: "fixture" },
+      { userId },
+    );
+  }
+
+  return created;
+};
 
 describe("raising a purchase order", () => {
   it("prices lines at landed cost using the material's freight and duty", async () => {

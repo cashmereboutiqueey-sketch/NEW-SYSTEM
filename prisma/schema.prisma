@@ -79,6 +79,10 @@ model User {
   journalsPosted   JournalEntry[] @relation("JournalPostedBy")
   posSessions      PosSession[]
   posSessionsClosed PosSession[] @relation("PosSessionClosedBy")
+  expensesApproved       Expense[]       @relation("ExpenseApprovedBy")
+  expensesRaised         Expense[]       @relation("ExpenseCreatedBy")
+  purchaseOrdersRaised   PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
+  purchaseOrdersApproved PurchaseOrder[] @relation("PurchaseOrderApprovedBy")
   salesOrders      SalesOrder[]   @relation("SalesOrderCreatedBy")
   settlements    Settlement[]
   bankStatements BankStatement[]
@@ -578,6 +582,20 @@ model Expense {
   paidAmount     Decimal       @default(0) @db.Decimal(18, 4)
   status         ExpenseStatus @default(UNPAID)
 
+  /// Who raised it, so the approver can be checked against them.
+  createdByUserId String?
+  createdBy       User?   @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  /// Approval is a separate question from payment. An expense can be approved
+  /// and unpaid, or paid without ever needing approval because it was small.
+  /// Null on both means nobody has looked at it yet.
+  approvedByUserId String?
+  approvedBy       User?     @relation("ExpenseApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedAt       DateTime?
+  /// Why it was sent back, when it was. Cleared if it is later approved.
+  rejectedAt       DateTime?
+  rejectionReason  String?
+
   /// Adjusting entries reference the original instead of editing it.
   adjustsExpenseId String?
   adjustsExpense   Expense?  @relation("ExpenseAdjustment", fields: [adjustsExpenseId], references: [id])
@@ -910,6 +928,20 @@ model PurchaseOrder {
   supplierId   String
   supplier     Supplier            @relation(fields: [supplierId], references: [id])
   status       PurchaseOrderStatus @default(DRAFT)
+
+  /// Who raised it. Needed on the row and not only in the audit log: the
+  /// rule is that the approver is not the person who asked, and that cannot
+  /// be checked against a log entry somebody may have to go looking for.
+  createdByUserId String?
+  createdBy       User?   @relation("PurchaseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  /// Committing the business to buy. Until this is set the order is a
+  /// proposal, and goods cannot be received against it.
+  approvedByUserId String?
+  approvedBy       User?     @relation("PurchaseOrderApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  rejectionReason  String?
   orderDate    DateTime            @db.Date
   expectedDate DateTime?           @db.Date
   creditDays   Int                 @default(0)

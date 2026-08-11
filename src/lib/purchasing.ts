@@ -4,6 +4,7 @@ import { db } from "./db";
 import { nextDocumentNumber } from "./ledger";
 import { receiveMaterial } from "./inventory";
 import { writeAudit, type AuditContext } from "./audit";
+import { purchaseOrderReceivable, approvalThreshold } from "./approvals";
 import { dec, roundMoney } from "./money";
 
 /**
@@ -57,6 +58,16 @@ export async function createPurchaseOrder(
   });
   const byId = new Map(materials.map((m) => [m.id, m]));
 
+  // A small order commits the moment it is raised; a large one is a proposal
+  // until somebody signs it. Making every order wait would leave a hundred
+  // pounds of buttons sitting in an inbox behind a fabric order, and the
+  // inbox would stop being read.
+  const orderValue = data.lines.reduce(
+    (s, l) => s.plus(dec(l.quantity).times(dec(l.unitPrice))),
+    dec(0),
+  );
+  const needsApproval = orderValue.greaterThan(await approvalThreshold());
+
   return db.$transaction(async (tx) => {
     const poNumber = await nextDocumentNumber(tx, "PUR", data.orderDate);
 
@@ -69,9 +80,10 @@ export async function createPurchaseOrder(
     let total = dec(0);
     const order = await tx.purchaseOrder.create({
       data: {
+        createdByUserId: ctx.userId,
         poNumber,
         supplierId: data.supplierId,
-        status: "CONFIRMED",
+        status: needsApproval ? "DRAFT" : "CONFIRMED",
         orderDate: data.orderDate,
         expectedDate: data.expectedDate ?? null,
         creditDays: supplier.creditDays,
@@ -172,6 +184,12 @@ export async function receiveGoods(
   if (order.status === "RECEIVED") {
     throw new PurchasingError(`Order ${order.poNumber} has already been fully received.`);
   }
+
+  // A large order is a commitment the business makes, not one a buyer makes
+  // alone. Receiving against an unapproved order would make the approval a
+  // formality performed after the fabric is already on the shelf.
+  const receivable = await purchaseOrderReceivable(order.id);
+  if (!receivable.ok) throw new PurchasingError(receivable.reason ?? "This order is not approved.");
 
   const byLineId = new Map(order.lines.map((l) => [l.id, l]));
 

@@ -39,6 +39,13 @@ async function onHand(variantId: string, locationId: string) {
   return Number(agg._sum.remainingQty ?? 0);
 }
 
+if (!order.locationId) {
+  console.log(`${order.orderNumber} has no location, so nothing can be restocked.`);
+  await db.$disconnect();
+  process.exit(0);
+}
+const locationId = order.locationId;
+
 const picture = await returnableLines(order.id);
 const line = picture.lines.find((l) => l.returnable > 0);
 if (!line) {
@@ -53,7 +60,7 @@ console.log(`   sold ${line.sold}, returnable ${line.returnable}`);
 console.log(`   they paid ${line.unitPrice} each; it cost the shop ${line.unitCost}`);
 
 const before = {
-  stock: await onHand(line.variantId, picture.order.locationId),
+  stock: await onHand(line.variantId, locationId),
   returns: await balance("4210"),
   cogs: await balance("5300"),
   drawer: await balance("1115"),
@@ -73,7 +80,7 @@ const result = await recordReturn(
 );
 
 const after = {
-  stock: await onHand(line.variantId, picture.order.locationId),
+  stock: await onHand(line.variantId, locationId),
   returns: await balance("4210"),
   cogs: await balance("5300"),
   drawer: await balance("1115"),

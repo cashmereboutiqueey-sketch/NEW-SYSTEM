@@ -439,6 +439,20 @@ async function main() {
         "فوق القيمة دي فرق الجرد محتاج شخص تاني يعتمده. اللي بيعدّ المخزون مايقدرش يعتمد الفرق بنفسه.",
     },
 
+    // --- who has to sign ------------------------------------------------
+    {
+      key: "finance.approvalThreshold",
+      value: "10000",
+      type: "DECIMAL" as const,
+      group: "Finance",
+      labelEn: "Approval threshold",
+      labelAr: "حد الاعتماد المالي",
+      descriptionEn:
+        "Above this, an expense cannot be paid and a purchase order cannot receive goods until somebody other than the person who raised it approves it. Set it low and every taxi receipt stops for a signature, which is how people learn to split invoices; set it high and the control means nothing.",
+      descriptionAr:
+        "فوق المبلغ ده، المصروف مايتدفعش وأمر الشراء مايتستلمش عليه بضاعة غير لما حد تاني — مش اللي كتبه — يعتمده. لو الحد صغير أوي كل إيصال تاكسي هيقف على توقيع، والناس هتتعلم تقسّم الفواتير؛ ولو كبير أوي مش هيمنع حاجة.",
+    },
+
     // --- cutting and making for other labels ---------------------------
     // Why a short run costs more per garment, expressed as two numbers a
     // person can argue with rather than as a rule of thumb.

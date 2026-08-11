@@ -41,6 +41,7 @@ export const navigation: NavSection[] = [
   {
     key: "expenses",
     items: [
+      { key: "approvals", href: "/approvals", phase: 2, scopes: ALL_SCOPES, icon: "check", shipped: true },
       { key: "expenses", href: "/expenses", phase: 2, scopes: ALL_SCOPES, icon: "receipt" , shipped: true },
       { key: "apAging", href: "/expenses/aging", phase: 2, scopes: ALL_SCOPES, icon: "clock", shipped: true },
       { key: "cashFlowForecast", href: "/cash-flow", phase: 5, scopes: ALL_SCOPES, icon: "wallet", shipped: true },
