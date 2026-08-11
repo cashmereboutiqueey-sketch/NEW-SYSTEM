@@ -41,7 +41,10 @@ export default async function SalesPage() {
       take: 100,
     }),
     db.posSession.findMany({
-      include: { location: true, cashier: true, _count: { select: { orders: true } } },
+      include: {
+        location: true, cashier: true, closedBy: true,
+        _count: { select: { orders: true } },
+      },
       orderBy: { openedAt: "desc" },
       take: 10,
     }),
@@ -292,7 +295,8 @@ export default async function SalesPage() {
                 headers={[
                   ar ? "الوردية" : "Session",
                   ar ? "الموقع" : "Location",
-                  ar ? "الكاشير" : "Cashier",
+                  ar ? "البياع" : "Sold by",
+                  ar ? "اللي عدّ" : "Counted by",
                   ar ? "طلبات" : "Orders",
                   ar ? "المتوقع" : "Expected",
                   ar ? "المعدود" : "Counted",
@@ -304,6 +308,11 @@ export default async function SalesPage() {
                   </code>,
                   <span key={`${s.id}-l`}>{name(s.location)}</span>,
                   <span key={`${s.id}-c`}>{s.cashier.name}</span>,
+                  // One person sells, another counts. Both names sit on the
+                  // same row so the owner reads the pair, not just the total.
+                  <span key={`${s.id}-cb`} className={s.closedBy ? "" : "text-ink-300"}>
+                    {s.closedBy?.name ?? "—"}
+                  </span>,
                   <span key={`${s.id}-o`} className="num">{s._count.orders}</span>,
                   <span key={`${s.id}-e`} className="num">
                     {s.expectedCash ? formatMoney(s.expectedCash, locale) : "—"}

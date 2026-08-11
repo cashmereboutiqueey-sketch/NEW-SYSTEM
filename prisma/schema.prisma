@@ -78,6 +78,7 @@ model User {
   journalsCreated  JournalEntry[] @relation("JournalCreatedBy")
   journalsPosted   JournalEntry[] @relation("JournalPostedBy")
   posSessions      PosSession[]
+  posSessionsClosed PosSession[] @relation("PosSessionClosedBy")
   salesOrders      SalesOrder[]   @relation("SalesOrderCreatedBy")
   settlements    Settlement[]
   bankStatements BankStatement[]
@@ -2312,6 +2313,10 @@ model PosSession {
 
   openedAt   DateTime  @default(now())
   closedAt   DateTime?
+  /// Who counted the drawer. Deliberately a different person from the
+  /// cashier: whoever took the money does not get to declare it correct.
+  closedByUserId String?
+  closedBy       User?   @relation("PosSessionClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
   openingFloat Decimal @db.Decimal(18, 4)
   /// Counted in the drawer at close. Null until the shift is closed.
   countedCash  Decimal? @db.Decimal(18, 4)

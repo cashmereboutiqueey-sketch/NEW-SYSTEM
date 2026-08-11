@@ -131,6 +131,10 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "transfer_price:view",
     "sales_order:view",
     "customer:view",
+    // Counts the drawer at the end of a shift. Deliberately without
+    // `pos:operate`: the accountant closes tills and never sells on one, so
+    // the person who took the money is never the person who counted it.
+    "pos:close_shift",
     "employee:view", "payroll:prepare", "salary:view",
     "audit:view",
     "alert:view", "alert:acknowledge",

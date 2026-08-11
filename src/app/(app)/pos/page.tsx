@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber } from "@/lib/money";
@@ -20,7 +21,15 @@ export default async function PosPage({
 }: {
   searchParams: Promise<{ location?: string }>;
 }) {
-  const session = await requirePermission("pos:operate");
+  // Two different people need this screen for two different reasons: the
+  // cashier to sell, the accountant to count the drawer at the end of the
+  // shift. Guarding on `pos:operate` alone locked the accountant out of the
+  // only screen where a till can be closed, which is where the shop actually
+  // stops for the night.
+  const session = await requireUser();
+  const maySell = can(session.role, "pos:operate");
+  const mayClose = can(session.role, "pos:close_shift");
+  if (!maySell && !mayClose) redirect("/");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const params = await searchParams;
@@ -70,15 +79,27 @@ export default async function PosPage({
           }
         />
         <Card title={ar ? "فتح وردية" : "Open a till"}>
-          <OpenTillForm
-            locale={locale}
-            locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
-          />
-          <p className="mt-3 text-xs text-ink-500">
-            {ar
-              ? "الرصيد الافتتاحي بيتقارن بالنقدية المعدودة عند القفل، والفرق بيتسجّل باسم الكاشير."
-              : "The opening float is compared with the cash counted at close, and any difference is recorded against the cashier."}
-          </p>
+          {maySell ? (
+            <>
+              <OpenTillForm
+                locale={locale}
+                locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
+              />
+              <p className="mt-3 text-xs text-ink-500">
+                {ar
+                  ? "الرصيد الافتتاحي بيتقارن بالنقدية المعدودة عند القفل، والفرق بيتسجّل باسم الكاشير."
+                  : "The opening float is compared with the cash counted at close, and any difference is recorded against the cashier."}
+              </p>
+            </>
+          ) : (
+            // Whoever counts the drawer does not open it. There is simply
+            // nothing here for them until a cashier has been selling.
+            <p className="py-4 text-sm text-ink-500">
+              {ar
+                ? "مفيش وردية مفتوحة دلوقتي. الوردية بيفتحها البياع، وانت بتقفلها آخر اليوم."
+                : "No till is open. A cashier opens the shift; you close it at the end of the day."}
+            </p>
+          )}
         </Card>
       </>
     );
@@ -164,6 +185,7 @@ export default async function PosPage({
         </Card>
       )}
 
+      {maySell && (
       <div className="mb-4">
         <PosTerminal
           locale={locale}
@@ -178,8 +200,9 @@ export default async function PosPage({
           customers={customers}
         />
       </div>
+      )}
 
-      {can(session.role, "pos:close_shift") && (
+      {mayClose && (
         <Card title={ar ? "قفل الوردية" : "Close the till"}>
           <CloseTillForm
             locale={locale}

@@ -568,6 +568,25 @@ export async function closePosSession(
     if (!session) throw new SalesError("Till session not found.");
     if (session.closedAt) throw new SalesError("That till session is already closed.");
 
+    // One person sells, another counts. A cashier who counts their own drawer
+    // is the only witness to a shortfall they caused, and the variance figure
+    // stops meaning anything.
+    //
+    // The owner is the way out of a dead end — somebody has to be able to
+    // close a till when nobody else is on the floor — and their name goes on
+    // the row, which is the whole point of recording who closed it.
+    if (ctx.userId && ctx.userId === session.cashierUserId) {
+      const closer = await tx.user.findUnique({
+        where: { id: ctx.userId },
+        select: { role: true },
+      });
+      if (closer?.role !== "OWNER") {
+        throw new SalesError(
+          "You took the money on this till, so somebody else has to count it.",
+        );
+      }
+    }
+
     const cashTaken = session.orders
       .flatMap((o) => o.payments)
       .filter((p) => p.method === "CASH")
@@ -581,6 +600,7 @@ export async function closePosSession(
       where: { id: session.id },
       data: {
         closedAt: new Date(),
+        closedByUserId: ctx.userId,
         countedCash: counted.toString(),
         expectedCash: expected.toString(),
         cashVariance: variance.toString(),
