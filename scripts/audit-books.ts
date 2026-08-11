@@ -177,6 +177,31 @@ const owedByCustomers = customerOrders.reduce((total, o) => {
   return owed.greaterThan(0) ? total.plus(owed) : total;
 }, dec(0));
 
+// Consignors: 2500 must equal what the unsettled sales say is owed.
+//
+// Money from a consigned sale sits in the drawer looking exactly like the
+// shop's own. If the liability and the sales ever disagree, the shop is
+// either holding somebody else's money without recording it or claiming a
+// debt that does not exist — and the first of those is the one that gets
+// spent by accident.
+const unsettledConsignment = await db.consignmentSale.findMany({
+  where: { settlementId: null },
+  select: { ownerAmount: true },
+});
+const owedToConsignors = unsettledConsignment.reduce(
+  (total, s) => total.plus(dec(s.ownerAmount)),
+  dec(0),
+);
+const consignorLedger = await balanceOf("2500");
+// A liability carries a credit balance, so debit − credit comes out negative.
+if (consignorLedger.plus(owedToConsignors).abs().greaterThan(0.05)) {
+  bad(
+    `consignors: ledger ${consignorLedger.negated().toFixed(2)} vs unsettled sales ${owedToConsignors.toFixed(2)}`,
+  );
+} else {
+  ok(`what consignors are owed matches the ledger: ${owedToConsignors.toFixed(2)}`);
+}
+
 const receivableLedger = await balanceOf("1210");
 if (receivableLedger.minus(owedByCustomers).abs().greaterThan(0.05)) {
   bad(

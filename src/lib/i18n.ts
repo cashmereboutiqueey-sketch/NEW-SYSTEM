@@ -45,6 +45,7 @@ export const dictionary = {
   customerCredit: { ar: "ذمم العملاء", en: "Customer credit" },
   customOrders: { ar: "أوردرات خاصة", en: "Made to order" },
   approvals: { ar: "الاعتمادات", en: "Approvals" },
+  consignment: { ar: "بضاعة الأمانة", en: "Consignment" },
   users: { ar: "المستخدمون", en: "Users" },
   reconciliation: { ar: "التسويات", en: "Reconciliation" },
   moderatorOrder: { ar: "أوردر مودريتور", en: "Moderator order" },

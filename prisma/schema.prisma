@@ -87,7 +87,9 @@ model User {
   settlements    Settlement[]
   bankStatements BankStatement[]
 
-  customOrders CustomOrder[]
+  customOrders         CustomOrder[]
+  consignmentSales     ConsignmentSale[]     @relation("ConsignmentSoldBy")
+  consignorSettlements ConsignorSettlement[] @relation("ConsignorSettlementPaidBy")
   @@map("users")
 }
 
@@ -189,7 +191,9 @@ model Entity {
   settlements    Settlement[]
   bankStatements BankStatement[]
 
-  customOrders CustomOrder[]
+  customOrders         CustomOrder[]
+  consignmentSales     ConsignmentSale[]
+  consignorSettlements ConsignorSettlement[]
   @@map("entities")
 }
 
@@ -1526,7 +1530,9 @@ model Location {
   salesOrders       SalesOrder[]
   garmentUnits      GarmentUnit[]
 
-  customOrders CustomOrder[]
+  customOrders     CustomOrder[]
+  consignmentItems ConsignmentItem[]
+  consignmentSales ConsignmentSale[]
   @@index([kind, isActive])
   @@index([parentLocationId])
   @@map("locations")
@@ -2307,6 +2313,7 @@ model Customer {
   @@index([emailNormalised])
   @@index([mergedIntoId])
   customOrders CustomOrder[]
+  consignmentSales ConsignmentSale[]
   @@map("customers")
 }
 
@@ -2358,6 +2365,7 @@ model PosSession {
   varianceNote String?
 
   orders SalesOrder[]
+  consignmentSales ConsignmentSale[]
 
   @@index([locationId, openedAt])
   @@map("pos_sessions")
@@ -2579,6 +2587,162 @@ enum CMTQuoteStatus {
 /// A deposit taken today is money held against a promise — a liability — and
 /// only becomes revenue on the day the customer walks out with the garment.
 /// The SalesOrder is created then, and not before.
+
+/// Somebody else's brand, selling through this shop.
+///
+/// Not a Supplier: a supplier sells the shop goods, and those goods become
+/// the shop's. A consignor keeps ownership until the garment is sold, and
+/// what the shop owes them appears only when it is.
+model Consignor {
+  id       String  @id @default(cuid())
+  code     String  @unique
+  name     String
+  contactPerson String?
+  phone    String?
+  email    String?
+
+  /// The shop's share, as a fraction. 0.25 is twenty-five per cent.
+  commissionRate Decimal @db.Decimal(9, 6)
+  /// Days after a sale before the owner expects their money.
+  settlementDays Int     @default(0)
+
+  isActive Boolean @default(true)
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items       ConsignmentItem[]
+  settlements ConsignorSettlement[]
+
+  @@map("consignors")
+}
+
+/// A garment held on consignment.
+///
+/// Deliberately not an InventoryLot. Lots are what the business owns, and
+/// every stock valuation, GMROI figure and dead-stock report reads them
+/// without asking whose they are. Putting somebody else's goods in that table
+/// would mean every one of those queries needed a filter, and the first one
+/// that forgot would overstate what the business owns.
+model ConsignmentItem {
+  id          String @id @default(cuid())
+  itemCode    String @unique
+  consignorId String
+  consignor   Consignor @relation(fields: [consignorId], references: [id], onDelete: Restrict)
+
+  description String
+  /// Free text: it is not the shop's size and colour vocabulary.
+  size        String?
+  colour      String?
+
+  /// What it is sold for. The owner sets it; the shop takes a share of it.
+  retailPrice Decimal @db.Decimal(18, 4)
+  /// Overrides the consignor's rate for this piece, when one was agreed.
+  commissionRate Decimal? @db.Decimal(9, 6)
+
+  quantityReceived Int
+  quantitySold     Int @default(0)
+  /// Given back to the owner unsold.
+  quantityReturned Int @default(0)
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  receivedDate DateTime  @db.Date
+  /// After this the owner wants them back, sold or not.
+  expiresAt    DateTime? @db.Date
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales ConsignmentSale[]
+
+  @@index([consignorId])
+  @@index([locationId])
+  @@map("consignment_items")
+}
+
+/// One consigned garment leaving the shop.
+///
+/// Kept apart from SalesOrder because almost nothing about it is the same:
+/// no stock is relieved, no cost of sales arises, and the revenue is the
+/// commission rather than the price on the ticket.
+model ConsignmentSale {
+  id         String @id @default(cuid())
+  saleNumber String @unique
+
+  itemId String
+  item   ConsignmentItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  quantity   Int
+  /// What the customer actually paid, which may be under the ticket price.
+  soldPrice  Decimal @db.Decimal(18, 4)
+  /// Frozen at the sale: a rate change later must not rewrite what was owed.
+  commissionRate   Decimal @db.Decimal(9, 6)
+  commissionAmount Decimal @db.Decimal(18, 4)
+  /// Sale value less commission — the owner's money.
+  ownerAmount      Decimal @db.Decimal(18, 4)
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  entityId   String
+  entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  posSessionId String?
+  posSession   PosSession? @relation(fields: [posSessionId], references: [id], onDelete: SetNull)
+
+  paymentMethod PaymentMethod
+  saleDate      DateTime @db.Date
+
+  /// Set once the owner has been paid for this sale.
+  settlementId String?
+  settlement   ConsignorSettlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+
+  soldByUserId String?
+  soldBy       User?   @relation("ConsignmentSoldBy", fields: [soldByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([itemId])
+  @@index([saleDate])
+  @@index([settlementId])
+  @@map("consignment_sales")
+}
+
+/// Paying a consignor what the shop has collected on their behalf.
+model ConsignorSettlement {
+  id               String @id @default(cuid())
+  settlementNumber String @unique
+
+  consignorId String
+  consignor   Consignor @relation(fields: [consignorId], references: [id], onDelete: Restrict)
+
+  /// Sum of the owner's share across the sales it covers.
+  amount     Decimal @db.Decimal(18, 4)
+  method     PaymentMethod
+  paidOn     DateTime @db.Date
+  reference  String?
+  notes      String?
+
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  paidByUserId String?
+  paidBy       User?   @relation("ConsignorSettlementPaidBy", fields: [paidByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  sales ConsignmentSale[]
+
+  @@index([consignorId, paidOn])
+  @@map("consignor_settlements")
+}
+
 model CustomOrder {
   id          String            @id @default(cuid())
   orderNumber String            @unique

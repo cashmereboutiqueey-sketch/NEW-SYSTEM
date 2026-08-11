@@ -84,6 +84,11 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "2220", nameEn: "Accrued utilities and services", nameAr: "مرافق وخدمات مستحقة", type: "LIABILITY", normalBalance: "CREDIT", parent: "2200", reportingCategory: "ACCRUAL" },
 
   { code: "2300", nameEn: "Output VAT payable", nameAr: "ضريبة القيمة المضافة — مخرجات", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", reportingCategory: "TAX_PAYABLE" },
+  // Goods somebody else owns, sold here. The shop holds their money from the
+  // moment the garment leaves the shelf until it is remitted, so it is a debt
+  // and not takings.
+  { code: "2500", nameEn: "Payable to consignors", nameAr: "مستحق لأصحاب البضاعة الأمانة", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "PAYABLE" },
+
   { code: "2400", nameEn: "Customer deposits and unearned revenue", nameAr: "دفعات مقدمة من العملاء", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "UNEARNED" },
 
   // ---------------------------------------------------------------------
@@ -108,6 +113,10 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "4130", nameEn: "POS showroom sales", nameAr: "مبيعات المعارض", type: "REVENUE", normalBalance: "CREDIT", parent: "4100", scope: "BRAND", reportingCategory: "REVENUE_EXTERNAL" },
   { code: "4140", nameEn: "Exhibition/bazaar sales", nameAr: "مبيعات البازارات", type: "REVENUE", normalBalance: "CREDIT", parent: "4100", scope: "BRAND", reportingCategory: "REVENUE_EXTERNAL" },
   { code: "4150", nameEn: "Wholesale sales", nameAr: "مبيعات الجملة", type: "REVENUE", normalBalance: "CREDIT", parent: "4100", scope: "BRAND", reportingCategory: "REVENUE_EXTERNAL" },
+  // Only the commission is revenue. Selling a 2,000 coat for somebody else on
+  // 20% earns 400 — booking the 2,000 would inflate turnover by money that
+  // was never the shop's and make every margin ratio meaningless.
+  { code: "4160", nameEn: "Consignment commission", nameAr: "عمولة بيع بضاعة الغير", type: "REVENUE", normalBalance: "CREDIT", parent: "4100", scope: "BRAND", reportingCategory: "REVENUE_EXTERNAL" },
 
   // Contra-revenue: discounts and returns reduce revenue, they are not costs.
   { code: "4200", nameEn: "Sales discounts", nameAr: "خصومات المبيعات", type: "REVENUE", normalBalance: "DEBIT", parent: "4000", scope: "BRAND", reportingCategory: "CONTRA_REVENUE" },
