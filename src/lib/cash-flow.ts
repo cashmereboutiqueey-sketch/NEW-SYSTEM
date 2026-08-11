@@ -27,7 +27,16 @@ export type CashWeek = {
   net: Decimal;
   closingBalance: Decimal;
   lines: {
-    kind: "EXPENSE" | "PURCHASE_COMMITMENT" | "RECEIVABLE" | "SCHEDULED";
+    kind:
+      | "EXPENSE"
+      | "PURCHASE_COMMITMENT"
+      /**
+       * Ordered and waiting on a signature. Money that goes out if somebody
+       * says yes, and not before, so it is never counted as a commitment.
+       */
+      | "AWAITING_APPROVAL"
+      | "RECEIVABLE"
+      | "SCHEDULED";
     labelEn: string;
     labelAr: string;
     date: Date;
@@ -64,7 +73,14 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
   const today = new Date();
   const horizon = new Date(today.getTime() + weeks * WEEK);
 
-  const [expenses, purchaseOrders, pendingPayments, scheduled, opening] = await Promise.all([
+  const [
+    expenses,
+    purchaseOrders,
+    awaitingApproval,
+    pendingPayments,
+    scheduled,
+    opening,
+  ] = await Promise.all([
     db.expense.findMany({
       where: {
         status: { in: ["UNPAID", "PARTIALLY_PAID"] },
@@ -74,6 +90,15 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
     }),
     db.purchaseOrder.findMany({
       where: { status: { in: ["CONFIRMED", "PARTIALLY_RECEIVED"] } },
+      include: { supplier: true, lines: true },
+    }),
+    // Raised and not yet approved. Before approvals existed every order was
+    // confirmed the moment it was written, so this filter caught them all.
+    // Now a large one starts as a draft and would drop out of the forecast
+    // entirely — which is how a business commits to buy fabric and sees
+    // nothing coming.
+    db.purchaseOrder.findMany({
+      where: { status: "DRAFT", approvedAt: null, rejectedAt: null },
       include: { supplier: true, lines: true },
     }),
     db.salesPayment.findMany({
@@ -127,6 +152,33 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
       kind: "PURCHASE_COMMITMENT",
       labelEn: `${po.poNumber} — ${po.supplier.nameEn}`,
       labelAr: `${po.poNumber} — ${po.supplier.nameAr}`,
+      date: payable < today ? today : payable,
+      amount: outstanding,
+      direction: "OUT",
+    });
+  }
+
+  // --- ordered, waiting on a signature -----------------------------------
+  //
+  // Kept apart from the commitments above rather than folded in with them. An
+  // unapproved order is money that goes out if somebody says yes and not
+  // before, and a forecast that presented a proposal as a decision already
+  // taken would be wrong in the other direction.
+  for (const po of awaitingApproval) {
+    const outstanding = po.lines.reduce(
+      (s, l) => s.plus(dec(l.effectiveCost).times(dec(l.quantity).minus(dec(l.receivedQty)))),
+      dec(0),
+    );
+    if (outstanding.lessThanOrEqualTo(0)) continue;
+
+    const expected = po.expectedDate ?? po.orderDate;
+    const payable = new Date(expected.getTime() + po.creditDays * 86_400_000);
+    if (payable > horizon) continue;
+
+    lines.push({
+      kind: "AWAITING_APPROVAL",
+      labelEn: `${po.poNumber} — ${po.supplier.nameEn} (awaiting approval)`,
+      labelAr: `${po.poNumber} — ${po.supplier.nameAr} (مستني اعتماد)`,
       date: payable < today ? today : payable,
       amount: outstanding,
       direction: "OUT",

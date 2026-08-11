@@ -64,6 +64,28 @@ export default async function PurchasingPage() {
     dec(0),
   );
 
+  /**
+   * Raised and waiting on a signature.
+   *
+   * These used to be confirmed the moment they were written, so they showed up
+   * in the committed total straight away. Now a large order starts as a draft,
+   * and without its own tile a buyer would raise one, see nothing anywhere,
+   * and assume the system had lost it.
+   */
+  const waiting = orders.filter(
+    (o) => o.status === "DRAFT" && !o.approvedAt && !o.rejectedAt,
+  );
+  const waitingValue = waiting.reduce(
+    (s, o) =>
+      s.plus(
+        o.lines.reduce(
+          (t, l) => t.plus(dec(l.effectiveCost).times(dec(l.quantity))),
+          dec(0),
+        ),
+      ),
+    dec(0),
+  );
+
   const totalVariance = orders.reduce(
     (s, o) =>
       s.plus(
@@ -100,11 +122,23 @@ export default async function PurchasingPage() {
         }
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={ar ? "أوامر مفتوحة" : "Open orders"}
           value={formatNumber(open.length, locale)}
           tone={open.length > 0 ? "info" : "neutral"}
+        />
+        <StatTile
+          label={ar ? "مستني اعتماد" : "Waiting on approval"}
+          value={formatMoney(waitingValue, locale)}
+          hint={
+            waiting.length > 0
+              ? ar
+                ? `${waiting.length} أمر — مش ملتزم بيه لسه`
+                : `${waiting.length} order(s) — not committed yet`
+              : undefined
+          }
+          tone={waiting.length > 0 ? "warn" : "neutral"}
         />
         <StatTile
           label={ar ? "ملتزم به ولم يُستلم" : "Committed, not received"}
@@ -118,6 +152,37 @@ export default async function PurchasingPage() {
           hint={ar ? "الفاتورة مقابل الأمر" : "Invoice against order"}
         />
       </div>
+
+      {waiting.length > 0 && (
+        <Card className="mb-4" title={ar ? "مستني اعتماد" : "Waiting on approval"}>
+          <p className="text-sm text-ink-600">
+            {ar ? (
+              <>
+                فيه <span className="num">{waiting.length}</span> أمر شراء بقيمة{" "}
+                <span className="num">{formatMoney(waitingValue, locale)}</span> لسه مستني
+                توقيع. لحد ما يتعتمد، الأمر <strong>عرض مش التزام</strong> — مش هيظهر عليك
+                دين ولا هتقدر تستلم عليه بضاعة. اعتمده من{" "}
+                <a href="/approvals" className="underline decoration-ink-300 underline-offset-2">
+                  الاعتمادات
+                </a>
+                .
+              </>
+            ) : (
+              <>
+                <span className="num">{waiting.length}</span> order(s) worth{" "}
+                <span className="num">{formatMoney(waitingValue, locale)}</span> are waiting
+                on a signature. Until one is approved it is a{" "}
+                <strong>proposal, not a commitment</strong>: nothing is owed and no goods
+                can be received against it. Approve them under{" "}
+                <a href="/approvals" className="underline decoration-ink-300 underline-offset-2">
+                  Approvals
+                </a>
+                .
+              </>
+            )}
+          </p>
+        </Card>
+      )}
 
       {mayOrder && (
         <Card className="mb-4" title={ar ? "أمر شراء جديد" : "New purchase order"}>
