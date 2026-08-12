@@ -154,6 +154,7 @@ export const dictionary = {
   // --- suppliers ---
   suppliers: { ar: "الموردين", en: "Suppliers" },
   supplierScore: { ar: "تقييم المورد", en: "Supplier score" },
+  supplierStatements: { ar: "كشف حساب الموردين", en: "Supplier statements" },
   purchasePriceVariance: { ar: "انحراف سعر الشراء", en: "Purchase price variance" },
   moq: { ar: "الحد الأدنى للطلب", en: "MOQ" },
   materials: { ar: "الخامات", en: "Materials" },

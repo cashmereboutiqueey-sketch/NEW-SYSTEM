@@ -196,3 +196,156 @@ export async function apAging(entityId: string | null = null, asOf: Date = new D
     total: Object.values(buckets).reduce((s, v) => s.plus(v), dec(0)),
   };
 }
+
+/**
+ * What each supplier is owed, and how late it is.
+ *
+ * The aging report answers "how much is overdue" across the business. It does
+ * not answer the question somebody actually asks on the phone — "what do I owe
+ * you" — and building that answer by eye from a list of invoices is how a
+ * supplier ends up being told a number that is wrong in their favour.
+ *
+ * Aged against each expense's own due date, so a supplier on thirty-day terms
+ * is not chased on day two.
+ */
+export async function supplierStatements(
+  entityId: string | null = null,
+  asOf: Date = new Date(),
+) {
+  const expenses = await db.expense.findMany({
+    where: {
+      status: { not: "PAID" },
+      supplierId: { not: null },
+      ...(entityId ? { entityId } : {}),
+    },
+    include: { supplier: true, entity: true, costCategory: true },
+    orderBy: { dueDate: "asc" },
+  });
+
+  type Row = {
+    supplierId: string;
+    code: string;
+    nameAr: string;
+    nameEn: string;
+    phone: string | null;
+    creditDays: number;
+    outstanding: Decimal;
+    overdue: Decimal;
+    notYetDue: Decimal;
+    oldestDue: Date | null;
+    invoices: {
+      id: string;
+      description: string;
+      entity: string;
+      category: string;
+      amount: string;
+      paid: string;
+      outstanding: string;
+      dueDate: Date;
+      daysLate: number;
+    }[];
+  };
+
+  const rows = new Map<string, Row>();
+
+  for (const e of expenses) {
+    if (!e.supplier) continue;
+
+    const owed = dec(e.amount).minus(dec(e.paidAmount));
+    if (owed.lessThanOrEqualTo(0)) continue;
+
+    const row =
+      rows.get(e.supplier.id) ?? {
+        supplierId: e.supplier.id,
+        code: e.supplier.code,
+        nameAr: e.supplier.nameAr,
+        nameEn: e.supplier.nameEn,
+        phone: e.supplier.phone,
+        creditDays: e.supplier.creditDays,
+        outstanding: dec(0),
+        overdue: dec(0),
+        notYetDue: dec(0),
+        oldestDue: null,
+        invoices: [],
+      };
+
+    const late = e.dueDate < asOf;
+    const daysLate = late
+      ? Math.floor((asOf.getTime() - e.dueDate.getTime()) / 86_400_000)
+      : 0;
+
+    row.outstanding = row.outstanding.plus(owed);
+    if (late) row.overdue = row.overdue.plus(owed);
+    else row.notYetDue = row.notYetDue.plus(owed);
+    if (!row.oldestDue || e.dueDate < row.oldestDue) row.oldestDue = e.dueDate;
+
+    row.invoices.push({
+      id: e.id,
+      description: e.description,
+      entity: e.entity.nameAr || e.entity.nameEn,
+      category: e.costCategory.nameAr || e.costCategory.nameEn,
+      amount: dec(e.amount).toString(),
+      paid: dec(e.paidAmount).toString(),
+      outstanding: owed.toString(),
+      dueDate: e.dueDate,
+      daysLate,
+    });
+
+    rows.set(e.supplier.id, row);
+  }
+
+  return [...rows.values()]
+    .sort((a, b) => {
+      // Whoever is owed money late comes first, and among them the longest
+      // wait — that is the order somebody works down the list in.
+      if (a.overdue.greaterThan(0) !== b.overdue.greaterThan(0)) {
+        return a.overdue.greaterThan(0) ? -1 : 1;
+      }
+      return (a.oldestDue?.getTime() ?? 0) - (b.oldestDue?.getTime() ?? 0);
+    })
+    .map((r) => ({
+      ...r,
+      outstanding: r.outstanding.toString(),
+      overdue: r.overdue.toString(),
+      notYetDue: r.notYetDue.toString(),
+    }));
+}
+
+/**
+ * What has been ordered from a supplier and not yet delivered.
+ *
+ * Not a debt — a supplier is owed when their goods arrive — but it is the
+ * other half of the answer to "what is between us", and leaving it out makes
+ * a statement look smaller than the relationship actually is.
+ */
+export async function supplierCommitments(supplierId?: string | null) {
+  const orders = await db.purchaseOrder.findMany({
+    where: {
+      status: { in: ["CONFIRMED", "PARTIALLY_RECEIVED", "DRAFT"] },
+      ...(supplierId ? { supplierId } : {}),
+    },
+    include: { supplier: true, lines: true },
+    orderBy: { orderDate: "asc" },
+  });
+
+  return orders
+    .map((o) => {
+      const outstanding = o.lines.reduce(
+        (s, l) =>
+          s.plus(dec(l.effectiveCost).times(dec(l.quantity).minus(dec(l.receivedQty)))),
+        dec(0),
+      );
+      return {
+        id: o.id,
+        poNumber: o.poNumber,
+        supplierId: o.supplierId,
+        supplierName: o.supplier.nameAr || o.supplier.nameEn,
+        status: o.status,
+        awaitingApproval: o.status === "DRAFT" && !o.approvedAt,
+        orderDate: o.orderDate,
+        expectedDate: o.expectedDate,
+        outstanding: outstanding.toString(),
+      };
+    })
+    .filter((o) => dec(o.outstanding).greaterThan(0));
+}
