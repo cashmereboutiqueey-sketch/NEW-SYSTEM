@@ -215,7 +215,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     }
 
     const method = String(formData.get("method") ?? "CASH") as
-      | "CASH" | "CARD" | "WALLET" | "COD";
+      | "CASH" | "CARD" | "INSTAPAY" | "COD";
     const tendered = Number(formData.get("tendered") ?? 0);
 
     // How much is actually being handed over. Anything short of the total is

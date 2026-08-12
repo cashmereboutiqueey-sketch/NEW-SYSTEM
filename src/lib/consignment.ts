@@ -51,7 +51,7 @@ const FUNDS_ACCOUNT: Record<string, string> = {
   CASH: ACC.POS_DRAWER,
   CARD: ACC.BANK,
   BANK_TRANSFER: ACC.BANK,
-  WALLET: ACC.BANK,
+  INSTAPAY: ACC.BANK,
   COD: ACC.COD_CLEARING,
 };
 
@@ -213,7 +213,7 @@ export async function sellConsignedItem(
     quantity: number;
     /** What the customer actually paid, which may be under the ticket. */
     soldPrice?: string | null;
-    paymentMethod: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" | "COD";
+    paymentMethod: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD";
     customerId?: string | null;
     posSessionId?: string | null;
     saleDate: Date;
@@ -423,7 +423,7 @@ export async function owedTo(consignorId: string): Promise<Decimal> {
 export async function settleConsignor(
   input: {
     consignorId: string;
-    method: "CASH" | "BANK_TRANSFER" | "WALLET";
+    method: "CASH" | "BANK_TRANSFER" | "INSTAPAY";
     paidOn: Date;
     /** Blank pays everything outstanding. */
     amount?: string | null;

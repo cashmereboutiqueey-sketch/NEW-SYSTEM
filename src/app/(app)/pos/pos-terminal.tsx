@@ -900,7 +900,7 @@ export function PosTerminal({
         {/* ------------------------------------------------------- payment */}
         <div className="rounded-xl border border-ink-200 bg-white p-3">
           <div className="mb-2 grid grid-cols-4 gap-1.5">
-            {(["CASH", "CARD", "WALLET", "COD"] as const).map((m) => (
+            {(["CASH", "CARD", "INSTAPAY", "COD"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -913,8 +913,8 @@ export function PosTerminal({
                 }
               >
                 {ar
-                  ? { CASH: "كاش", CARD: "بطاقة", WALLET: "محفظة", COD: "عند الاستلام" }[m]
-                  : { CASH: "Cash", CARD: "Card", WALLET: "Wallet", COD: "On delivery" }[m]}
+                  ? { CASH: "كاش", CARD: "بطاقة", INSTAPAY: "إنستاباي", COD: "عند الاستلام" }[m]
+                  : { CASH: "Cash", CARD: "Card", INSTAPAY: "InstaPay", COD: "On delivery" }[m]}
               </button>
             ))}
           </div>

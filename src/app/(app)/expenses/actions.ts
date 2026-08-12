@@ -66,7 +66,10 @@ export async function payExpenseAction(
         expenseId: String(formData.get("expenseId") ?? ""),
         amount: Number(formData.get("amount")),
         paidDate: String(formData.get("paidDate") ?? ""),
-        method: (formData.get("method") as "BANK" | "CASH") ?? "BANK",
+        // Cash leaves the box, everything else leaves the bank — but which
+        // one was used is what makes a bank statement reconcilable.
+        method: (formData.get("method") as
+          | "CASH" | "BANK_TRANSFER" | "INSTAPAY" | "CARD") ?? "BANK_TRANSFER",
         reference: (formData.get("reference") as string) || null,
       },
       { userId: session.userId },

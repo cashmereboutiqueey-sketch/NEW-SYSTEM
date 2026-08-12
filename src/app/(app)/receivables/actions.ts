@@ -33,7 +33,7 @@ export async function collectPaymentAction(
       {
         salesOrderId: String(formData.get("salesOrderId") ?? ""),
         method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET",
+          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
         amount: String(formData.get("amount") ?? "0"),
         collectedOn: day(formData.get("collectedOn")),
         reference: String(formData.get("reference") ?? "") || null,

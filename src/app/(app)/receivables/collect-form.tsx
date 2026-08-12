@@ -103,7 +103,7 @@ export function CollectForm({
             <option value="CASH">{ar ? "كاش" : "Cash"}</option>
             <option value="CARD">{ar ? "فيزا" : "Card"}</option>
             <option value="BANK_TRANSFER">{ar ? "تحويل بنكي" : "Transfer"}</option>
-            <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+            <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
           </select>
         </label>
       </div>

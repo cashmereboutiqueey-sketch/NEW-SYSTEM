@@ -42,7 +42,7 @@ const COLLECTION_ACCOUNT: Record<string, string> = {
   CASH: ACC.POS_DRAWER,
   CARD: ACC.BANK,
   BANK_TRANSFER: ACC.BANK,
-  WALLET: ACC.BANK,
+  INSTAPAY: ACC.BANK,
 };
 
 /**
@@ -232,7 +232,7 @@ export async function customerStatement(customerId: string) {
 export async function collectPayment(
   input: {
     salesOrderId: string;
-    method: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET";
+    method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY";
     amount: string;
     collectedOn: Date;
     reference?: string | null;

@@ -71,6 +71,9 @@ const FUNDS_ACCOUNT: Record<string, string> = {
   CARD: ACC.GATEWAY_CLEARING,
   COD: ACC.COD_CLEARING,
   BANK_TRANSFER: ACC.BANK,
+  // InstaPay settles into the bank the same day, so it is money that has
+  // arrived rather than money a processor is holding.
+  INSTAPAY: ACC.BANK,
   WALLET: ACC.GATEWAY_CLEARING,
   STORE_CREDIT: ACC.RECEIVABLE,
   DEPOSIT: ACC.CUSTOMER_DEPOSITS,
@@ -131,7 +134,7 @@ export const createSaleSchema = z.object({
     .array(
       z.object({
         method: z.enum([
-          "CASH", "CARD", "COD", "BANK_TRANSFER", "WALLET", "STORE_CREDIT", "DEPOSIT",
+          "CASH", "CARD", "COD", "BANK_TRANSFER", "INSTAPAY", "STORE_CREDIT", "DEPOSIT",
         ]),
         amount: z.coerce.number().positive(),
         fee: z.coerce.number().min(0).default(0),

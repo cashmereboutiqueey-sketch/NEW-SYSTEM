@@ -184,7 +184,9 @@ export const payExpenseSchema = z.object({
   expenseId: z.string().min(1),
   amount: z.coerce.number().positive("Payment must be greater than zero."),
   paidDate: z.coerce.date(),
-  method: z.enum(["BANK", "CASH"]).default("BANK"),
+  method: z
+    .enum(["CASH", "BANK_TRANSFER", "INSTAPAY", "CARD"])
+    .default("BANK_TRANSFER"),
   reference: z.string().nullable().optional(),
 });
 
@@ -255,6 +257,10 @@ export async function payExpense(
     const payableAccountId = await accountIdByCode(tx, PAYABLE_ACCOUNT_CODE);
     const fundingAccountId = await accountIdByCode(
       tx,
+      // Cash leaves the box; everything else leaves the bank, whether it went
+      // by InstaPay, a card or a manual transfer. The method is kept so a
+      // statement can be reconciled line by line, but it does not change
+      // which account the money came out of.
       data.method === "CASH" ? CASH_ACCOUNT_CODE : BANK_ACCOUNT_CODE,
     );
 

@@ -165,7 +165,7 @@ describe("money does not move without the second signature", () => {
 
     await expect(
       payExpense(
-        { expenseId, amount: 50_000, paidDate: day, method: "BANK" },
+        { expenseId, amount: 50_000, paidDate: day, method: "BANK_TRANSFER" },
         asRaiser(),
       ),
     ).rejects.toThrow(/approval limit/i);
@@ -176,7 +176,7 @@ describe("money does not move without the second signature", () => {
     await approveExpense({ expenseId }, asApprover());
 
     const paid = await payExpense(
-      { expenseId, amount: 50_000, paidDate: day, method: "BANK" },
+      { expenseId, amount: 50_000, paidDate: day, method: "BANK_TRANSFER" },
       asRaiser(),
     );
     expect(paid.status).toBe("PAID");
@@ -188,7 +188,7 @@ describe("money does not move without the second signature", () => {
 
     await expect(
       payExpense(
-        { expenseId, amount: 50_000, paidDate: day, method: "BANK" },
+        { expenseId, amount: 50_000, paidDate: day, method: "BANK_TRANSFER" },
         asRaiser(),
       ),
     ).rejects.toThrow(/sent back/i);

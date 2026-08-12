@@ -108,7 +108,7 @@ async function main() {
         asOwner,
       );
       await payExpense(
-        { expenseId: e.expenseId, amount, paidDate: on(20), method: "BANK" },
+        { expenseId: e.expenseId, amount, paidDate: on(20), method: "BANK_TRANSFER" },
         asOwner,
       );
     }

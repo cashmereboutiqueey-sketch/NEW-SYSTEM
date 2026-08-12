@@ -259,7 +259,7 @@ export function ModeratorOrderForm({
             {([
               ["COD", ar ? "عند الاستلام" : "On delivery"],
               ["BANK_TRANSFER", ar ? "تحويل بنكي" : "Bank transfer"],
-              ["WALLET", ar ? "محفظة" : "Wallet"],
+              ["INSTAPAY", ar ? "إنستاباي" : "InstaPay"],
               ["CASH", ar ? "كاش" : "Cash"],
             ] as const).map(([value, text]) => (
               <button

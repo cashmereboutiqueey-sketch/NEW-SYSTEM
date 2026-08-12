@@ -203,7 +203,7 @@ describe("paying an expense", () => {
     const paidDate = new Date(openDate.getTime() + 5 * 86_400_000);
 
     const payment = await pay(
-      { expenseId: created.expenseId, amount: 55000, paidDate, method: "BANK" },
+      { expenseId: created.expenseId, amount: 55000, paidDate, method: "BANK_TRANSFER" },
       ctx,
     );
 
@@ -231,7 +231,7 @@ describe("paying an expense", () => {
     const created = await createExpense(rentInput(), ctx);
 
     const first = await pay(
-      { expenseId: created.expenseId, amount: 20000, paidDate: openDate, method: "BANK" },
+      { expenseId: created.expenseId, amount: 20000, paidDate: openDate, method: "BANK_TRANSFER" },
       ctx,
     );
     expect(first.status).toBe("PARTIALLY_PAID");
@@ -253,7 +253,7 @@ describe("paying an expense", () => {
     const created = await createExpense(rentInput(), ctx);
     await expect(
       pay(
-        { expenseId: created.expenseId, amount: 55000.01, paidDate: openDate, method: "BANK" },
+        { expenseId: created.expenseId, amount: 55000.01, paidDate: openDate, method: "BANK_TRANSFER" },
         ctx,
       ),
     ).rejects.toThrow(/exceeds the outstanding balance/i);
@@ -262,13 +262,13 @@ describe("paying an expense", () => {
   it("rejects paying an already settled expense", async () => {
     const created = await createExpense(rentInput(), ctx);
     await pay(
-      { expenseId: created.expenseId, amount: 55000, paidDate: openDate, method: "BANK" },
+      { expenseId: created.expenseId, amount: 55000, paidDate: openDate, method: "BANK_TRANSFER" },
       ctx,
     );
 
     await expect(
       pay(
-        { expenseId: created.expenseId, amount: 1, paidDate: openDate, method: "BANK" },
+        { expenseId: created.expenseId, amount: 1, paidDate: openDate, method: "BANK_TRANSFER" },
         ctx,
       ),
     ).rejects.toThrow(/already fully paid/i);
@@ -290,7 +290,7 @@ describe("paying an expense", () => {
 
   it("rejects an unknown expense", async () => {
     await expect(
-      pay({ expenseId: "does-not-exist", amount: 10, paidDate: openDate, method: "BANK" }, ctx),
+      pay({ expenseId: "does-not-exist", amount: 10, paidDate: openDate, method: "BANK_TRANSFER" }, ctx),
     ).rejects.toThrow(ExpenseError);
   });
 });
@@ -303,8 +303,8 @@ describe("subledger reconciles to the general ledger", () => {
     await createExpense(rentInput({ amount: 12000, description: "Utilities" }), ctx);
     const c = await createExpense(rentInput({ amount: 8000, description: "Maintenance" }), ctx);
 
-    await pay({ expenseId: a.expenseId, amount: 55000, paidDate: openDate, method: "BANK" }, ctx);
-    await pay({ expenseId: c.expenseId, amount: 3000, paidDate: openDate, method: "BANK" }, ctx);
+    await pay({ expenseId: a.expenseId, amount: 55000, paidDate: openDate, method: "BANK_TRANSFER" }, ctx);
+    await pay({ expenseId: c.expenseId, amount: 3000, paidDate: openDate, method: "BANK_TRANSFER" }, ctx);
 
     const expenses = await db.expense.findMany();
     const outstandingPerSubledger = expenses.reduce(
@@ -326,7 +326,7 @@ describe("subledger reconciles to the general ledger", () => {
 
   it("keeps the whole ledger in balance after every posting", async () => {
     const e = await createExpense(rentInput(), ctx);
-    await pay({ expenseId: e.expenseId, amount: 25000, paidDate: openDate, method: "BANK" }, ctx);
+    await pay({ expenseId: e.expenseId, amount: 25000, paidDate: openDate, method: "BANK_TRANSFER" }, ctx);
 
     const [row] = await db.$queryRaw<{ debit: string; credit: string }[]>`
       SELECT COALESCE(SUM(l."debit"), 0)::text AS debit,

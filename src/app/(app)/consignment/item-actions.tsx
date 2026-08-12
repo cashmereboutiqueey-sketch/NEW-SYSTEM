@@ -80,7 +80,7 @@ export function ItemActions({
         <select name="paymentMethod" className={small}>
           <option value="CASH">{ar ? "كاش" : "Cash"}</option>
           <option value="CARD">{ar ? "فيزا" : "Card"}</option>
-          <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+          <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
           <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
         </select>
 

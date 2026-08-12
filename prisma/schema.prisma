@@ -616,13 +616,27 @@ model Expense {
   @@map("expenses")
 }
 
+/// How money left the business.
+///
+/// The account is not the whole story. InstaPay, a card and a manual transfer
+/// all leave the same bank account, but knowing which one was used is what
+/// makes a bank statement reconcilable line by line.
+enum PayoutMethod {
+  CASH
+  BANK_TRANSFER
+  INSTAPAY
+  CARD
+}
+
 model ExpensePayment {
   id        String   @id @default(cuid())
   expenseId String
   expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   amount    Decimal  @db.Decimal(18, 4)
   paidDate  DateTime @db.Date
-  method    String?
+  /// Was a free string, which meant nothing stopped a typo from becoming a
+  /// category nobody could report on.
+  method    PayoutMethod @default(BANK_TRANSFER)
   reference String?
   createdAt DateTime @default(now())
 
@@ -2453,6 +2467,12 @@ enum PaymentMethod {
   CARD
   COD
   BANK_TRANSFER
+  /// InstaPay. Lands in the bank the same day, so it is treated as a transfer
+  /// that has already arrived rather than as something in a clearing account.
+  INSTAPAY
+  /// Kept only because Postgres cannot drop an enum value cleanly and old
+  /// rows may reference it. Not offered anywhere: this shop holds no wallet
+  /// balances for customers.
   WALLET
   STORE_CREDIT
   /// Money the customer paid before the garment existed. It sat as a

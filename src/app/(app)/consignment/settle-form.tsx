@@ -65,7 +65,7 @@ export function SettleForm({
       <select name="method" className={small}>
         <option value="CASH">{ar ? "كاش" : "Cash"}</option>
         <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
-        <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+        <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
       </select>
 
       <input name="reference" placeholder={ar ? "مرجع" : "Reference"} className={small} />

@@ -109,7 +109,7 @@ export async function sellConsignedAction(
         quantity: Number(formData.get("quantity") ?? 1),
         soldPrice: price || null,
         paymentMethod: String(formData.get("paymentMethod") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" | "COD",
+          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD",
         customerId: String(formData.get("customerId") ?? "") || null,
         saleDate: day(formData.get("saleDate")),
       },
@@ -162,7 +162,7 @@ export async function settleConsignorAction(
       {
         consignorId: String(formData.get("consignorId") ?? ""),
         method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "BANK_TRANSFER" | "WALLET",
+          | "CASH" | "BANK_TRANSFER" | "INSTAPAY",
         paidOn: day(formData.get("paidOn")),
         amount: amount || null,
         reference: String(formData.get("reference") ?? "") || null,

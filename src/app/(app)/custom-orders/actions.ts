@@ -64,7 +64,7 @@ export async function takeCustomOrderAction(
           ? {
               amount: depositAmount,
               method: String(formData.get("depositMethod") ?? "CASH") as
-                | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET",
+                | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
             }
           : null,
         entityId: String(formData.get("entityId") ?? ""),
@@ -99,7 +99,7 @@ export async function addDepositAction(
         customOrderId: String(formData.get("customOrderId") ?? ""),
         amount: String(formData.get("amount") ?? "0"),
         method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET",
+          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
         paidOn: day(formData.get("paidOn")),
       },
       { userId: session.userId, reason: null },
@@ -172,7 +172,7 @@ export async function deliverAction(
             ? {
                 amount: payNow,
                 method: String(formData.get("method") ?? "CASH") as
-                  | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET",
+                  | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
               }
             : null,
         channelId: String(formData.get("channelId") ?? ""),
@@ -210,7 +210,7 @@ export async function cancelAction(
         reason: String(formData.get("reason") ?? ""),
         cancelledOn: day(formData.get("cancelledOn")),
         refundMethod: String(formData.get("refundMethod") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET",
+          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
       },
       { userId: session.userId, reason: null },
     );

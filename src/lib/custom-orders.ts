@@ -45,7 +45,7 @@ const DEPOSIT_FUNDS: Record<string, string> = {
   CASH: ACC.POS_DRAWER,
   CARD: ACC.BANK,
   BANK_TRANSFER: ACC.BANK,
-  WALLET: ACC.BANK,
+  INSTAPAY: ACC.BANK,
 };
 
 function asDay(d: Date): Date {
@@ -60,7 +60,7 @@ export async function takeCustomOrder(
     variantId: string;
     quantity: number;
     agreedUnitPrice: string;
-    deposit?: { amount: string; method: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" } | null;
+    deposit?: { amount: string; method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" } | null;
     entityId: string;
     locationId: string;
     promisedDate?: Date | null;
@@ -192,7 +192,7 @@ export async function addDeposit(
   input: {
     customOrderId: string;
     amount: string;
-    method: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET";
+    method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY";
     paidOn: Date;
   },
   ctx: AuditContext,
@@ -370,7 +370,7 @@ export async function deliverCustomOrder(
   input: {
     customOrderId: string;
     deliveredOn: Date;
-    payNow?: { amount: string; method: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" } | null;
+    payNow?: { amount: string; method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" } | null;
     channelId: string;
   },
   ctx: AuditContext,
@@ -400,7 +400,7 @@ export async function deliverCustomOrder(
   // shelf. If production has not delivered it, this fails here rather than
   // booking revenue for something that does not exist.
   const payments: {
-    method: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" | "DEPOSIT";
+    method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "DEPOSIT";
     amount: number;
     fee: number;
     collected: boolean;
@@ -487,7 +487,7 @@ export async function cancelCustomOrder(
     customOrderId: string;
     reason: string;
     cancelledOn: Date;
-    refundMethod?: "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET";
+    refundMethod?: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY";
   },
   ctx: AuditContext,
 ): Promise<{ refunded: string }> {

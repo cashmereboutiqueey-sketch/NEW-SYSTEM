@@ -70,7 +70,7 @@ export async function createModeratorSaleAction(
         lines: priced,
         payments: [
           {
-            method: method as "CASH" | "CARD" | "COD" | "BANK_TRANSFER" | "WALLET",
+            method: method as "CASH" | "CARD" | "COD" | "BANK_TRANSFER" | "INSTAPAY",
             amount: Math.round((goods + shipping) * 100) / 100,
             fee: Number(formData.get("fee") ?? 0),
             // Cash on delivery is money the courier still owes; anything else

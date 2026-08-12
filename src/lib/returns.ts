@@ -52,10 +52,10 @@ const REFUND_ACCOUNT: Record<string, string> = {
   CASH: ACC.POS_DRAWER,
   CARD: ACC.BANK,
   BANK_TRANSFER: ACC.BANK,
-  WALLET: ACC.BANK,
+  INSTAPAY: ACC.BANK,
 };
 
-export type RefundMethod = "CASH" | "CARD" | "BANK_TRANSFER" | "WALLET" | "AGAINST_BALANCE";
+export type RefundMethod = "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "AGAINST_BALANCE";
 
 function asDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));

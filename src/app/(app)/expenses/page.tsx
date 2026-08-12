@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney } from "@/lib/money";
+import { PayForm } from "./pay-form";
 import { ExpenseForm } from "./expense-form";
 
 /**
@@ -15,6 +16,8 @@ import { ExpenseForm } from "./expense-form";
  */
 export default async function ExpensesPage() {
   const session = await requirePermission("expense:view");
+  // Recording a cost and handing money over are different rights.
+  const mayPay = can(session.role, "payment:create");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
@@ -130,6 +133,7 @@ export default async function ExpensesPage() {
               ar ? "تاريخ السداد" : "Due",
               ar ? "الحالة" : "Status",
               ar ? "القيد" : "Journal",
+              "",
             ]}
             rows={expenses.map((e) => {
               const due = Number(e.amount) - Number(e.paidAmount);
@@ -156,6 +160,17 @@ export default async function ExpensesPage() {
                 <code key={`${e.id}-j`} dir="ltr" className="text-xs text-ink-500">
                   {journalBySource.get(e.id) ?? "—"}
                 </code>,
+                mayPay && due > 0 ? (
+                  <PayForm
+                    key={`${e.id}-p`}
+                    ar={ar}
+                    expenseId={e.id}
+                    description={e.description}
+                    outstanding={due}
+                  />
+                ) : (
+                  <span key={`${e.id}-p`} />
+                ),
               ];
             })}
           />

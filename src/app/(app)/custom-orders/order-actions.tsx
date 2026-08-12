@@ -72,7 +72,7 @@ export function OrderActions({
           <option value="CASH">{ar ? "كاش" : "Cash"}</option>
           <option value="CARD">{ar ? "فيزا" : "Card"}</option>
           <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
-          <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+          <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
         </select>
         <Buttons ar={ar} pending={depositPending} onCancel={() => setPanel(null)} label={ar ? "استلم" : "Take"} />
         {depositState.error && <p className="text-xs text-bad">{depositState.error}</p>}
@@ -125,7 +125,7 @@ export function OrderActions({
           <option value="CASH">{ar ? "كاش" : "Cash"}</option>
           <option value="CARD">{ar ? "فيزا" : "Card"}</option>
           <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
-          <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+          <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
         </select>
         <p className="text-[11px] text-ink-400">
           {ar
@@ -159,7 +159,7 @@ export function OrderActions({
               <option value="CASH">{ar ? "كاش" : "Cash"}</option>
               <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
               <option value="CARD">{ar ? "فيزا" : "Card"}</option>
-              <option value="WALLET">{ar ? "محفظة" : "Wallet"}</option>
+              <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
             </select>
           </>
         )}
