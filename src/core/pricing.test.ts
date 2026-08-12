@@ -91,6 +91,16 @@ describe("what a discount really costs", () => {
     expect(Number(at.margin)).toBeLessThan(0);
   });
 
+  it("reports no proportion given up when there was no profit to give", () => {
+    // Priced at 700 against a 750 cost: already losing 50. Dividing by that
+    // negative base would report a *negative* share given up, reading as
+    // though discounting had helped.
+    const at = afterDiscount(700, 750, 0.2);
+
+    expect(Number(at.profit)).toBe(-190);
+    expect(at.profitGivenUp).toBeNull();
+  });
+
   it("bites harder the thinner the margin", () => {
     // Same 10% off. On a fat margin it costs a quarter of the profit; on a
     // thin one it costs three-quarters.

@@ -39,6 +39,7 @@ export const dictionary = {
   // --- the fixed costing vocabulary (rule 7) ---
   minuteRate: { ar: "تكلفة الدقيقة", en: "Minute rate" },
   transferPrice: { ar: "سعر التحويل", en: "Transfer price" },
+  brandPricing: { ar: "تسعير البراند", en: "Brand pricing" },
   transferToBrand: { ar: "الشحن للبراند", en: "Despatch to Brand" },
   goodsIn: { ar: "الوارد من المصنع", en: "Goods in" },
   exhibitions: { ar: "البازارات", en: "Bazaars" },

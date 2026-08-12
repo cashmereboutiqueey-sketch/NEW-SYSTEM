@@ -490,6 +490,44 @@ async function main() {
     // The costs that leave with a garment but are not in the transfer price.
     // Configured because they cannot be read off a single order line.
     {
+      key: "brand.expectedMonthlyUnits",
+      value: "0",
+      type: "DECIMAL" as const,
+      group: "Brand",
+      labelEn: "Expected garments sold a month",
+      labelAr: "المتوقع بيعه في الشهر (قطعة)",
+      // Absorption spreads fixed cost over the volume you expect, not over
+      // the volume you happened to do. Left at zero so a new install falls
+      // back to what the books measured rather than to a number nobody chose
+      // — but a quiet quarter measured that way loads every garment with a
+      // month's rent, so this is the field to set.
+      descriptionEn:
+        "Overhead is spread over this many garments. Zero falls back to what was actually sold, which is unreliable at low volume.",
+      descriptionAr:
+        "المصاريف الثابتة بتتوزع على العدد ده. صفر معناه النظام يحسبها على اللي اتباع فعلًا، وده بيبوظ لما البيع يكون قليل.",
+    },
+    {
+      key: "brand.targetMargin",
+      value: "0.55",
+      type: "PERCENT" as const,
+      group: "Brand",
+      labelEn: "Target margin",
+      labelAr: "هامش الربح المستهدف",
+      descriptionEn: "A margin, over the selling price — not a markup over cost.",
+      descriptionAr: "هامش على سعر البيع — مش ماركاب على التكلفة.",
+    },
+    {
+      key: "brand.minimumMargin",
+      value: "0.25",
+      type: "PERCENT" as const,
+      group: "Brand",
+      labelEn: "Minimum margin",
+      labelAr: "أقل هامش مقبول",
+      descriptionEn:
+        "The floor a discount may not go through. What the salesperson can refuse to go under.",
+      descriptionAr: "الحد اللي الخصم ما ينزلش تحته. الرقم اللي البياع يقدر يرفض ينزل عنه.",
+    },
+    {
       key: "brand.packagingPerUnit",
       value: "12",
       type: "DECIMAL" as const,

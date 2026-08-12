@@ -99,7 +99,13 @@ export function afterDiscount(
     price: discounted,
     profit,
     margin: marginOf(discounted, c),
-    profitGivenUp: fullProfit.isZero() ? null : fullProfit.minus(profit).div(fullProfit),
+    // Null when there was no profit to give up. A share of a loss is not a
+    // share of anything, and the ratio goes the wrong way round: discounting
+    // a loss-making garment would report a *negative* proportion given up, as
+    // though the discount had helped.
+    profitGivenUp: fullProfit.greaterThan(0)
+      ? fullProfit.minus(profit).div(fullProfit)
+      : null,
   };
 }
 

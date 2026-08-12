@@ -75,6 +75,9 @@ export const navigation: NavSection[] = [
       // side you are on. It promised performance and delivered master data.
       { key: "collectionPerformance", href: "/collections", phase: 5, scopes: ALL_SCOPES, icon: "trending", shipped: true },
       { key: "transferPrice", href: "/costing", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "calculator" , shipped: true },
+      // The second engine. The factory prices its cost and stops; the brand
+      // starts from the transfer price and still has a shop to pay for.
+      { key: "brandPricing", href: "/pricing", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
       { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true },
       { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" , shipped: true },
