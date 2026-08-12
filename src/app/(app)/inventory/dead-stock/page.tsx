@@ -18,11 +18,18 @@ export default async function DeadStockPage({
   searchParams: Promise<{ entity?: string }>;
 }) {
   await requirePermission("inventory:view");
-  const { locale } = await getPrefs();
+  const { locale, scope } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;
 
-  const kind = query.entity === "FACTORY" ? "FACTORY" : "BRAND";
+  // Follows the lens the person is already in rather than always showing the
+  // Brand. Standing fabric is the Factory's dead stock and it is usually the
+  // larger problem: cloth ties up more cash for longer than finished garments
+  // do, and it was unreachable from the Factory side entirely.
+  const kind =
+    query.entity === "FACTORY" || (!query.entity && scope === "FACTORY")
+      ? "FACTORY"
+      : "BRAND";
   const entity = await db.entity.findFirstOrThrow({ where: { kind } });
   const report = await deadStock(entity.id);
 
@@ -45,6 +52,29 @@ export default async function DeadStockPage({
             : `${entity.nameEn} — stock at what it actually cost, not at what it might fetch`
         }
       />
+
+      <div className="mb-4 flex items-center gap-2 text-sm">
+        <a
+          href="/inventory/dead-stock?entity=FACTORY"
+          className={
+            kind === "FACTORY"
+              ? "rounded-lg bg-ink-900 px-3 py-1.5 text-white"
+              : "rounded-lg border border-ink-300 px-3 py-1.5 text-ink-700"
+          }
+        >
+          {ar ? "المصنع — قماش وخامات" : "Factory — cloth and materials"}
+        </a>
+        <a
+          href="/inventory/dead-stock?entity=BRAND"
+          className={
+            kind === "BRAND"
+              ? "rounded-lg bg-ink-900 px-3 py-1.5 text-white"
+              : "rounded-lg border border-ink-300 px-3 py-1.5 text-ink-700"
+          }
+        >
+          {ar ? "البراند — بضاعة تامّة" : "Brand — finished garments"}
+        </a>
+      </div>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <StatTile
