@@ -110,7 +110,7 @@ async function makeGarments(
       data: {
         styleId, minuteRatePeriodId,
         minuteRate: "1.5078", fullCapacityRate: "1.2", smvMinutes: "39",
-        wasteRate: "0.1", factoryMarginPct: "0.18",
+        wasteRate: "0.1", factoryMarkupPct: "0.18",
         fabricCost: "540", trimCost: "4.06", materialCost: String(MATERIAL_PER_GARMENT),
         cmtCost: "58.8038", factoryTotalCost: String(COST_PER_GARMENT),
         transferPrice: String(options.transferPrice ?? TRANSFER_PRICE),

@@ -1,9 +1,17 @@
 import { Decimal, dec, sum, type Numeric } from "@/lib/money";
+import { markupToMargin, priceFromMarkup } from "./pricing";
 
 /**
  * Style costing and the arm's-length transfer price.
  *
- * Decision D-002: the factory margin applies to the **full** factory cost,
+ * The factory's rate is a **markup**: the transfer price is cost x (1 + rate).
+ * It is named that way because it is that, and because quoting it as a margin
+ * overstates the profit — 0.25 here earns a 20% margin, not a 25% one. Both
+ * numbers are returned so nothing downstream has to work it out again, and so
+ * the screen can show the one the accounts want next to the one the pricer
+ * typed.
+ *
+ * Decision D-002: the factory markup applies to the **full** factory cost,
  * materials included. The factory therefore earns margin on fabric as well as
  * on manufacturing, which compensates it for carrying purchasing, financing
  * and stock-holding risk — and means a fabric price rise raises the brand's
@@ -34,7 +42,8 @@ export type StyleCostInput = {
   /** Sum of the style's operation SMVs. */
   smvMinutes: Numeric;
   minuteRate: Numeric;
-  factoryMarginPct: Numeric;
+  /** Added to cost. 0.25 means the price is cost x 1.25. */
+  factoryMarkupPct: Numeric;
   /** Per-size multiplier; the base size is 1.0. */
   sizeConsumptionFactor?: Numeric;
 };
@@ -55,6 +64,12 @@ export type StyleCostResult = {
   transferPrice: Decimal;
   /** transferPrice − factoryTotalCost. What the factory earns on the garment. */
   factoryMarginValue: Decimal;
+  /**
+   * The same money as the markup, over the price instead of over the cost.
+   * This is the figure the accounts and every discount decision want; the
+   * markup is the figure the person setting the price types.
+   */
+  factoryMarginPct: Decimal;
 };
 
 export function calculateStyleCost(input: StyleCostInput): StyleCostResult {
@@ -92,7 +107,7 @@ export function calculateStyleCost(input: StyleCostInput): StyleCostResult {
   const cmtCost = dec(input.smvMinutes).times(dec(input.minuteRate));
   const factoryTotalCost = materialCost.plus(cmtCost);
 
-  const transferPrice = factoryTotalCost.times(dec(input.factoryMarginPct).plus(1));
+  const transferPrice = priceFromMarkup(factoryTotalCost, input.factoryMarkupPct);
 
   return {
     lines,
@@ -103,6 +118,7 @@ export function calculateStyleCost(input: StyleCostInput): StyleCostResult {
     factoryTotalCost,
     transferPrice,
     factoryMarginValue: transferPrice.minus(factoryTotalCost),
+    factoryMarginPct: markupToMargin(input.factoryMarkupPct),
   };
 }
 
@@ -127,10 +143,13 @@ export function idleCapacityPenalty(
  * The rule exists because a discounted internal price does not save money — it
  * just migrates the factory's loss into the brand's accounts, and the system
  * stops being able to tell you anything useful.
+ *
+ * Both sides of the comparison are markups. The floor was always stored and
+ * compared as one, so the test it applies has not changed with the renaming.
  */
 export function isBelowArmsLength(
-  factoryMarginPct: Numeric,
-  minimumMarginPct: Numeric,
+  factoryMarkupPct: Numeric,
+  minimumMarkupPct: Numeric,
 ): boolean {
-  return dec(factoryMarginPct).lessThan(dec(minimumMarginPct));
+  return dec(factoryMarkupPct).lessThan(dec(minimumMarkupPct));
 }

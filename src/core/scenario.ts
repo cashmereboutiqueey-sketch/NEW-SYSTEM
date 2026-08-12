@@ -25,7 +25,7 @@ export type Baseline = {
   retailPrice: Numeric;
   discountRate: Numeric;
   returnRate: Numeric;
-  factoryMarginPct: Numeric;
+  factoryMarkupPct: Numeric;
   brandFixedCosts: Numeric;
   marketingSpend: Numeric;
   variableSellingCostPerUnit: Numeric;
@@ -101,7 +101,7 @@ export function simulate(baseline: Baseline, assumptions: Assumptions = {}): Out
 
   const cmtPerUnit = minuteRate.times(dec(baseline.smvPerUnit));
   const factoryCostPerUnit = materialPerUnit.plus(cmtPerUnit);
-  const transferPrice = factoryCostPerUnit.times(one.plus(dec(baseline.factoryMarginPct)));
+  const transferPrice = factoryCostPerUnit.times(one.plus(dec(baseline.factoryMarkupPct)));
 
   const retailPrice = applyDelta(baseline.retailPrice, assumptions.retailPriceDeltaPct);
   const discount = pick(assumptions.discountRate, baseline.discountRate);

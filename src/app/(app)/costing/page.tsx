@@ -6,6 +6,7 @@ import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatRate, formatNumber, formatPercent } from "@/lib/money";
+import { markupToMargin } from "@/core/pricing";
 import { previewStyleCost } from "@/lib/costing";
 import { SnapshotForm } from "./snapshot-form";
 
@@ -29,7 +30,7 @@ export default async function CostingPage({
 
   const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
 
-  const [styles, ratePeriod, marginSetting, snapshots] = await Promise.all([
+  const [styles, ratePeriod, markupSetting, snapshots] = await Promise.all([
     db.style.findMany({
       where: { isActive: true },
       include: { collection: true, _count: { select: { bomLines: true, operations: true } } },
@@ -40,7 +41,7 @@ export default async function CostingPage({
       include: { fiscalPeriod: true },
       orderBy: [{ fiscalPeriod: { year: "desc" } }, { fiscalPeriod: { month: "desc" } }],
     }),
-    db.setting.findUnique({ where: { key: "factory.margin.default" } }),
+    db.setting.findUnique({ where: { key: "factory.markup.default" } }),
     db.costSnapshot.findMany({
       include: { style: true, minuteRatePeriod: { include: { fiscalPeriod: true } } },
       orderBy: { createdAt: "desc" },
@@ -134,8 +135,12 @@ export default async function CostingPage({
                 <StatTile
                   label={ar ? "سعر التحويل" : "Transfer price"}
                   value={formatMoney(preview.transferPrice, locale)}
-                  tone={preview.marginBelowArmsLength ? "bad" : "good"}
-                  hint={`${ar ? "هامش" : "margin"} ${formatPercent(preview.factoryMarginPct, locale)}`}
+                  tone={preview.markupBelowArmsLength ? "bad" : "good"}
+                  hint={
+                    ar
+                      ? `ماركاب ${formatPercent(preview.factoryMarkupPct, locale)} ← هامش ${formatPercent(preview.factoryMarginPct, locale)}`
+                      : `${formatPercent(preview.factoryMarkupPct, locale)} markup → ${formatPercent(preview.factoryMarginPct, locale)} margin`
+                  }
                 />
                 <StatTile
                   label={ar ? "منها طاقة عاطلة" : "Of which idle capacity"}
@@ -187,8 +192,9 @@ export default async function CostingPage({
                       [ar ? "تكلفة الدقيقة" : "Minute rate", formatRate(preview.ratePeriod.actualMinuteRate, locale)],
                       [ar ? "تكلفة التصنيع" : "CMT cost", formatMoney(preview.cmtCost, locale)],
                       [ar ? "إجمالي تكلفة المصنع" : "Factory total cost", formatMoney(preview.factoryTotalCost, locale)],
-                      [ar ? "هامش المصنع" : "Factory margin", formatPercent(preview.factoryMarginPct, locale)],
-                      [ar ? "قيمة الهامش" : "Margin value", formatMoney(preview.factoryMarginValue, locale)],
+                      [ar ? "الماركاب المضاف على التكلفة" : "Markup added to cost", formatPercent(preview.factoryMarkupPct, locale)],
+                      [ar ? "قيمة الربح" : "Profit value", formatMoney(preview.factoryMarginValue, locale)],
+                      [ar ? "هامش الربح من السعر" : "Margin on the price", formatPercent(preview.factoryMarginPct, locale)],
                       [ar ? "سعر التحويل" : "Transfer price", formatMoney(preview.transferPrice, locale)],
                     ].map(([k, v], i, all) => (
                       <div
@@ -227,8 +233,8 @@ export default async function CostingPage({
                     locale={locale}
                     styleId={selected.id}
                     minuteRatePeriodId={preview.ratePeriod.id}
-                    defaultMarginPct={marginSetting?.value ?? "0.18"}
-                    canOverrideMargin={can(session.role, "transfer_price:override")}
+                    defaultMarkupPct={markupSetting?.value ?? "0.18"}
+                    canOverrideMarkup={can(session.role, "transfer_price:override")}
                   />
                 </Card>
               )}
@@ -266,9 +272,14 @@ export default async function CostingPage({
                 {String(s.minuteRatePeriod.fiscalPeriod.month).padStart(2, "0")}
               </span>,
               <span key={`${s.id}-c`} className="num">{formatMoney(s.factoryTotalCost, locale)}</span>,
-              <span key={`${s.id}-m`} className="num">{formatPercent(s.factoryMarginPct, locale)}</span>,
+              <span key={`${s.id}-m`} className="num">
+                {formatPercent(s.factoryMarkupPct, locale)}
+                <span className="ms-1 text-xs text-ink-400">
+                  → {formatPercent(markupToMargin(s.factoryMarkupPct).toString(), locale)}
+                </span>
+              </span>,
               <span key={`${s.id}-t`} className="num font-medium">{formatMoney(s.transferPrice, locale)}</span>,
-              s.marginBelowArmsLength ? (
+              s.markupBelowArmsLength ? (
                 <Badge key={`${s.id}-f`} tone="bad">
                   {ar ? "تحت الحد الأدنى" : "Below floor"}
                 </Badge>

@@ -182,22 +182,27 @@ async function main() {
   // -------------------------------------------------------------------------
   const settings = [
     {
-      key: "factory.margin.default",
+      key: "factory.markup.default",
       value: "0.18",
       type: "PERCENT" as const,
       group: "Transfer pricing",
-      labelEn: "Default factory margin",
-      labelAr: "هامش المصنع الافتراضي",
-      descriptionEn: "Applied to factory total cost to produce the transfer price.",
-      descriptionAr: "يُطبَّق على إجمالي تكلفة المصنع للوصول إلى سعر التحويل.",
+      labelEn: "Default factory markup",
+      labelAr: "الماركاب الافتراضي للمصنع",
+      // A markup, not a margin: it is added to cost, so 0.18 makes the price
+      // cost x 1.18 and earns a 15.3% margin. Calling it a margin overstated
+      // every profit figure that quoted it.
+      descriptionEn:
+        "Added to factory total cost to produce the transfer price. 0.18 earns a 15.3% margin.",
+      descriptionAr:
+        "يُضاف على إجمالي تكلفة المصنع للوصول إلى سعر التحويل. ٠٫١٨ بتحقق هامش ربح ١٥٫٣٪.",
     },
     {
-      key: "factory.margin.armsLengthMinimum",
+      key: "factory.markup.armsLengthMinimum",
       value: "0.12",
       type: "PERCENT" as const,
       group: "Transfer pricing",
-      labelEn: "Arm's-length minimum margin",
-      labelAr: "الحد الأدنى للهامش العادل",
+      labelEn: "Arm's-length minimum markup",
+      labelAr: "الحد الأدنى للماركاب العادل",
       descriptionEn:
         "Below this the transfer price is flagged: the factory would be subsidising the brand.",
       descriptionAr:

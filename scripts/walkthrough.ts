@@ -181,7 +181,7 @@ const snap = await createCostSnapshot(
 );
 const frozen = await db.costSnapshot.findUniqueOrThrow({ where: { id: snap.costSnapshotId } });
 ok(`materials ${frozen.materialCost} + labour ${frozen.cmtCost} = ${frozen.factoryTotalCost}`);
-ok(`transfer price ${frozen.transferPrice} (margin ${Number(frozen.factoryMarginPct) * 100}%)`);
+ok(`transfer price ${frozen.transferPrice} (margin ${Number(frozen.factoryMarkupPct) * 100}%)`);
 if (Number(frozen.transferPrice) > 1650) {
   gap(`transfer price ${frozen.transferPrice} exceeds the 1650 retail price — the brand would lose money`);
 }

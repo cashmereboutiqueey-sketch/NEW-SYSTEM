@@ -15,14 +15,14 @@ export function SnapshotForm({
   locale,
   styleId,
   minuteRatePeriodId,
-  defaultMarginPct,
-  canOverrideMargin,
+  defaultMarkupPct,
+  canOverrideMarkup,
 }: {
   locale: Locale;
   styleId: string;
   minuteRatePeriodId: string;
-  defaultMarginPct: string;
-  canOverrideMargin: boolean;
+  defaultMarkupPct: string;
+  canOverrideMarkup: boolean;
 }) {
   const [state, formAction, pending] = useActionState(createSnapshotAction, initial);
   const ar = locale === "ar";
@@ -42,26 +42,31 @@ export function SnapshotForm({
             placeholder={ar ? "تسعير أمر إنتاج أغسطس" : "Costing for the August run"}
           />
         </div>
-        {canOverrideMargin && (
+        {canOverrideMarkup && (
           <div>
-            <label className={label} htmlFor="factoryMarginPct">
-              {ar ? "هامش مختلف (اختياري)" : "Override margin (optional)"}
+            <label className={label} htmlFor="factoryMarkupPct">
+              {ar ? "ماركاب مختلف (اختياري)" : "Override markup (optional)"}
             </label>
             <input
-              id="factoryMarginPct" name="factoryMarginPct" type="number"
+              id="factoryMarkupPct" name="factoryMarkupPct" type="number"
               step="0.01" min="0" max="1" dir="ltr" className={`${field} num`}
-              placeholder={defaultMarginPct}
+              placeholder={defaultMarkupPct}
             />
+            <p className="mt-1 text-xs text-ink-500">
+              {ar
+                ? "ده بيتزاد على التكلفة: ٠٫٢٥ يعني السعر = التكلفة × ١٫٢٥، وهامش الربح الحقيقي ٢٠٪."
+                : "Added to cost: 0.25 makes the price cost × 1.25, which earns a 20% margin."}
+            </p>
           </div>
         )}
       </div>
 
-      {canOverrideMargin && (
+      {canOverrideMarkup && (
         <div>
           <label className={label} htmlFor="approvalNote">
             {ar
-              ? "مبرر الاعتماد (مطلوب إذا كان الهامش تحت الحد الأدنى)"
-              : "Approval note (required if the margin is below the floor)"}
+              ? "مبرر الاعتماد (مطلوب إذا كان الماركاب تحت الحد الأدنى)"
+              : "Approval note (required if the markup is below the floor)"}
           </label>
           <input id="approvalNote" name="approvalNote" className={field} />
         </div>

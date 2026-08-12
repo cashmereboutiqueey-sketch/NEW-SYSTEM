@@ -122,9 +122,9 @@ describe("previewing a style cost", () => {
 
   it("flags a margin below the arm's-length floor", async () => {
     const p = await previewStyleCost({
-      styleId, minuteRatePeriodId: rateperiodId, factoryMarginPct: "0.05",
+      styleId, minuteRatePeriodId: rateperiodId, factoryMarkupPct: "0.05",
     });
-    expect(p.marginBelowArmsLength).toBe(true);
+    expect(p.markupBelowArmsLength).toBe(true);
   });
 
   it("refuses a period with no usable rate", async () => {
@@ -226,7 +226,7 @@ describe("creating a snapshot", () => {
   it("blocks a below-floor margin unless it is explicitly approved", async () => {
     await expect(
       createCostSnapshot(
-        { styleId, minuteRatePeriodId: rateperiodId, factoryMarginPct: "0.04" }, ctx,
+        { styleId, minuteRatePeriodId: rateperiodId, factoryMarkupPct: "0.04" }, ctx,
       ),
     ).rejects.toThrow(/below the arm's-length minimum/i);
   });
@@ -234,7 +234,7 @@ describe("creating a snapshot", () => {
   it("allows a below-floor margin with an approval note and records it", async () => {
     const result = await createCostSnapshot(
       {
-        styleId, minuteRatePeriodId: rateperiodId, factoryMarginPct: "0.04",
+        styleId, minuteRatePeriodId: rateperiodId, factoryMarkupPct: "0.04",
         approvalNote: "Owner-approved introductory price for a launch collection",
       },
       ctx,
@@ -244,7 +244,7 @@ describe("creating a snapshot", () => {
     const snap = await db.costSnapshot.findUniqueOrThrow({
       where: { id: result.costSnapshotId },
     });
-    expect(snap.marginBelowArmsLength).toBe(true);
+    expect(snap.markupBelowArmsLength).toBe(true);
     expect(snap.approvalNote).toMatch(/introductory/);
 
     const audit = await db.auditLog.findFirstOrThrow({

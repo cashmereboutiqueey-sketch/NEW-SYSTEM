@@ -211,9 +211,9 @@ async function supplierPriceHike(p: Params): Promise<Finding[]> {
     }));
 }
 
-async function marginBelowArmsLength(p: Params): Promise<Finding[]> {
+async function markupBelowArmsLength(p: Params): Promise<Finding[]> {
   const snapshots = await db.costSnapshot.findMany({
-    where: { marginBelowArmsLength: true },
+    where: { markupBelowArmsLength: true },
     include: { style: true },
     orderBy: { createdAt: "desc" },
     take: 50,
@@ -225,11 +225,11 @@ async function marginBelowArmsLength(p: Params): Promise<Finding[]> {
     dedupeKey: `arms-length:${s.id}`,
     titleEn: `${s.style.code} was costed below arm's length`,
     titleAr: `${s.style.nameAr}: سعر التحويل أقل من العادل`,
-    bodyEn: `Margin of ${pct(s.factoryMarginPct)} against a floor of ${pct(minimum)}. Discounting the transfer price does not save money — it moves the factory's loss into the Brand's books and stops the group view telling you anything.`,
-    bodyAr: `الهامش ${pct(s.factoryMarginPct)} والحد الأدنى ${pct(minimum)}. تخفيض سعر التحويل مابيوفرش حاجة — بينقل خسارة المصنع لدفاتر البراند وبيخلّي حسابات المجموعة مش بتقول حاجة مفيدة.`,
+    bodyEn: `Margin of ${pct(s.factoryMarkupPct)} against a floor of ${pct(minimum)}. Discounting the transfer price does not save money — it moves the factory's loss into the Brand's books and stops the group view telling you anything.`,
+    bodyAr: `الهامش ${pct(s.factoryMarkupPct)} والحد الأدنى ${pct(minimum)}. تخفيض سعر التحويل مابيوفرش حاجة — بينقل خسارة المصنع لدفاتر البراند وبيخلّي حسابات المجموعة مش بتقول حاجة مفيدة.`,
     subjectType: "CostSnapshot",
     subjectId: s.id,
-    metrics: { margin: s.factoryMarginPct.toString(), minimum },
+    metrics: { margin: s.factoryMarkupPct.toString(), minimum },
   }));
 }
 
@@ -341,7 +341,7 @@ const EVALUATORS: Record<string, (p: Params) => Promise<Finding[]>> = {
   LOW_STOCK: lowStock,
   DEAD_STOCK: deadStockRule,
   SUPPLIER_PRICE_HIKE: supplierPriceHike,
-  MARGIN_BELOW_ARMS_LENGTH: marginBelowArmsLength,
+  MARGIN_BELOW_ARMS_LENGTH: markupBelowArmsLength,
   CASH_SHORTFALL: cashShortfall,
   REWORK_RATE: reworkRate,
   LINE_EFFICIENCY_DROP: lineEfficiencyDrop,

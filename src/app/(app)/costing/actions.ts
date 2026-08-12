@@ -18,7 +18,7 @@ export async function createSnapshotAction(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    const margin = String(formData.get("factoryMarginPct") ?? "").trim();
+    const margin = String(formData.get("factoryMarkupPct") ?? "").trim();
     const approvalNote = String(formData.get("approvalNote") ?? "").trim();
 
     // Overriding the margin is a separate, owner-only capability from simply
@@ -31,7 +31,7 @@ export async function createSnapshotAction(
       {
         styleId: String(formData.get("styleId") ?? ""),
         minuteRatePeriodId: String(formData.get("minuteRatePeriodId") ?? ""),
-        factoryMarginPct: margin || undefined,
+        factoryMarkupPct: margin || undefined,
         reason: String(formData.get("reason") ?? "") || undefined,
         approvalNote: approvalNote || undefined,
       },

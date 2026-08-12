@@ -102,7 +102,7 @@ export async function buildBaseline(fiscalPeriodId?: string): Promise<{
           "brand.packagingPerUnit",
           "brand.shippingPerUnit",
           "brand.returnRate",
-          "factory.margin.default",
+          "factory.markup.default",
         ],
       },
     },
@@ -126,9 +126,9 @@ export async function buildBaseline(fiscalPeriodId?: string): Promise<{
       retailPrice,
       discountRate,
       returnRate: setting("brand.returnRate", "0.08"),
-      factoryMarginPct: snapshot
-        ? dec(snapshot.factoryMarginPct)
-        : setting("factory.margin.default", "0.18"),
+      factoryMarkupPct: snapshot
+        ? dec(snapshot.factoryMarkupPct)
+        : setting("factory.markup.default", "0.18"),
       brandFixedCosts: dec(brandFixedRows[0]?.total ?? 0),
       marketingSpend: dec(marketing._sum.amount ?? 0),
       variableSellingCostPerUnit: setting("brand.packagingPerUnit", "0").plus(

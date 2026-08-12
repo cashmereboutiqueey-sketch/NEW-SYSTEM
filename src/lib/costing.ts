@@ -7,6 +7,7 @@ import {
   isBelowArmsLength,
   type BomLineInput,
 } from "@/core/style-costing";
+import { markupToMargin } from "@/core/pricing";
 import { dec } from "./money";
 
 /**
@@ -40,7 +41,7 @@ async function settingValue(key: string, fallback: string): Promise<string> {
 export async function previewStyleCost(input: {
   styleId: string;
   minuteRatePeriodId: string;
-  factoryMarginPct?: string;
+  factoryMarkupPct?: string;
 }) {
   const style = await db.style.findUnique({
     where: { id: input.styleId },
@@ -68,9 +69,9 @@ export async function previewStyleCost(input: {
     );
   }
 
-  const defaultMargin = await settingValue("factory.margin.default", "0.18");
-  const minimumMargin = await settingValue("factory.margin.armsLengthMinimum", "0.12");
-  const factoryMarginPct = input.factoryMarginPct ?? defaultMargin;
+  const defaultMarkup = await settingValue("factory.markup.default", "0.18");
+  const minimumMarkup = await settingValue("factory.markup.armsLengthMinimum", "0.12");
+  const factoryMarkupPct = input.factoryMarkupPct ?? defaultMarkup;
 
   const bomLines: BomLineInput[] = style.bomLines.map((l) => ({
     materialId: l.material.id,
@@ -97,16 +98,18 @@ export async function previewStyleCost(input: {
     plannedWasteRate: style.plannedWasteRate.toString(),
     smvMinutes,
     minuteRate: ratePeriod.actualMinuteRate.toString(),
-    factoryMarginPct,
+    factoryMarkupPct,
   });
 
   return {
     style,
     ratePeriod,
     smvMinutes,
-    factoryMarginPct,
-    minimumMargin,
-    marginBelowArmsLength: isBelowArmsLength(factoryMarginPct, minimumMargin),
+    factoryMarkupPct,
+    minimumMarkup,
+    /** The floor expressed the way the accounts read it. */
+    minimumMarginPct: markupToMargin(minimumMarkup),
+    markupBelowArmsLength: isBelowArmsLength(factoryMarkupPct, minimumMarkup),
     idlePenalty: idleCapacityPenalty(
       ratePeriod.actualMinuteRate.toString(),
       ratePeriod.fullCapacityMinuteRate.toString(),
@@ -127,7 +130,7 @@ export async function createCostSnapshot(
   input: {
     styleId: string;
     minuteRatePeriodId: string;
-    factoryMarginPct?: string;
+    factoryMarkupPct?: string;
     reason?: string;
     approvalNote?: string;
   },
@@ -135,9 +138,9 @@ export async function createCostSnapshot(
 ): Promise<{ costSnapshotId: string; transferPrice: string; belowFloor: boolean }> {
   const preview = await previewStyleCost(input);
 
-  if (preview.marginBelowArmsLength && !input.approvalNote?.trim()) {
+  if (preview.markupBelowArmsLength && !input.approvalNote?.trim()) {
     throw new CostingError(
-      `Margin ${(Number(preview.factoryMarginPct) * 100).toFixed(1)}% is below the arm's-length minimum of ${(Number(preview.minimumMargin) * 100).toFixed(1)}%. Record an approval note to proceed.`,
+      `Markup ${(Number(preview.factoryMarkupPct) * 100).toFixed(1)}% is below the arm's-length minimum of ${(Number(preview.minimumMarkup) * 100).toFixed(1)}%. Record an approval note to proceed.`,
     );
   }
 
@@ -150,7 +153,7 @@ export async function createCostSnapshot(
         fullCapacityRate: preview.ratePeriod.fullCapacityMinuteRate,
         smvMinutes: preview.smvMinutes,
         wasteRate: preview.style.plannedWasteRate,
-        factoryMarginPct: preview.factoryMarginPct,
+        factoryMarkupPct: preview.factoryMarkupPct,
         fabricCost: preview.fabricCost.toString(),
         trimCost: preview.trimCost.toString(),
         materialCost: preview.materialCost.toString(),
@@ -158,8 +161,8 @@ export async function createCostSnapshot(
         factoryTotalCost: preview.factoryTotalCost.toString(),
         transferPrice: preview.transferPrice.toString(),
         idleCapacityPenalty: preview.idlePenalty.toString(),
-        marginBelowArmsLength: preview.marginBelowArmsLength,
-        approvedByUserId: preview.marginBelowArmsLength ? ctx.userId : null,
+        markupBelowArmsLength: preview.markupBelowArmsLength,
+        approvedByUserId: preview.markupBelowArmsLength ? ctx.userId : null,
         approvalNote: input.approvalNote ?? null,
         reason: input.reason ?? null,
         lines: {
@@ -181,7 +184,7 @@ export async function createCostSnapshot(
     });
 
     await writeAudit(tx, {
-      action: preview.marginBelowArmsLength
+      action: preview.markupBelowArmsLength
         ? "COST_SNAPSHOT_CREATED_BELOW_FLOOR"
         : "COST_SNAPSHOT_CREATED",
       entityName: "CostSnapshot",
@@ -192,8 +195,9 @@ export async function createCostSnapshot(
         factoryTotalCost: preview.factoryTotalCost.toString(),
         minuteRate: preview.ratePeriod.actualMinuteRate.toString(),
         minuteRatePeriod: `${preview.ratePeriod.fiscalPeriod.year}-${String(preview.ratePeriod.fiscalPeriod.month).padStart(2, "0")}`,
-        marginPct: preview.factoryMarginPct,
-        belowFloor: preview.marginBelowArmsLength,
+        markupPct: preview.factoryMarkupPct,
+        marginPct: preview.factoryMarginPct.toString(),
+        belowFloor: preview.markupBelowArmsLength,
       },
       ctx: { ...ctx, reason: input.approvalNote ?? input.reason ?? null },
     });
@@ -201,7 +205,7 @@ export async function createCostSnapshot(
     return {
       costSnapshotId: snapshot.id,
       transferPrice: snapshot.transferPrice.toString(),
-      belowFloor: preview.marginBelowArmsLength,
+      belowFloor: preview.markupBelowArmsLength,
     };
   });
 }

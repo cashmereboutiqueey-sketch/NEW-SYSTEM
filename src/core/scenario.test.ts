@@ -19,7 +19,7 @@ const baseline: Baseline = {
   retailPrice: 1_650,
   discountRate: 0.1,
   returnRate: 0.08,
-  factoryMarginPct: 0.18,
+  factoryMarkupPct: 0.18,
   brandFixedCosts: 180_000,
   marketingSpend: 120_000,
   variableSellingCostPerUnit: 57,

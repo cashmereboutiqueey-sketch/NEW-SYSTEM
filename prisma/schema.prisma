@@ -1185,7 +1185,9 @@ model CostSnapshot {
   fullCapacityRate Decimal @db.Decimal(18, 8)
   smvMinutes       Decimal @db.Decimal(18, 4)
   wasteRate        Decimal @db.Decimal(9, 6)
-  factoryMarginPct Decimal @db.Decimal(9, 6)
+  /// A markup, not a margin: the transfer price is `factoryTotalCost x (1 + this)`.
+  /// 0.25 here earns a 20% margin. Both are reported; only one is stored.
+  factoryMarkupPct Decimal @db.Decimal(9, 6)
 
   /// Frozen outputs.
   fabricCost         Decimal @db.Decimal(18, 4)
@@ -1197,7 +1199,7 @@ model CostSnapshot {
   /// (actualMinuteRate − fullCapacityMinuteRate) × smvMinutes
   idleCapacityPenalty Decimal @db.Decimal(18, 4)
 
-  marginBelowArmsLength Boolean @default(false)
+  markupBelowArmsLength Boolean @default(false)
   approvedByUserId      String?
   approvalNote          String?
 

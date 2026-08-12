@@ -136,7 +136,7 @@ async function produce(
     data: {
       styleId: style, minuteRatePeriodId,
       minuteRate: "1.5078", fullCapacityRate: "1.2", smvMinutes: "39",
-      wasteRate: "0.1", factoryMarginPct: "0.25",
+      wasteRate: "0.1", factoryMarkupPct: "0.25",
       fabricCost: String(unitCost - 60), trimCost: "10",
       materialCost: String(unitCost - 50),
       cmtCost: "50", factoryTotalCost: String(unitCost),

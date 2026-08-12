@@ -35,7 +35,7 @@ const base = {
   plannedWasteRate: "0.08",
   smvMinutes: "33",
   minuteRate: "2.3705",
-  factoryMarginPct: "0.18",
+  factoryMarkupPct: "0.18",
 };
 
 describe("style costing", () => {
