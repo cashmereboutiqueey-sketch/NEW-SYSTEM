@@ -63,17 +63,24 @@ const PAGES: { path: string; label: string; wants: string[] }[] = [
   {
     path: "/collections?entity=FACTORY",
     label: "collection performance as the factory",
+    // The highlights only exist when something has been made or sold. After a
+    // test run has emptied the orders the page correctly shows its empty
+    // card, and asserting the highlights would fail the page for being right.
     wants: [
-      "أداء التشكيلة", "أحسن موديل",
-      ...(factorySide[0] ? [formatMoney(factorySide[0].revenue.toString())] : []),
+      "أداء التشكيلة",
+      ...(factorySide[0]
+        ? ["أحسن موديل", formatMoney(factorySide[0].revenue.toString())]
+        : ["مافيش أرقام لسه"]),
     ],
   },
   {
     path: "/collections?entity=BRAND",
     label: "collection performance as the brand",
     wants: [
-      "أداء التشكيلة", "أحسن موديل",
-      ...(brandSide[0] ? [formatMoney(brandSide[0].revenue.toString())] : []),
+      "أداء التشكيلة",
+      ...(brandSide[0]
+        ? ["أحسن موديل", formatMoney(brandSide[0].revenue.toString())]
+        : ["مافيش أرقام لسه"]),
     ],
   },
   {
