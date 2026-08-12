@@ -1,6 +1,10 @@
+import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { scrapReport } from "@/lib/factory-floor";
+import { scrappableMaterials, openRuns } from "@/lib/scrap";
+import { ScrapForm } from "./scrap-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 
@@ -13,11 +17,17 @@ import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
  * what it might have been worth.
  */
 export default async function ScrapPage() {
-  await requirePermission("production:view");
+  const session = await requirePermission("production:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const report = await scrapReport();
+  const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
+  const [report, sources, runs] = await Promise.all([
+    scrapReport(),
+    scrappableMaterials(factory.id),
+    openRuns(),
+  ]);
+  const mayRecord = can(session.role, "production:create");
 
   const dispositionLabel: Record<string, string> = ar
     ? {
@@ -47,6 +57,36 @@ export default async function ScrapPage() {
             : "Offcuts at book value and what came back from them — the last six months"
         }
       />
+
+      {mayRecord && (
+        <div className="mb-5">
+          <Card
+            title={ar ? "سجّل قصاصات" : "Record scrap"}
+            description={
+              ar
+                ? "القيمة مش بتتكتب — بتتحسب من تكلفة القماش الفعلية بالـ FIFO، عشان المخزون في الدفاتر يفضل مطابق للمخزون على الأرض."
+                : "The value is never typed: it is the cloth's actual FIFO cost, so the inventory account keeps agreeing with the inventory."
+            }
+          >
+            <ScrapForm
+              ar={ar}
+              entityId={factory.id}
+              sources={sources.map((s) => ({
+                materialId: s.materialId,
+                locationId: s.locationId,
+                code: s.code,
+                nameAr: s.nameAr,
+                nameEn: s.nameEn,
+                uom: s.uom,
+                onHand: s.onHand.toString(),
+                locationAr: s.locationAr,
+                locationEn: s.locationEn,
+              }))}
+              runs={runs}
+            />
+          </Card>
+        </div>
+      )}
 
       {report.rows.length === 0 ? (
         <Card>

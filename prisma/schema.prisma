@@ -1134,8 +1134,13 @@ model StyleOperation {
   nameAr     String
   smvMinutes Decimal         @db.Decimal(18, 4)
   machineType String?
+  /// Which stage this operation is part of. Line efficiency needs it: the
+  /// minutes a stage earns are qtyOut times the standard minutes for that
+  /// stage, and without it there is no way to say what those minutes are.
+  stage      ProductionStage?
 
   @@unique([styleId, sequence])
+  @@index([styleId, stage])
   @@map("style_operations")
 }
 

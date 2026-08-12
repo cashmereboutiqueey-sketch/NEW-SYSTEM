@@ -249,6 +249,14 @@ export const operationSchema = z.object({
   smvMinutes: z.coerce.number().positive("Standard minutes must be greater than zero."),
   lineId: z.string().min(1).nullable().optional(),
   machineType: z.string().nullable().optional(),
+  /**
+   * Which stage of the run this operation belongs to.
+   *
+   * Optional, because a style costed before stages existed is still a valid
+   * style. But without it the operation contributes no standard minutes to any
+   * stage, so the floor cannot be measured on the work it covers.
+   */
+  stage: z.enum(["CUTTING", "SEWING", "FINISHING", "QC", "PACKING"]).nullable().optional(),
 });
 
 /**
@@ -279,6 +287,7 @@ export async function addOperation(
         smvMinutes: dec(data.smvMinutes).toString(),
         lineId: data.lineId ?? null,
         machineType: data.machineType ?? null,
+        stage: data.stage ?? null,
       },
     });
 

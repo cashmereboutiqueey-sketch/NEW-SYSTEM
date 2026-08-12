@@ -1,6 +1,9 @@
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { lineEfficiencyReport } from "@/lib/factory-floor";
+import { loggableRuns, activeLines } from "@/lib/stage-logs";
+import { StageForm } from "./stage-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatNumber, formatPercent, dec, safeDiv } from "@/lib/money";
 
@@ -12,11 +15,16 @@ import { formatNumber, formatPercent, dec, safeDiv } from "@/lib/money";
  * finishing" tells somebody where to stand tomorrow morning.
  */
 export default async function LineEfficiencyPage() {
-  await requirePermission("production:view");
+  const session = await requirePermission("production:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const report = await lineEfficiencyReport();
+  const [report, runs, lines] = await Promise.all([
+    lineEfficiencyReport(),
+    loggableRuns(),
+    activeLines(),
+  ]);
+  const mayLog = can(session.role, "production:create");
   const overall = safeDiv(report.totals.earned, report.totals.clocked);
 
   const stageLabel: Record<string, string> = ar
@@ -56,6 +64,21 @@ export default async function LineEfficiencyPage() {
             : "Earned minutes over minutes paid for — the last 90 days"
         }
       />
+
+      {mayLog && (
+        <div className="mb-5">
+          <Card
+            title={ar ? "سجّل وردية" : "Log a shift"}
+            description={
+              ar
+                ? "الكفاءة مش بتتكتب — بتتحسب من الخارج × الدقيقة المعيارية للمرحلة ÷ الدقائق المدفوعة."
+                : "Efficiency is never typed: it is output × the stage's standard minutes ÷ minutes clocked."
+            }
+          >
+            <StageForm ar={ar} runs={runs} lines={lines} />
+          </Card>
+        </div>
+      )}
 
       {report.recent.length === 0 ? (
         <Card>

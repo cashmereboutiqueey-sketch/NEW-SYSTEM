@@ -300,6 +300,23 @@ export default async function StylesPage({
                         options: lines.map((l) => ({ value: l.id, label: name(l) })),
                         emptyLabel: ar ? "— أي خط —" : "— any line —",
                       },
+                      {
+                        // The floor is measured per stage: the minutes a stage
+                        // earns are output times the standard minutes for that
+                        // stage. An operation with no stage contributes to no
+                        // stage's standard, so the line efficiency screen can
+                        // never report on the work it covers.
+                        kind: "select", name: "stage",
+                        labelEn: "Stage", labelAr: "المرحلة",
+                        options: [
+                          { value: "CUTTING", label: ar ? "قص" : "Cutting" },
+                          { value: "SEWING", label: ar ? "خياطة" : "Sewing" },
+                          { value: "FINISHING", label: ar ? "تشطيب" : "Finishing" },
+                          { value: "QC", label: ar ? "جودة" : "QC" },
+                          { value: "PACKING", label: ar ? "تعبئة" : "Packing" },
+                        ],
+                        emptyLabel: ar ? "— من غير مرحلة —" : "— no stage —",
+                      },
                     ]}
                   />
                 </div>

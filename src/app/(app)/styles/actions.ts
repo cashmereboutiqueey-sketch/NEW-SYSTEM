@@ -122,10 +122,15 @@ export async function addOperationAction(
         smvMinutes: Number(formData.get("smvMinutes") ?? 0),
         lineId: (formData.get("lineId") as string) || null,
         machineType: (formData.get("machineType") as string) || null,
+        // Without a stage the operation adds no standard minutes to any stage,
+        // so the floor cannot be measured on the work it covers.
+        stage: ((formData.get("stage") as string) || null) as
+          "CUTTING" | "SEWING" | "FINISHING" | "QC" | "PACKING" | null,
       },
       { userId: session.userId },
     );
     revalidatePath("/styles");
+    revalidatePath("/production/lines");
     return { success: `${op.nameEn} added at ${op.smvMinutes} minutes.` };
   } catch (error) {
     return { error: toMessage(error) };
