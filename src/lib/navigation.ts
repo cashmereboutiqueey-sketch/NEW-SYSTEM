@@ -70,7 +70,10 @@ export const navigation: NavSection[] = [
   {
     key: "production",
     items: [
-      { key: "collectionPerformance", href: "/styles", phase: 2, scopes: ALL_SCOPES, icon: "shirt" , shipped: true },
+      { key: "styles", href: "/styles", phase: 2, scopes: ALL_SCOPES, icon: "shirt" , shipped: true },
+      // Pointed at /styles, which is the design screen and identical whichever
+      // side you are on. It promised performance and delivered master data.
+      { key: "collectionPerformance", href: "/collections", phase: 5, scopes: ALL_SCOPES, icon: "trending", shipped: true },
       { key: "transferPrice", href: "/costing", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "calculator" , shipped: true },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
       { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true },

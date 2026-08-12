@@ -639,3 +639,210 @@ export async function breakEvenByStyle(entityId: string, monthsBack = 3) {
     rows: rows.sort((a, b) => Number(b.contributionMargin.minus(a.contributionMargin))),
   };
 }
+
+/**
+ * How a collection did — through the eyes of whichever side is asking.
+ *
+ * The two sides of the house own the same garment at different moments and
+ * they do not mean the same thing by "how did it do":
+ *
+ *   The Factory made it. Its revenue on the collection is what it invoiced the
+ *   Brand at transfer price; its cost is what the run actually cost to cut and
+ *   sew. It cares how many were produced, and how the cost per piece moved
+ *   between runs.
+ *
+ *   The Brand bought it at that transfer price — so the Factory's revenue is
+ *   the Brand's cost — and sold it in the shop. Its revenue is the till, its
+ *   margin is retail less transfer, and what is left unsold is its problem
+ *   rather than the Factory's.
+ *
+ * Reporting one set of numbers for both is how a collection ends up looking
+ * profitable on a margin the Factory earned and the Brand paid for. Both are
+ * true; they are answers to different questions.
+ */
+export async function collectionPerformance(
+  entityId: string,
+  kind: "FACTORY" | "BRAND",
+) {
+  const [collections, transfers] = await Promise.all([
+    db.collection.findMany({
+      orderBy: [{ year: "desc" }, { code: "asc" }],
+      include: {
+        styles: {
+          include: {
+            productionOrders: { where: { status: "COMPLETED" } },
+            variants: {
+              include: {
+                inventoryLots: { where: { entityId, remainingQty: { gt: 0 } } },
+                salesOrderLines: { include: { salesOrder: true } },
+              },
+            },
+          },
+        },
+      },
+    }),
+    // What crossed the house, read separately rather than nested. A movement
+    // hangs off the lot it landed in, and that lot is usually sold out by the
+    // time anybody asks how the collection did — nesting it under the stock
+    // still on hand would report the Factory as having transferred nothing.
+    db.inventoryMovement.findMany({
+      where: { referenceType: "TRANSFER_INVOICE", type: "RECEIPT" },
+      select: {
+        quantity: true,
+        totalCost: true,
+        lot: {
+          select: {
+            transferMarginPerUnit: true,
+            variant: { select: { styleId: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const transferredByStyle = new Map<
+    string,
+    { units: Decimal; revenue: Decimal; margin: Decimal }
+  >();
+  for (const movement of transfers) {
+    const styleId = movement.lot.variant?.styleId;
+    if (!styleId) continue;
+    const at = transferredByStyle.get(styleId) ?? {
+      units: dec(0), revenue: dec(0), margin: dec(0),
+    };
+    at.units = at.units.plus(dec(movement.quantity));
+    at.revenue = at.revenue.plus(dec(movement.totalCost));
+    at.margin = at.margin.plus(
+      dec(movement.lot.transferMarginPerUnit ?? 0).times(dec(movement.quantity)),
+    );
+    transferredByStyle.set(styleId, at);
+  }
+
+  const rows = collections.map((collection) => {
+    const styles = collection.styles.map((style) => {
+      const produced = style.productionOrders.reduce((n, o) => n + (o.actualQty ?? 0), 0);
+      const productionCost = style.productionOrders.reduce(
+        (t, o) => t.plus(dec(o.actualTotalCost ?? o.plannedTotalCost ?? 0)),
+        dec(0),
+      );
+
+      let soldUnits = 0;
+      let retailRevenue = dec(0);
+      let retailCost = dec(0);
+      let onHand = dec(0);
+      let onHandValue = dec(0);
+
+      const moved = transferredByStyle.get(style.id);
+      const transferredUnits = moved?.units ?? dec(0);
+      const transferRevenue = moved?.revenue ?? dec(0);
+      const transferMargin = moved?.margin ?? dec(0);
+
+      for (const variant of style.variants) {
+        for (const line of variant.salesOrderLines) {
+          if (line.salesOrder.entityId !== entityId) continue;
+          soldUnits += line.quantity;
+          retailRevenue = retailRevenue.plus(dec(line.lineTotal));
+          retailCost = retailCost.plus(dec(line.lineCost));
+        }
+        for (const lot of variant.inventoryLots) {
+          onHand = onHand.plus(dec(lot.remainingQty));
+          onHandValue = onHandValue.plus(dec(lot.remainingQty).times(dec(lot.unitCost)));
+        }
+      }
+
+      // What this side earned, and what it gave up to earn it.
+      const revenue = kind === "FACTORY" ? transferRevenue : retailRevenue;
+      const cost =
+        kind === "FACTORY" ? transferRevenue.minus(transferMargin) : retailCost;
+      const units = kind === "FACTORY" ? Number(transferredUnits) : soldUnits;
+      const grossMargin = revenue.minus(cost);
+
+      // What this side had to work with, which is not the same number on both.
+      // The Factory answers for everything it made. The Brand answers only for
+      // what actually reached it — judging the shop on garments that never
+      // arrived reports a sell-through failure against whoever lost them.
+      const base = kind === "FACTORY" ? produced : Number(transferredUnits);
+
+      return {
+        id: style.id,
+        code: style.code,
+        nameAr: style.nameAr,
+        nameEn: style.nameEn,
+        imageName: style.imageName,
+        retailPrice: style.retailPrice ? dec(style.retailPrice) : null,
+        produced,
+        productionCost,
+        // Cost per piece off the line: the number that says whether the second
+        // run of a style was cheaper than the first.
+        costPerPiece: produced > 0 ? productionCost.div(produced) : null,
+        transferred: transferredUnits,
+        base,
+        units,
+        revenue,
+        cost,
+        grossMargin,
+        marginPct: safeDiv(grossMargin, revenue),
+        onHand,
+        onHandValue,
+        sellThrough: sellThrough(units, base),
+      };
+    });
+
+    const sum = (pick: (s: (typeof styles)[number]) => Decimal) =>
+      styles.reduce((t, s) => t.plus(pick(s)), dec(0));
+
+    const revenue = sum((s) => s.revenue);
+    const cost = sum((s) => s.cost);
+    const grossMargin = revenue.minus(cost);
+    const produced = styles.reduce((n, s) => n + s.produced, 0);
+    const units = styles.reduce((n, s) => n + s.units, 0);
+    const base = styles.reduce((n, s) => n + s.base, 0);
+
+    // Best is by what it earned, not by what it sold: twenty cheap pieces
+    // moving is not a better result than four expensive ones, and ranking on
+    // units is how a collection gets repeated on its least profitable style.
+    const traded = styles.filter((s) => s.units > 0 || s.produced > 0);
+    const best = [...traded].sort((a, b) => Number(b.grossMargin.minus(a.grossMargin)))[0] ?? null;
+    const mostProduced = [...traded].sort((a, b) => b.produced - a.produced)[0] ?? null;
+    const worst =
+      [...traded]
+        .filter((s) => s.base > 0)
+        .sort((a, b) =>
+          Number((a.sellThrough ?? dec(0)).minus(b.sellThrough ?? dec(0))),
+        )[0] ?? null;
+
+    return {
+      id: collection.id,
+      code: collection.code,
+      nameAr: collection.nameAr,
+      nameEn: collection.nameEn,
+      season: collection.season,
+      year: collection.year,
+      isActive: collection.isActive,
+      styleCount: collection.styles.length,
+      produced,
+      units,
+      /** What this side had to sell on: made, for the Factory; received, for the Brand. */
+      base,
+      transferred: sum((s) => s.transferred),
+      revenue,
+      cost,
+      grossMargin,
+      marginPct: safeDiv(grossMargin, revenue),
+      onHand: sum((s) => s.onHand),
+      onHandValue: sum((s) => s.onHandValue),
+      productionCost: sum((s) => s.productionCost),
+      sellThrough: sellThrough(units, base),
+      best,
+      mostProduced,
+      worst,
+      styles: [...styles].sort((a, b) => Number(b.grossMargin.minus(a.grossMargin))),
+    };
+  });
+
+  // Collections nobody has made or sold anything from are noise on a report
+  // about performance. They are still reachable from the styles screen.
+  return rows
+    .filter((c) => c.units > 0 || c.produced > 0 || c.onHandValue.greaterThan(0))
+    .sort((a, b) => Number(b.grossMargin.minus(a.grossMargin)));
+}
