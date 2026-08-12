@@ -15,6 +15,8 @@ import {
 } from "./actions";
 import { VariantForm } from "./variant-form";
 import { PhotoForm } from "./photo-form";
+import { AddInline } from "@/components/add-inline";
+import { addColourAction, addSizeAction } from "../master-data-actions";
 import { imageUrl } from "@/lib/images";
 
 /**
@@ -313,6 +315,49 @@ export default async function StylesPage({
           >
             {mayDesign && (
               <div className="mb-4 border-b border-ink-100 pb-4">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-ink-500">
+                    {ar ? "اللون أو المقاس مش في القايمة؟" : "Colour or size not listed?"}
+                  </span>
+                  <AddInline
+                    ar={ar}
+                    title={ar ? "لون جديد" : "New colour"}
+                    action={addColourAction}
+                    label={ar ? "+ لون" : "+ Colour"}
+                    fields={[
+                      { name: "nameAr", label: ar ? "الاسم" : "Name", required: true, half: true },
+                      { name: "code", label: ar ? "كود" : "Code", required: true, half: true, placeholder: "NVY" },
+                      {
+                        name: "hex",
+                        label: ar ? "درجة اللون" : "Swatch",
+                        placeholder: "#1b2a4a",
+                        hint: ar ? "اختياري — بيظهر للبياع على الكاشير" : "Optional — shown at the till",
+                      },
+                    ]}
+                  />
+                  <AddInline
+                    ar={ar}
+                    title={ar ? "مقاس جديد" : "New size"}
+                    action={addSizeAction}
+                    label={ar ? "+ مقاس" : "+ Size"}
+                    fields={[
+                      { name: "code", label: ar ? "المقاس" : "Size", required: true, half: true, placeholder: "XXL" },
+                      {
+                        name: "consumptionFactor",
+                        label: ar ? "معامل القماش" : "Cloth factor",
+                        type: "number",
+                        step: "0.01",
+                        min: "0.01",
+                        defaultValue: "1",
+                        half: true,
+                        hint: ar
+                          ? "١ = المقاس الأساسي. XL بياخد قماش أكتر فعلاً."
+                          : "1 is the base size. An XL genuinely uses more.",
+                      },
+                    ]}
+                  />
+                </div>
+
                 <VariantForm
                   locale={locale}
                   styleId={selected.id}

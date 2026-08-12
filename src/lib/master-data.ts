@@ -367,3 +367,211 @@ export async function createCustomer(input: CustomerInput, ctx: AuditContext) {
     return { customer, possibleDuplicate };
   });
 }
+
+// ---------------------------------------------------------- the small lists
+//
+// Cost categories, colours, sizes and units were seeded once and had no way in
+// after that. Every one of them blocks something real: no colour means no new
+// variant, no cost category means an expense that has to be filed under
+// roughly the right heading, and "roughly" is how a cost pool stops meaning
+// anything. They are here rather than on a settings page because the moment
+// somebody needs one is the moment they are filling in a form that lacks it.
+
+export const costCategorySchema = z.object({
+  entityId: z.string().min(1),
+  code: z.string().trim().min(1).max(40),
+  nameEn: z.string().trim().min(1),
+  nameAr: z.string().trim().min(1),
+  behaviour: z.enum(["FIXED", "VARIABLE", "SEMI_VARIABLE"]).default("FIXED"),
+  /** Whether this cost belongs in the minute-rate numerator. */
+  includeInMinuteRate: z.boolean().default(false),
+  /** Whether it belongs in the brand fixed pool that break-even reads. */
+  includeInBrandFixedPool: z.boolean().default(false),
+  accountId: z.string().min(1).nullable().optional(),
+});
+
+export async function createCostCategory(
+  input: z.input<typeof costCategorySchema>,
+  ctx: AuditContext,
+) {
+  const data = costCategorySchema.parse(input);
+  const code = data.code.toUpperCase();
+
+  const clash = await db.costCategory.findFirst({
+    where: { entityId: data.entityId, code },
+  });
+  if (clash) {
+    throw new MasterDataError(`${code} is already "${clash.nameAr || clash.nameEn}".`);
+  }
+
+  return db.$transaction(async (tx) => {
+    const category = await tx.costCategory.create({
+      data: {
+        entityId: data.entityId,
+        code,
+        nameEn: data.nameEn,
+        nameAr: data.nameAr,
+        behaviour: data.behaviour,
+        includeInMinuteRate: data.includeInMinuteRate,
+        includeInBrandFixedPool: data.includeInBrandFixedPool,
+        accountId: data.accountId ?? null,
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "COST_CATEGORY_CREATED",
+      entityName: "CostCategory",
+      entityId: category.id,
+      after: {
+        code,
+        name: category.nameAr,
+        // Recorded because it changes the minute rate every garment is costed
+        // at, which is not obvious from a tick box on a form.
+        includeInMinuteRate: data.includeInMinuteRate,
+        includeInBrandFixedPool: data.includeInBrandFixedPool,
+      },
+      ctx,
+    });
+
+    return { id: category.id, code };
+  });
+}
+
+export const colourSchema = z.object({
+  code: z.string().trim().min(1).max(20),
+  nameEn: z.string().trim().min(1),
+  nameAr: z.string().trim().min(1),
+  /** Shown as a swatch at the till, so a cashier can find it by eye. */
+  hex: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/, "A colour is a hex value like #1b1b1b.")
+    .nullable()
+    .optional(),
+});
+
+export async function createColour(
+  input: z.input<typeof colourSchema>,
+  ctx: AuditContext,
+) {
+  const data = colourSchema.parse(input);
+  const code = data.code.toUpperCase();
+
+  const clash = await db.colorCode.findUnique({ where: { code } });
+  if (clash) throw new MasterDataError(`${code} is already "${clash.nameAr}".`);
+
+  return db.$transaction(async (tx) => {
+    const highest = await tx.colorCode.findFirst({
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+
+    const colour = await tx.colorCode.create({
+      data: {
+        code,
+        nameEn: data.nameEn,
+        nameAr: data.nameAr,
+        hex: data.hex ?? null,
+        sortOrder: (highest?.sortOrder ?? 0) + 10,
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "COLOUR_CREATED",
+      entityName: "ColorCode",
+      entityId: colour.id,
+      after: { code, name: colour.nameAr },
+      ctx,
+    });
+
+    return { id: colour.id, code };
+  });
+}
+
+export const sizeSchema = z.object({
+  code: z.string().trim().min(1).max(20),
+  nameEn: z.string().trim().min(1),
+  nameAr: z.string().trim().min(1),
+  /**
+   * How much cloth this size uses against the base size, which is 1.0.
+   *
+   * An XL in the same style genuinely uses more fabric, and costing every size
+   * as though it were a medium quietly understates the large ones — the sizes
+   * that usually sell last and at a markdown.
+   */
+  consumptionFactor: z.coerce.number().positive().default(1),
+  /** Where it sits in a size run: S before M before L, not alphabetically. */
+  sortOrder: z.coerce.number().int().optional(),
+});
+
+export async function createSize(
+  input: z.input<typeof sizeSchema>,
+  ctx: AuditContext,
+) {
+  const data = sizeSchema.parse(input);
+  const code = data.code.toUpperCase();
+
+  const clash = await db.sizeCode.findUnique({ where: { code } });
+  if (clash) throw new MasterDataError(`${code} is already "${clash.nameAr}".`);
+
+  return db.$transaction(async (tx) => {
+    const highest = await tx.sizeCode.findFirst({
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+
+    const size = await tx.sizeCode.create({
+      data: {
+        code,
+        nameEn: data.nameEn,
+        nameAr: data.nameAr,
+        consumptionFactor: String(data.consumptionFactor),
+        sortOrder: data.sortOrder ?? (highest?.sortOrder ?? 0) + 10,
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "SIZE_CREATED",
+      entityName: "SizeCode",
+      entityId: size.id,
+      after: { code, name: size.nameAr, consumptionFactor: data.consumptionFactor },
+      ctx,
+    });
+
+    return { id: size.id, code };
+  });
+}
+
+export const uomSchema = z.object({
+  code: z.string().trim().min(1).max(20),
+  nameEn: z.string().trim().min(1),
+  nameAr: z.string().trim().min(1),
+  kind: z.enum(["LENGTH", "MASS", "PIECE", "AREA"]),
+});
+
+export async function createUnitOfMeasure(
+  input: z.input<typeof uomSchema>,
+  ctx: AuditContext,
+) {
+  const data = uomSchema.parse(input);
+  const code = data.code.trim();
+
+  const clash = await db.unitOfMeasure.findUnique({ where: { code } });
+  if (clash) throw new MasterDataError(`${code} is already "${clash.nameAr}".`);
+
+  return db.$transaction(async (tx) => {
+    const uom = await tx.unitOfMeasure.create({
+      data: { code, nameEn: data.nameEn, nameAr: data.nameAr, kind: data.kind },
+    });
+
+    await writeAudit(tx, {
+      action: "UOM_CREATED",
+      entityName: "UnitOfMeasure",
+      entityId: uom.id,
+      after: { code, name: uom.nameAr, kind: data.kind },
+      ctx,
+    });
+
+    return { id: uom.id, code };
+  });
+}

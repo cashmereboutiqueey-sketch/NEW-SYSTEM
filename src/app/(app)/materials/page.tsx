@@ -5,6 +5,8 @@ import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
+import { AddInline } from "@/components/add-inline";
+import { addUnitAction } from "../master-data-actions";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { dec } from "@/lib/money";
 import { createMaterialAction, toggleMaterialAction } from "./actions";
@@ -79,6 +81,37 @@ export default async function MaterialsPage() {
 
       {mayEdit && (
         <Card className="mb-4" title={ar ? "إضافة خامة" : "Add a material"}>
+          {can(session.role, "settings:manage") && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-ink-500">
+                {ar ? "الوحدة مش في القايمة؟" : "Unit not listed?"}
+              </span>
+              <AddInline
+                ar={ar}
+                title={ar ? "وحدة قياس جديدة" : "New unit"}
+                action={addUnitAction}
+                label={ar ? "+ وحدة" : "+ Unit"}
+                fields={[
+                  {
+                    name: "code", label: ar ? "الرمز" : "Code", required: true, half: true,
+                    placeholder: "m", 
+                    hint: ar ? "زي ما بيتكتب على الفاتورة" : "As it is printed on documents",
+                  },
+                  { name: "nameAr", label: ar ? "الاسم" : "Name", required: true, half: true },
+                  {
+                    name: "kind", label: ar ? "بيقيس إيه" : "Measures", type: "select",
+                    options: [
+                      { value: "LENGTH", label: ar ? "طول" : "Length" },
+                      { value: "MASS", label: ar ? "وزن" : "Mass" },
+                      { value: "PIECE", label: ar ? "عدد" : "Count" },
+                      { value: "AREA", label: ar ? "مساحة" : "Area" },
+                    ],
+                  },
+                ]}
+              />
+            </div>
+          )}
+
           <EntityForm
             locale={locale}
             action={createMaterialAction}

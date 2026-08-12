@@ -6,6 +6,8 @@ import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney } from "@/lib/money";
 import { PayForm } from "./pay-form";
+import { AddInline } from "@/components/add-inline";
+import { addCostCategoryAction } from "../master-data-actions";
 import { ExpenseForm } from "./expense-form";
 
 /**
@@ -93,6 +95,41 @@ export default async function ExpensesPage() {
           value={String(expenses.length)}
         />
       </div>
+
+      {can(session.role, "settings:manage") && entities.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "بند مصروف جديد" : "New cost category"}
+          description={
+            ar
+              ? "لو البند اللي محتاجه مش في القايمة. لو علّمت إنه يدخل في تكلفة الدقيقة، هيغيّر تسعير كل قطعة بعد كده."
+              : "For a heading that is not in the list. Ticking the minute rate changes what every garment is costed at."
+          }
+        >
+          <AddInline
+            ar={ar}
+            title={ar ? "بند جديد" : "New category"}
+            action={addCostCategoryAction}
+            hidden={{ entityId: entities[0].id }}
+            label={ar ? "+ بند جديد" : "+ New category"}
+            fields={[
+              { name: "nameAr", label: ar ? "الاسم" : "Name", required: true, half: true },
+              { name: "code", label: ar ? "كود" : "Code", required: true, half: true, placeholder: "FAC-SECURITY" },
+              {
+                name: "behaviour",
+                label: ar ? "طبيعته" : "Behaviour",
+                type: "select",
+                half: true,
+                options: [
+                  { value: "FIXED", label: ar ? "ثابت" : "Fixed" },
+                  { value: "VARIABLE", label: ar ? "متغير" : "Variable" },
+                  { value: "SEMI_VARIABLE", label: ar ? "شبه متغير" : "Semi-variable" },
+                ],
+              },
+            ]}
+          />
+        </Card>
+      )}
 
       {can(session.role, "expense:create") && (
         <Card
