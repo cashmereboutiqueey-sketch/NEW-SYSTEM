@@ -613,6 +613,8 @@ model Expense {
   @@index([entityId, incurredDate])
   @@index([dueDate, status])
   @@index([fiscalPeriodId])
+  @@index([approvedAt])
+  @@index([createdByUserId])
   @@map("expenses")
 }
 
@@ -972,6 +974,8 @@ model PurchaseOrder {
   receipts GoodsReceipt[]
 
   @@index([status, expectedDate])
+  @@index([approvedAt])
+  @@index([createdByUserId])
   @@map("purchase_orders")
 }
 
@@ -2384,6 +2388,7 @@ model PosSession {
   consignmentSales ConsignmentSale[]
 
   @@index([locationId, openedAt])
+  @@index([closedByUserId])
   @@map("pos_sessions")
 }
 
@@ -2461,6 +2466,7 @@ model SalesOrder {
   /// Every customer screen asks for one person's history out of all of them.
   /// Without this it reads the whole order table to find a handful of rows.
   @@index([customerId, orderDate])
+  @@index([dueDate])
   @@map("sales_orders")
 }
 
