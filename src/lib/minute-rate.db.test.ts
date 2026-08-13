@@ -47,6 +47,13 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
     await db.minuteRateComponent.deleteMany({});
+    // A cost snapshot points at the rate period it was costed from, and the
+    // foreign key is RESTRICT — deliberately, because a snapshot whose rate
+    // vanished cannot be defended. So the snapshots go first. This only
+    // started failing once other files began leaving snapshots behind, which
+    // is a fragility in the wipe rather than in them.
+    await db.costSnapshotLine.deleteMany({});
+    await db.costSnapshot.deleteMany({});
     await db.minuteRatePeriod.deleteMany({});
     await db.bankStatementLine.deleteMany({});
     await db.bankStatement.deleteMany({});

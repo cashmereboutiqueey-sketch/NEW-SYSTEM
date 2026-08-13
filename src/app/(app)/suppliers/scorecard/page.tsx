@@ -1,6 +1,9 @@
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { supplierScorecard } from "@/lib/analytics";
+import { scorecardHistory, scorablePeriods } from "@/lib/supplier-scorecards";
+import { FreezeForm } from "./freeze-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
 
@@ -13,11 +16,16 @@ import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
  * columns beside each other.
  */
 export default async function SupplierScorecardPage() {
-  await requirePermission("purchase_order:view");
+  const session = await requirePermission("purchase_order:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const rows = await supplierScorecard();
+  const [rows, history, periods] = await Promise.all([
+    supplierScorecard(),
+    scorecardHistory(),
+    scorablePeriods(),
+  ]);
+  const mayFreeze = can(session.role, "settings:manage");
 
   const totalVariance = rows.reduce((s, r) => s.plus(r.priceVariance), dec(0));
   const worstPrice = [...rows].sort((a, b) => Number(b.priceVariance.minus(a.priceVariance)))[0];
@@ -145,6 +153,100 @@ export default async function SupplierScorecardPage() {
           />
         )}
       </Card>
+
+      {mayFreeze && (
+        <div className="mt-5">
+          <Card
+            title={ar ? "احفظ تقييم فترة" : "Freeze a period"}
+            description={
+              ar
+                ? "الجدول اللي فوق بيحسب كل حاجة حصلت من الأول — بيقول المورد عامل إزاي، مش بيقول هو بيتحسن ولا بيسوء."
+                : "The table above is computed over everything that ever happened. It says how a supplier is, not whether they are getting better."
+            }
+          >
+            <FreezeForm
+              ar={ar}
+              periods={periods.map((p) => ({
+                id: p.id, label: p.label, status: p.status, scored: p.scored,
+              }))}
+            />
+          </Card>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-5">
+          <Card
+            title={ar ? "التقييم عبر الفترات" : "Scores over time"}
+            description={
+              ar
+                ? "الدرجة من ١٠. الاتجاه أهم من الرقم: مورد نازل من ٩ لـ ٧ أخطر من واحد ثابت على ٧٫٥."
+                : "Out of ten. The direction matters more than the number: 9 falling to 7 is worse than a steady 7.5."
+            }
+          >
+            <DataTable
+              headers={[
+                ar ? "المورد" : "Supplier",
+                ar ? "آخر فترة" : "Latest",
+                ar ? "الإجمالي" : "Overall",
+                ar ? "الحركة" : "Movement",
+                ar ? "المواعيد" : "Delivery",
+                ar ? "الجودة" : "Quality",
+                ar ? "السعر" : "Price",
+                ar ? "فترات محفوظة" : "Periods",
+              ]}
+              rows={history.map((h) => [
+                <span key="n" className="font-medium text-ink-900">
+                  {ar ? h.nameAr : h.nameEn}
+                  <span className="ms-2 num text-xs text-ink-400" dir="ltr">{h.code}</span>
+                </span>,
+                <span key="p" className="num text-xs" dir="ltr">{h.latest?.period ?? "—"}</span>,
+                h.latest ? (
+                  <Badge
+                    key="o"
+                    tone={
+                      Number(h.latest.overallScore) >= 8.5
+                        ? "good"
+                        : Number(h.latest.overallScore) >= 6.5
+                          ? "warn"
+                          : "bad"
+                    }
+                  >
+                    {Number(h.latest.overallScore).toFixed(1)}
+                  </Badge>
+                ) : (
+                  <span key="o" className="text-ink-300">—</span>
+                ),
+                h.movement ? (
+                  <span
+                    key="m"
+                    className={
+                      Number(h.movement) > 0 ? "num text-good" : Number(h.movement) < 0 ? "num text-bad" : "num"
+                    }
+                  >
+                    {Number(h.movement) > 0 ? "+" : ""}
+                    {Number(h.movement).toFixed(1)}
+                  </span>
+                ) : (
+                  <span key="m" className="text-ink-300">—</span>
+                ),
+                <span key="d" className="num text-xs">
+                  {h.latest ? Number(h.latest.deliveryScore).toFixed(1) : "—"}
+                </span>,
+                <span key="q" className="num text-xs">
+                  {h.latest ? Number(h.latest.qualityScore).toFixed(1) : "—"}
+                </span>,
+                <span key="pr" className="num text-xs">
+                  {h.latest ? Number(h.latest.priceScore).toFixed(1) : "—"}
+                </span>,
+                <span key="c" className="num text-xs text-ink-500">
+                  {formatNumber(h.periods.length)}
+                </span>,
+              ])}
+            />
+          </Card>
+        </div>
+      )}
     </>
   );
 }

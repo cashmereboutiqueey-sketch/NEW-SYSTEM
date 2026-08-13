@@ -129,6 +129,7 @@ export const dictionary = {
   rework: { ar: "إعادة التشغيل", en: "Rework" },
   fabricUtilisation: { ar: "استغلال القماش", en: "Fabric utilisation" },
   qc: { ar: "الجودة", en: "QC" },
+  quality: { ar: "الجودة وإعادة التشغيل", en: "Quality and rework" },
 
   // --- inventory & commercial ---
   inventory: { ar: "المخزون", en: "Inventory" },
@@ -169,6 +170,7 @@ export const dictionary = {
 
   // --- CMT ---
   cmt: { ar: "التصنيع للغير", en: "External CMT" },
+  cmtOrders: { ar: "أوامر التصنيع", en: "CMT orders" },
   cmtClients: { ar: "عملاء التصنيع", en: "CMT clients" },
   cmtQuote: { ar: "عرض سعر", en: "CMT quote" },
   floorPrice: { ar: "الحد الأدنى للسعر", en: "Floor price" },

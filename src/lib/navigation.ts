@@ -81,6 +81,9 @@ export const navigation: NavSection[] = [
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true },
       { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true },
       { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" , shipped: true },
+      { key: "operatorProductivity", href: "/production/operators", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "users", shipped: true },
+      { key: "cuttingTicket", href: "/production/cutting", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors", shipped: true },
+      { key: "quality", href: "/production/quality", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "check", shipped: true },
       { key: "scrap", href: "/production/scrap", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors" , shipped: true },
     ],
   },
@@ -121,6 +124,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "cmtClients", href: "/cmt/clients", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "users" , shipped: true },
       { key: "cmtQuote", href: "/cmt/quotes", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "file" , shipped: true },
+      { key: "cmtOrders", href: "/cmt/orders", phase: 6, scopes: ["FACTORY", "GROUP"], icon: "factory", shipped: true },
     ],
   },
   {

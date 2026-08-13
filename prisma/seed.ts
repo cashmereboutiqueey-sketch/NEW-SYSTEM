@@ -490,6 +490,50 @@ async function main() {
     // The costs that leave with a garment but are not in the transfer price.
     // Configured because they cannot be read off a single order line.
     {
+      key: "supplier.score.deliveryWeight",
+      value: "0.4",
+      type: "PERCENT" as const,
+      group: "Suppliers",
+      labelEn: "Scorecard weight — delivery",
+      labelAr: "وزن التقييم — المواعيد",
+      descriptionEn:
+        "How much arriving on time counts. The three weights are normalised, so 2/2/1 means the same as 0.4/0.4/0.2.",
+      descriptionAr:
+        "الالتزام بالمواعيد بيوزن قد إيه. الأوزان التلاتة بتتظبط نسبيًا، يعني ٢/٢/١ زي ٠٫٤/٠٫٤/٠٫٢.",
+    },
+    {
+      key: "supplier.score.qualityWeight",
+      value: "0.4",
+      type: "PERCENT" as const,
+      group: "Suppliers",
+      labelEn: "Scorecard weight — quality",
+      labelAr: "وزن التقييم — الجودة",
+      descriptionEn: "How much arriving without defects counts.",
+      descriptionAr: "وصول البضاعة سليمة بيوزن قد إيه.",
+    },
+    {
+      key: "supplier.score.priceWeight",
+      value: "0.2",
+      type: "PERCENT" as const,
+      group: "Suppliers",
+      labelEn: "Scorecard weight — price",
+      labelAr: "وزن التقييم — السعر",
+      descriptionEn: "How much invoicing at the agreed price counts.",
+      descriptionAr: "الالتزام بالسعر المتفق عليه بيوزن قد إيه.",
+    },
+    {
+      key: "supplier.score.priceSensitivity",
+      value: "5",
+      type: "DECIMAL" as const,
+      group: "Suppliers",
+      labelEn: "How hard a price overrun bites",
+      labelAr: "حدة العقوبة على تجاوز السعر",
+      descriptionEn:
+        "At 5, a 2% overrun costs 10 points and a 20% overrun takes the price score to zero.",
+      descriptionAr:
+        "عند ٥، تجاوز ٢٪ بيخصم ١٠ نقط وتجاوز ٢٠٪ بيودي درجة السعر لصفر.",
+    },
+    {
       key: "brand.expectedMonthlyUnits",
       value: "0",
       type: "DECIMAL" as const,
