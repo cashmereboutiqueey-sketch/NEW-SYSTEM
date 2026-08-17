@@ -46,6 +46,11 @@ export const navigation: NavSection[] = [
       { key: "apAging", href: "/expenses/aging", phase: 2, scopes: ALL_SCOPES, icon: "clock", shipped: true },
       { key: "cashFlowForecast", href: "/cash-flow", phase: 5, scopes: ALL_SCOPES, icon: "wallet", shipped: true },
       { key: "reconciliation", href: "/reconciliation", phase: 5, scopes: ALL_SCOPES, icon: "refresh", shipped: true },
+      // The ledger itself, and the only honest way to correct it. Postings are
+      // immutable by design, which left nothing able to put a mistake right.
+      { key: "journal", href: "/journal", phase: 2, scopes: ALL_SCOPES, icon: "file", shipped: true },
+      { key: "auditTrail", href: "/audit", phase: 2, scopes: ALL_SCOPES, icon: "search", shipped: true },
+      { key: "chartOfAccounts", href: "/accounts", phase: 2, scopes: ALL_SCOPES, icon: "layers", shipped: true },
     ],
   },
   {

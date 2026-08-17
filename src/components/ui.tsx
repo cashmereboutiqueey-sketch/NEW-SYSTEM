@@ -22,27 +22,40 @@ export function PageHeader({
   );
 }
 
+/**
+ * Title and description take nodes rather than strings so a heading can carry
+ * a badge — "reversed by JE-2026-08-0042" belongs next to the entry number,
+ * not buried in the body. Strings are still nodes, so every existing caller is
+ * unaffected.
+ *
+ * `actions` is the top-right slot for something that acts on the whole card.
+ */
 export function Card({
   title,
   description,
+  actions,
   children,
   className,
 }: {
-  title?: string;
-  description?: string;
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <section className={clsx("card overflow-hidden", className)}>
-      {(title || description) && (
-        <header className="border-b border-ink-200 px-4 py-3">
-          {title && (
-            <h2 className="text-sm font-semibold text-ink-800">{title}</h2>
-          )}
-          {description && (
-            <p className="mt-0.5 text-xs text-ink-500">{description}</p>
-          )}
+      {(title || description || actions) && (
+        <header className="flex items-start gap-3 border-b border-ink-200 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            {title && (
+              <h2 className="text-sm font-semibold text-ink-800">{title}</h2>
+            )}
+            {description && (
+              <div className="mt-0.5 text-xs text-ink-500">{description}</div>
+            )}
+          </div>
+          {actions && <div className="shrink-0">{actions}</div>}
         </header>
       )}
       <div className="p-4">{children}</div>
