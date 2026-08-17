@@ -12,7 +12,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { dec } from "../src/lib/money";
-import { postEntry } from "../src/lib/ledger";
+import { postEntry, reverseEntry } from "../src/lib/ledger";
 import { createExpense } from "../src/lib/expenses";
 
 const problems: string[] = [];
@@ -54,7 +54,7 @@ for (const lot of lots) {
   stockByAccount.set(code, (stockByAccount.get(code) ?? dec(0)).plus(value));
 }
 
-for (const code of ["1310", "1320", "1330", "1340"]) {
+for (const code of ["1310", "1330", "1340"]) {
   const ledger = await balanceOf(code);
   const subledger = stockByAccount.get(code) ?? dec(0);
   const gap = ledger.minus(subledger).abs();
@@ -65,6 +65,39 @@ for (const code of ["1310", "1320", "1330", "1340"]) {
   } else {
     ok(`account ${code} matches the lots: ${ledger.toFixed(2)}`);
   }
+}
+
+/**
+ * Work in progress, which cannot be checked the same way.
+ *
+ * Issuing material to a run consumes the raw lots and moves the value into
+ * 1320, and no WIP lot is ever created — nothing in the system makes one. So
+ * comparing 1320 against WIP lots compared it against a permanent zero, which
+ * passes only while no run is open and fails at every month end that has one.
+ * That is exactly backwards: an open run is the normal state of a factory, and
+ * this reported it as a difference in the books.
+ *
+ * What is actually true: a balance in 1320 is material sitting in runs that
+ * have not produced output yet. A balance with open runs is right; a balance
+ * with none is material that went in and never came out; a negative balance is
+ * always wrong.
+ */
+const wip = await balanceOf("1320");
+const openRuns = await db.productionOrder.count({
+  where: { status: { in: ["CONFIRMED", "IN_PRODUCTION"] } },
+});
+
+if (wip.lessThan(-0.05)) {
+  bad(`work in progress is negative at ${wip.toFixed(2)} — more was relieved than was ever issued`);
+} else if (wip.greaterThan(0.05) && openRuns === 0) {
+  bad(
+    `work in progress holds ${wip.toFixed(2)} with no open runs — ` +
+      "material was issued and never turned into anything",
+  );
+} else if (wip.greaterThan(0.05)) {
+  ok(`work in progress ${wip.toFixed(2)} across ${openRuns} open run(s)`);
+} else {
+  ok(`work in progress is clear: ${wip.toFixed(2)}`);
 }
 
 // Payables: the account carries two different debts. Expenses put one there,
@@ -254,7 +287,7 @@ const cat = await db.costCategory.findFirstOrThrow({
 
 // Post into it while open — must work.
 const before = await db.journalEntry.count();
-await createExpense(
+const probe = await createExpense(
   {
     entityId: factory.id, costCategoryId: cat.id, description: "Period lock probe",
     amount: 100, incurredDate: new Date(openPeriod.startDate), dueDate: new Date(openPeriod.startDate),
@@ -263,6 +296,46 @@ await createExpense(
 );
 if ((await db.journalEntry.count()) <= before) bad("could not post into an open period");
 else ok("an open period accepts a posting");
+
+/**
+ * Take the probe back out.
+ *
+ * It did not, and every run of this audit left 100 behind — so the second run
+ * reported an accounting equation out by exactly the amount the first run had
+ * added, and the third by twice it. An audit that corrupts the books it is
+ * checking, and then reports its own corruption as a failure, is worse than no
+ * audit: it teaches whoever reads it that the difference is normal.
+ *
+ * Reversed rather than deleted, because that is the only way this system
+ * corrects a posting and the audit should not be an exception to the rule it
+ * exists to verify.
+ */
+const probeEntry = await db.journalEntry.findFirst({
+  where: { entryNumber: probe.journalEntryNumber },
+  select: { id: true },
+});
+
+if (probeEntry) {
+  await db.$transaction(async (tx) => {
+    await reverseEntry(tx, {
+      entryId: probeEntry.id,
+      postingDate: new Date(openPeriod.startDate),
+      reason: "Reversing the period-lock probe this audit posted a moment ago.",
+      ctx,
+    });
+  });
+
+  // And the expense record itself, which reversing the journal does not touch.
+  // Leaving it behind swaps one inconsistency for another: the payables check
+  // reads open expenses, so an expense whose journal has been reversed makes
+  // the subledger exceed the ledger by exactly the probe. It was never a real
+  // cost — it is this script's own scaffolding — so it goes too.
+  await db.expense.delete({ where: { id: probe.expenseId } });
+
+  ok("the probe was reversed and removed, so the audit leaves the books as it found them");
+} else {
+  bad("could not find the probe entry to reverse — it has been left in the books");
+}
 
 // Close it, try again — must fail.
 await db.fiscalPeriod.update({ where: { id: openPeriod.id }, data: { status: "CLOSED" } });

@@ -7,6 +7,7 @@ import { customerProfiles, duplicateCandidates } from "@/lib/crm";
 import { EntityForm } from "@/components/entity-form";
 import { can } from "@/core/permissions";
 import { createCustomerAction } from "./actions";
+import { MergeForm } from "./merge-form";
 import { dec } from "@/lib/money";
 
 /**
@@ -26,6 +27,9 @@ export default async function CustomersPage() {
     duplicateCandidates(),
   ]);
   const mayAdd = can(session.role, "sales_order:create");
+  // Merging rewrites who owns an order history, so it sits with the elevated
+  // export capability rather than with everyday order entry.
+  const mayMerge = can(session.role, "customer:export");
 
   const buyers = profiles.filter((p) => p.orders > 0);
   const revenue = buyers.reduce((s, p) => s.plus(dec(p.revenue)), dec(0));
@@ -97,6 +101,19 @@ export default async function CustomersPage() {
             ar
               ? "النظام لا يدمج تلقائيًا — تليفون العائلة المشترك شائع، والدمج الخاطئ يفقد تاريخًا لا يُسترجع"
               : "Nothing is merged automatically — a shared family phone is common, and a wrong merge loses history that cannot be recovered"
+          }
+          actions={
+            mayMerge ? (
+              <MergeForm
+                ar={ar}
+                customers={profiles.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  phone: p.phone ?? null,
+                  orders: p.orders,
+                }))}
+              />
+            ) : undefined
           }
         >
           <DataTable

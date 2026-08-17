@@ -575,3 +575,247 @@ export async function createUnitOfMeasure(
     return { id: uom.id, code };
   });
 }
+
+/* ─────────────────────── fixing the small lists afterwards ──────────────── */
+
+/**
+ * Renaming and retiring the reference lists.
+ *
+ * Adding a colour or a size was possible and changing one was not, so a
+ * mistyped name was permanent. That is the sort of gap nobody notices until
+ * the first week of real use, when somebody fat-fingers a name and the shop
+ * lives with it for a year.
+ *
+ * None of these is ever deleted. A colour is referenced by the variants made
+ * in it and a size by the garments cut to it; removing the row would orphan
+ * that history. Retiring hides it from the pickers and leaves what has already
+ * been made alone, which is what people mean when they say delete.
+ *
+ * The code is not editable either. It is what appears inside the SKU of every
+ * garment already made in that colour, and changing it would make those SKUs
+ * describe something that no longer exists.
+ */
+
+const renameSchema = z.object({
+  id: z.string().min(1),
+  nameAr: z.string().trim().min(1, "An Arabic name is required.").optional(),
+  nameEn: z.string().trim().min(1, "An English name is required.").optional(),
+  isActive: z.coerce.boolean().optional(),
+});
+
+export async function updateColour(
+  input: z.input<typeof renameSchema> & { hex?: string | null },
+  ctx: AuditContext,
+) {
+  const data = renameSchema.parse(input);
+
+  const before = await db.colorCode.findUnique({
+    where: { id: data.id },
+    include: { _count: { select: { variants: true } } },
+  });
+  if (!before) throw new MasterDataError("Colour not found.");
+
+  const hex = input.hex?.trim();
+  if (hex && !/^#[0-9a-fA-F]{6}$/.test(hex)) {
+    throw new MasterDataError("A colour is a hex value like #1b1b1b.");
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.colorCode.update({
+      where: { id: data.id },
+      data: {
+        ...(data.nameAr !== undefined ? { nameAr: data.nameAr } : {}),
+        ...(data.nameEn !== undefined ? { nameEn: data.nameEn } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        ...(hex !== undefined ? { hex: hex || null } : {}),
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "COLOUR_UPDATED",
+      entityName: "ColorCode",
+      entityId: updated.id,
+      ctx,
+      before: { nameAr: before.nameAr, nameEn: before.nameEn, isActive: before.isActive },
+      after: { nameAr: updated.nameAr, nameEn: updated.nameEn, isActive: updated.isActive },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    code: after.code,
+    /** Variants already made in it, which retiring leaves untouched. */
+    variants: before._count.variants,
+  };
+}
+
+export async function updateSize(
+  input: z.input<typeof renameSchema> & { consumptionFactor?: number | string },
+  ctx: AuditContext,
+) {
+  const data = renameSchema.parse(input);
+
+  const before = await db.sizeCode.findUnique({
+    where: { id: data.id },
+    include: { _count: { select: { variants: true } } },
+  });
+  if (!before) throw new MasterDataError("Size not found.");
+
+  const factor =
+    input.consumptionFactor === undefined ? undefined : dec(input.consumptionFactor);
+  if (factor && factor.lessThanOrEqualTo(0)) {
+    throw new MasterDataError("A cloth factor has to be greater than zero.");
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.sizeCode.update({
+      where: { id: data.id },
+      data: {
+        ...(data.nameAr !== undefined ? { nameAr: data.nameAr } : {}),
+        ...(data.nameEn !== undefined ? { nameEn: data.nameEn } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        ...(factor ? { consumptionFactor: factor.toString() } : {}),
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "SIZE_UPDATED",
+      entityName: "SizeCode",
+      entityId: updated.id,
+      ctx,
+      before: {
+        nameAr: before.nameAr,
+        isActive: before.isActive,
+        consumptionFactor: before.consumptionFactor.toString(),
+      },
+      after: {
+        nameAr: updated.nameAr,
+        isActive: updated.isActive,
+        consumptionFactor: updated.consumptionFactor.toString(),
+      },
+    });
+
+    return updated;
+  });
+
+  return { id: after.id, code: after.code, variants: before._count.variants };
+}
+
+/**
+ * Renaming a unit.
+ *
+ * No retiring: a metre is a metre, the list is physical rather than editorial,
+ * and the model carries no isActive because nothing has ever needed to hide
+ * one. Renaming is the real need.
+ */
+export async function updateUnitOfMeasure(
+  input: { id: string; nameAr?: string; nameEn?: string },
+  ctx: AuditContext,
+) {
+  const before = await db.unitOfMeasure.findUnique({
+    where: { id: input.id },
+    include: { _count: { select: { materials: true } } },
+  });
+  if (!before) throw new MasterDataError("Unit not found.");
+
+  const nameAr = input.nameAr?.trim();
+  const nameEn = input.nameEn?.trim();
+  if (nameAr === "" || nameEn === "") {
+    throw new MasterDataError("A unit needs a name.");
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.unitOfMeasure.update({
+      where: { id: input.id },
+      data: {
+        ...(nameAr ? { nameAr } : {}),
+        ...(nameEn ? { nameEn } : {}),
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "UNIT_UPDATED",
+      entityName: "UnitOfMeasure",
+      entityId: updated.id,
+      ctx,
+      before: { nameAr: before.nameAr, nameEn: before.nameEn },
+      after: { nameAr: updated.nameAr, nameEn: updated.nameEn },
+    });
+
+    return updated;
+  });
+
+  return { id: after.id, code: after.code, materials: before._count.materials };
+}
+
+/**
+ * Renaming or retiring a cost heading.
+ *
+ * Moving one in or out of the minute-rate pool changes what every garment made
+ * afterwards is costed at, so the result says whether that happened. The
+ * caller can then tell the person, rather than letting it happen quietly.
+ */
+export async function updateCostCategory(
+  input: z.input<typeof renameSchema> & {
+    includeInMinuteRate?: boolean;
+    includeInBrandFixedPool?: boolean;
+  },
+  ctx: AuditContext,
+) {
+  const data = renameSchema.parse(input);
+
+  const before = await db.costCategory.findUnique({
+    where: { id: data.id },
+    include: { _count: { select: { expenses: true } } },
+  });
+  if (!before) throw new MasterDataError("Cost category not found.");
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.costCategory.update({
+      where: { id: data.id },
+      data: {
+        ...(data.nameAr !== undefined ? { nameAr: data.nameAr } : {}),
+        ...(data.nameEn !== undefined ? { nameEn: data.nameEn } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        ...(input.includeInMinuteRate !== undefined
+          ? { includeInMinuteRate: input.includeInMinuteRate }
+          : {}),
+        ...(input.includeInBrandFixedPool !== undefined
+          ? { includeInBrandFixedPool: input.includeInBrandFixedPool }
+          : {}),
+      },
+    });
+
+    await writeAudit(tx, {
+      action: "COST_CATEGORY_UPDATED",
+      entityName: "CostCategory",
+      entityId: updated.id,
+      ctx,
+      before: {
+        nameAr: before.nameAr,
+        isActive: before.isActive,
+        includeInMinuteRate: before.includeInMinuteRate,
+        includeInBrandFixedPool: before.includeInBrandFixedPool,
+      },
+      after: {
+        nameAr: updated.nameAr,
+        isActive: updated.isActive,
+        includeInMinuteRate: updated.includeInMinuteRate,
+        includeInBrandFixedPool: updated.includeInBrandFixedPool,
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    code: after.code,
+    expenses: before._count.expenses,
+    changedTheMinuteRate:
+      input.includeInMinuteRate !== undefined &&
+      input.includeInMinuteRate !== before.includeInMinuteRate,
+  };
+}

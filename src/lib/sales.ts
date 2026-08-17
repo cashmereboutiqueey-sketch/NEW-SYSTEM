@@ -255,20 +255,39 @@ export async function createSale(
   const owed = roundMoney(dueFromCustomer.minus(paymentTotal));
   let dueDate: Date | null = null;
 
-  // Taking some of the money and letting the rest ride is a decision somebody
-  // makes at the counter, and it is the one the credit limit exists to govern.
-  //
-  // An order with no payments recorded at all is a different thing: a Shopify
-  // order the courier has not remitted, or a wholesale order awaiting its
-  // invoice. Those are unsettled rather than lent, they have always been
-  // allowed without a named customer, and the aging report still shows them.
-  const partPaid = payments.length > 0 && owed.greaterThan(0);
+  /**
+   * Where the money is collected, which is what decides whether an unpaid
+   * order is credit at all.
+   *
+   * A Shopify or moderator order is unsettled rather than lent: the courier
+   * has the goods and will remit, and blocking those on a credit limit would
+   * stop online selling for anybody who has ever owed anything. A wholesale
+   * order waits on its invoice by arrangement.
+   *
+   * Across a counter is different. The customer is standing there, the garment
+   * leaves with them, and whatever they did not hand over is credit.
+   */
+  const acrossTheCounter =
+    data.source === "POS" || data.source === "EXHIBITION" || data.source === "MANUAL";
 
-  if (partPaid) {
+  // Taking part of the money and letting the rest ride is governed wherever it
+  // happens — that has always been the case.
+  //
+  // Taking *none* of it was not, and that was the hole: testing
+  // `payments.length > 0` meant a named customer who paid nothing skipped the
+  // limit entirely, so the case the limit most needs to govern was the one
+  // case it ignored. A 5,000 dress could walk out against a zero limit.
+  const partPaid = payments.length > 0 && owed.greaterThan(0);
+  const unpaidAtTheCounter = acrossTheCounter && owed.greaterThan(0);
+
+  if (partPaid || unpaidAtTheCounter) {
     // A debt nobody can be chased for is a loss with extra steps.
     if (!data.customerId) {
       throw new SalesError(
-        "A part-paid sale has to be in a customer's name, otherwise nobody can be asked for the rest.",
+        payments.length > 0
+          ? "A part-paid sale has to be in a customer's name, otherwise nobody can be asked for the rest."
+          : "This sale takes no money at all, so it has to be in a customer's name — " +
+            "otherwise the garment leaves and nobody knows who has it.",
       );
     }
 

@@ -1,0 +1,1402 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0}
+  img,svg{max-width:100%;height:auto}
+  table{border-collapse:collapse}
+</style>
+<title>دليل تشغيل كاشمير أو إس</title>
+</head>
+<body>
+<style>
+  /* ---------------------------------------------------------- tokens */
+  :root {
+    --paper:      #EEF2F4;
+    --surface:    #FFFFFF;
+    --surface-2:  #F6F9FA;
+    --ink:        #101A20;
+    --ink-soft:   #55686F;
+    --ink-faint:  #84969C;
+    --rule:       #D2DDE2;
+    --rule-soft:  #E3EAED;
+    --accent:     #16506E;
+    --accent-2:   #E7F0F5;
+    --good:       #12634A;
+    --good-bg:    #E4F1EB;
+    --warn:       #8A5A08;
+    --warn-bg:    #F7EDDA;
+    --bad:        #9A2D24;
+    --bad-bg:     #F8E7E4;
+    --shadow:     0 1px 2px rgba(16,26,32,.06), 0 8px 24px -16px rgba(16,26,32,.28);
+
+    --ar: "Segoe UI", system-ui, "Noto Sans Arabic", "Dubai", Tahoma, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+
+    --step--1: .8125rem;
+    --step-0:  1rem;
+    --step-1:  1.15rem;
+    --step-2:  1.4rem;
+    --step-3:  1.75rem;
+    --step-4:  2.3rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0D1418;
+      --surface:   #141E23;
+      --surface-2: #18242A;
+      --ink:       #E3EDF1;
+      --ink-soft:  #9DB0B8;
+      --ink-faint: #728891;
+      --rule:      #27363D;
+      --rule-soft: #1E2C32;
+      --accent:    #79C0E8;
+      --accent-2:  #17303E;
+      --good:      #6FCBA4;
+      --good-bg:   #14302A;
+      --warn:      #E0B15C;
+      --warn-bg:   #33290F;
+      --bad:       #EF9187;
+      --bad-bg:    #351E1B;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:     #0D1418;
+    --surface:   #141E23;
+    --surface-2: #18242A;
+    --ink:       #E3EDF1;
+    --ink-soft:  #9DB0B8;
+    --ink-faint: #728891;
+    --rule:      #27363D;
+    --rule-soft: #1E2C32;
+    --accent:    #79C0E8;
+    --accent-2:  #17303E;
+    --good:      #6FCBA4;
+    --good-bg:   #14302A;
+    --warn:      #E0B15C;
+    --warn-bg:   #33290F;
+    --bad:       #EF9187;
+    --bad-bg:    #351E1B;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+  }
+
+  /* ------------------------------------------------------------ base */
+  * { box-sizing: border-box; }
+
+  body {
+    direction: rtl;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--ar);
+    font-size: var(--step-0);
+    line-height: 1.75;
+    margin: 0;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap {
+    max-width: 1220px;
+    margin-inline: auto;
+    padding: 0 clamp(1rem, 4vw, 2.5rem) 6rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+  }
+
+  @media (min-width: 1040px) {
+    .wrap {
+      grid-template-columns: 15.5rem minmax(0, 1fr);
+      align-items: start;
+      column-gap: 3.25rem;
+    }
+  }
+
+  h1, h2, h3, h4 { text-wrap: balance; margin: 0; font-weight: 650; line-height: 1.35; }
+
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  code, .mono, .num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  /* ----------------------------------------------------------- masthead */
+  .masthead {
+    grid-column: 1 / -1;
+    border-block-end: 2px solid var(--ink);
+    padding: clamp(2.25rem, 6vw, 3.5rem) 0 1.5rem;
+    margin-block-end: .5rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 .85rem;
+  }
+  .masthead h1 {
+    font-size: clamp(1.9rem, 5.5vw, var(--step-4));
+    letter-spacing: -.015em;
+  }
+  .masthead p.lede {
+    max-width: 56ch;
+    color: var(--ink-soft);
+    margin: .75rem 0 0;
+    font-size: var(--step-1);
+  }
+  .masthead .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 1.5rem;
+    margin-block-start: 1.4rem;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+  }
+
+  /* --------------------------------------------------------------- toc */
+  .rail { display: contents; }
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1rem 1.1rem 1.2rem;
+    box-shadow: var(--shadow);
+  }
+  @media (min-width: 1040px) {
+    .toc { position: sticky; top: 1.25rem; max-height: calc(100vh - 2.5rem); overflow-y: auto; }
+  }
+  .toc h2 {
+    font-size: var(--step--1);
+    font-family: var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-block-end: .75rem;
+  }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; }
+  .toc a {
+    display: flex;
+    gap: .6rem;
+    text-decoration: none;
+    color: var(--ink-soft);
+    padding: .3rem .45rem;
+    border-radius: 6px;
+    font-size: .9rem;
+    line-height: 1.5;
+  }
+  .toc a:hover { background: var(--surface-2); color: var(--ink); }
+  .toc a.on { background: var(--accent-2); color: var(--accent); font-weight: 600; }
+  .toc a b { font-family: var(--mono); font-weight: 500; color: var(--ink-faint); min-width: 1.4rem; }
+  .toc a.on b { color: var(--accent); }
+
+  .search {
+    width: 100%;
+    font-family: var(--ar);
+    font-size: .9rem;
+    padding: .5rem .7rem;
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    background: var(--surface-2);
+    color: var(--ink);
+    margin-block-end: 1rem;
+  }
+  .search::placeholder { color: var(--ink-faint); }
+
+  .toolbar { display: flex; gap: .5rem; margin-block-start: 1rem; }
+  .toolbar button {
+    flex: 1;
+    font-family: var(--ar);
+    font-size: .82rem;
+    padding: .45rem;
+    border: 1px solid var(--rule);
+    background: var(--surface-2);
+    color: var(--ink-soft);
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+  /* ------------------------------------------------------------ content */
+  main { min-width: 0; display: flex; flex-direction: column; gap: 3.25rem; }
+
+  section.chapter { scroll-margin-top: 1rem; }
+
+  .chapter > header {
+    display: flex;
+    align-items: baseline;
+    gap: .85rem;
+    padding-block-end: .6rem;
+    border-block-end: 1px solid var(--ink);
+    margin-block-end: 1.5rem;
+  }
+  .chapter > header .n {
+    font-family: var(--mono);
+    font-size: var(--step-1);
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .chapter > header h2 { font-size: var(--step-3); letter-spacing: -.01em; }
+
+  .chapter > p, .chapter > .note { max-width: 68ch; }
+  .chapter > p { color: var(--ink-soft); margin: 0 0 1.25rem; }
+
+  /* ------------------------------------------------------------- cards */
+  .proc {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1.25rem 1.4rem 1.4rem;
+    margin-block-end: 1rem;
+    box-shadow: var(--shadow);
+  }
+  .proc > h3 { font-size: var(--step-1); margin-block-end: .3rem; }
+  .proc > .why { color: var(--ink-soft); font-size: .93rem; margin: .35rem 0 0; max-width: 66ch; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-start: .7rem; }
+  .chip {
+    font-size: .78rem;
+    padding: .16rem .55rem;
+    border-radius: 999px;
+    border: 1px solid var(--rule);
+    color: var(--ink-soft);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  .chip.screen { font-family: var(--mono); direction: ltr; color: var(--accent); border-color: var(--accent); background: var(--accent-2); }
+  .chip.role::before { content: "👤 "; }
+
+  ol.steps { margin: 1.1rem 0 0; padding-inline-start: 1.4rem; display: flex; flex-direction: column; gap: .55rem; }
+  ol.steps li { padding-inline-start: .25rem; }
+  ol.steps li::marker { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  ol.steps ul { margin: .4rem 0 0; padding-inline-start: 1.1rem; color: var(--ink-soft); font-size: .93rem; }
+  ol.steps ul li { margin-block-end: .2rem; }
+
+  .stop {
+    margin-block-start: 1rem;
+    border-inline-start: 3px solid var(--warn);
+    background: var(--warn-bg);
+    color: var(--ink);
+    padding: .7rem .9rem;
+    border-radius: 0 8px 8px 0;
+    font-size: .9rem;
+  }
+  .stop b { color: var(--warn); }
+
+  .rule-box {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-inline-start: 3px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    padding: 1rem 1.2rem;
+    margin-block-end: .85rem;
+  }
+  .rule-box h3 { font-size: var(--step-0); margin-block-end: .3rem; }
+  .rule-box p { margin: .35rem 0 0; color: var(--ink-soft); font-size: .93rem; }
+  .rule-box .why-label {
+    font-family: var(--mono);
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--ink-faint);
+  }
+
+  /* ------------------------------------------------------------ tables */
+  .scroller { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; min-width: 34rem; }
+  thead th {
+    text-align: start;
+    font-weight: 600;
+    font-size: .8rem;
+    color: var(--ink-faint);
+    letter-spacing: .04em;
+    padding: .7rem .9rem;
+    border-block-end: 1px solid var(--rule);
+    background: var(--surface-2);
+    position: sticky;
+    top: 0;
+  }
+  tbody td { padding: .65rem .9rem; border-block-end: 1px solid var(--rule-soft); vertical-align: top; }
+  tbody tr:last-child td { border-block-end: 0; }
+  td.msg { font-family: var(--mono); direction: ltr; text-align: start; font-size: .82rem; color: var(--ink); min-width: 16rem; }
+  td .num, td code { font-size: .85rem; }
+
+  .sev { display: inline-block; font-size: .74rem; padding: .1rem .5rem; border-radius: 999px; white-space: nowrap; }
+  .sev.crit { background: var(--bad-bg); color: var(--bad); }
+  .sev.warn { background: var(--warn-bg); color: var(--warn); }
+  .sev.info { background: var(--accent-2); color: var(--accent); }
+  .sev.ok   { background: var(--good-bg); color: var(--good); }
+
+  /* --------------------------------------------------------- flow chain */
+  .chain { display: flex; flex-direction: column; gap: .5rem; margin-block-end: 1.5rem; counter-reset: link; }
+  .link {
+    display: grid;
+    grid-template-columns: 2.1rem 1fr;
+    gap: .9rem;
+    align-items: start;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    padding: .7rem .9rem;
+  }
+  .link .dot {
+    font-family: var(--mono);
+    font-size: .85rem;
+    color: var(--accent);
+    background: var(--accent-2);
+    border-radius: 6px;
+    text-align: center;
+    padding: .2rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .link b { display: block; font-weight: 600; }
+  .link span { color: var(--ink-soft); font-size: .89rem; }
+  .link .where { font-family: var(--mono); direction: ltr; font-size: .8rem; color: var(--accent); }
+
+  /* ----------------------------------------------------------- checklist */
+  ul.check { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+  ul.check li {
+    display: flex;
+    gap: .65rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: .55rem .8rem;
+    font-size: .93rem;
+  }
+  ul.check li::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 1rem; height: 1rem;
+    border: 1.5px solid var(--ink-faint);
+    border-radius: 3px;
+    margin-block-start: .35rem;
+  }
+
+  .cols { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+  @media (min-width: 720px) { .cols { grid-template-columns: repeat(3, 1fr); } }
+  .cols > div { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; }
+  .cols h3 { font-size: var(--step-0); margin-block-end: .7rem; padding-block-end: .5rem; border-block-end: 1px solid var(--rule-soft); }
+
+  .empty {
+    display: none;
+    text-align: center;
+    color: var(--ink-faint);
+    padding: 2rem;
+    font-size: .95rem;
+  }
+
+  footer.colophon {
+    grid-column: 1 / -1;
+    border-block-start: 1px solid var(--rule);
+    padding-block-start: 1.25rem;
+    margin-block-start: 1rem;
+    color: var(--ink-faint);
+    font-size: .85rem;
+    max-width: 68ch;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+
+  /* ------------------------------------------------------------- print */
+  @media print {
+    :root { --paper: #fff; --surface: #fff; --surface-2: #fff; --shadow: none; }
+    body { font-size: 10.5pt; line-height: 1.5; }
+    .rail, .toolbar, .search { display: none !important; }
+    .wrap { display: block; max-width: none; padding: 0; }
+    main { gap: 1.6rem; }
+    section.chapter { break-inside: auto; }
+    .proc, .rule-box, .link, ul.check li, .scroller { break-inside: avoid; box-shadow: none; }
+    .chapter > header { break-after: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Cashmere OS · دليل التشغيل · نسخة ١</p>
+    <h1>دليل تشغيل كاشمير أو إس</h1>
+    <p class="lede">
+      كل شاشة في السيستم، بترتيب الشغل الحقيقي: مين بيعملها، بيدوس على إيه،
+      وبيحصل إيه في الدفاتر ورا الزرار. ولو وقفت في حتة، فيه بند مكتوب فيه تعمل إيه.
+    </p>
+    <div class="meta">
+      <span>الفلوس كلها بالجنيه المصري</span>
+      <span>الشاشات بالعربي والإنجليزي — زرار اللغة فوق</span>
+      <span>لو حاجة هنا مش مطابقة للشاشة، الشاشة هي الصح</span>
+    </div>
+  </header>
+
+  <div class="rail">
+    <nav class="toc" aria-label="فهرس الدليل">
+      <input class="search" id="q" type="search" placeholder="دوّر على شاشة أو مشكلة…" aria-label="بحث في الدليل">
+      <h2>الفهرس</h2>
+      <ol id="toc-list">
+        <li><a href="#c0"><b>٠</b> قبل ما تبدأ</a></li>
+        <li><a href="#c1"><b>١</b> رحلة القطعة</a></li>
+        <li><a href="#c2"><b>٢</b> المشتريات والمخزن</a></li>
+        <li><a href="#c3"><b>٣</b> الموديل وتكلفته</a></li>
+        <li><a href="#c4"><b>٤</b> الإنتاج</a></li>
+        <li><a href="#c5"><b>٥</b> من المصنع للبراند</a></li>
+        <li><a href="#c6"><b>٦</b> المعرض والبيع</a></li>
+        <li><a href="#c7"><b>٧</b> بيع من نوع تاني</a></li>
+        <li><a href="#c8"><b>٨</b> الفلوس والاعتمادات</a></li>
+        <li><a href="#c9"><b>٩</b> الموظفين والأجور</a></li>
+        <li><a href="#c10"><b>١٠</b> التصنيع للغير</a></li>
+        <li><a href="#c11"><b>١١</b> قفلة الشهر</a></li>
+        <li><a href="#c12"><b>١٢</b> قواعد مش بتتكسر</a></li>
+        <li><a href="#c13"><b>١٣</b> لو ظهرت رسالة</a></li>
+        <li><a href="#c14"><b>١٤</b> التنبيهات</a></li>
+        <li><a href="#c15"><b>١٥</b> الإعدادات</a></li>
+        <li><a href="#c16"><b>١٦</b> الصلاحيات</a></li>
+        <li><a href="#c17"><b>١٧</b> النسخ الاحتياطي</a></li>
+        <li><a href="#c18"><b>١٨</b> تشيك ليست</a></li>
+      </ol>
+      <div class="toolbar">
+        <button type="button" onclick="window.print()">اطبع</button>
+        <button type="button" id="clear">امسح البحث</button>
+      </div>
+    </nav>
+  </div>
+
+  <main>
+    <p class="empty" id="empty">مفيش حاجة بالكلمة دي. جرّب كلمة أقصر.</p>
+
+    <!-- ═══════════════════════════════════════════════ 0 -->
+    <section class="chapter" id="c0">
+      <header><span class="n">٠</span><h2>قبل ما تبدأ</h2></header>
+      <p>
+        السيستم ده بيشغّل شركتين مع بعض ومنفصلين في نفس الوقت: <b>المصنع</b> اللي بيصنّع،
+        و<b>البراند</b> اللي بيبيع. المصنع بيبيع للبراند بفاتورة زي أي عميل بره،
+        عشان نعرف المصنع بيكسب كام والبراند بيكسب كام، مش رقم واحد مخلبط.
+      </p>
+
+      <div class="proc">
+        <h3>الدخول على السيستم</h3>
+        <div class="chips"><span class="chip screen">/login</span><span class="chip role">أي حد</span></div>
+        <ol class="steps">
+          <li>افتح لينك السيستم واكتب الإيميل والباسورد بتاعك.</li>
+          <li>أول مرة تدخل، السيستم هيوديك على شاشة تغيير الباسورد غصب عنك، ومش هتقدر تفتح أي شاشة قبل ما تغيّره.
+            <ul>
+              <li>الباسورد لازم <b>١٠ حروف على الأقل</b>، وفيه <b>رقم أو رمز</b> — مش كلمة واحدة سادة.</li>
+              <li>اللي بيفتحلك الحساب بيديك باسورد مؤقت، وهو نفسه مايعرفش الجديد بعد ما تغيّره.</li>
+            </ul>
+          </li>
+          <li>لو غلطت في الباسورد <b>٨ مرات</b>، الحساب بيتقفل <b>١٥ دقيقة</b> ويفتح لوحده بعدها.</li>
+        </ol>
+        <div class="stop"><b>ملاحظة:</b> السيستم بيقولك «الإيميل أو كلمة المرور غير صحيحة» حتى لو الحساب مقفول — ده مقصود، عشان محدش بيجرّب من بره يعرف إن الإيميل ده موجود أصلاً. لو متأكد إن الباسورد صح، استنى ١٥ دقيقة أو كلّم صاحب الحساب الرئيسي.</div>
+      </div>
+
+      <div class="proc">
+        <h3>مبدّل الكيان واللغة</h3>
+        <div class="chips"><span class="chip">فوق على اليمين</span></div>
+        <ol class="steps">
+          <li><b>المصنع</b> — شاشات الإنتاج والخامات وتكلفة الدقيقة.</li>
+          <li><b>البراند</b> — شاشات المعرض والبيع والعملاء.</li>
+          <li><b>المجموعة</b> — الاتنين مع بعض، وده اللي بيوريك نتيجة الشركة كلها.</li>
+          <li>زرار اللغة بيقلب الشاشة عربي/إنجليزي. الأرقام والفلوس بتفضل بالأرقام الإنجليزية في الحالتين — ده المتعارف عليه في المحاسبة المصرية.</li>
+        </ol>
+        <div class="stop"><b>لو شاشة مش ظاهرة لك:</b> ده مش عطل. يا إما إنت في الكيان الغلط (جرّب تبدّل)، يا إما صلاحيتك مافيهاش الشاشة دي — راجع بند <a href="#c16">١٦</a>.</div>
+      </div>
+
+      <div class="proc">
+        <h3>ثلاث حاجات اعرفهم من دلوقتي</h3>
+        <ol class="steps">
+          <li><b>مفيش حاجة بتتمسح.</b> الغلط بيتصلح بحركة جديدة بتشاور على القديمة، والقديم بيفضل مكتوب. حتى الموظف اللي بيمشي، حسابه بيتقفل ومابيتمسحش، عشان القيود اللي عملها تفضل معروفة اتعملت منين.</li>
+          <li><b>كل زرار بيسيب أثر.</b> كل حركة متسجل عليها مين عملها وامتى وليه.</li>
+          <li><b>محدش بيوافق على اللي هو كتبه.</b> ده مش قلة ثقة، ده اللي بيخلي الأرقام قابلة إن حد يصدقها من بره.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 1 -->
+    <section class="chapter" id="c1">
+      <header><span class="n">١</span><h2>رحلة القطعة من أول القماش</h2></header>
+      <p>
+        ده الترتيب اللي كل حاجة تانية في السيستم مبنية عليه. أي خطوة اتخطّت،
+        اللي بعدها هيقف ويقولك ناقص إيه.
+      </p>
+
+      <div class="chain">
+        <div class="link"><span class="dot">١</span><div><b>تجيب المورد والخامة</b><span> — بتسجّل المورد، وبعدين القماش بسعره وشحنه وجماركه. </span><span class="where">/suppliers · /materials</span></div></div>
+        <div class="link"><span class="dot">٢</span><div><b>تشتري</b><span> — أمر شراء، وبعدين تستلم اللي وصل فعلاً بسعره الفعلي. الخامة تدخل المخزن. </span><span class="where">/purchasing</span></div></div>
+        <div class="link"><span class="dot">٣</span><div><b>تعمل الموديل</b><span> — مكوناته وعملياته ودقايقه، وبعدين ألوانه ومقاساته. </span><span class="where">/styles</span></div></div>
+        <div class="link"><span class="dot">٤</span><div><b>تسجّل مصاريف الشهر</b><span> — أجور وإيجار وكهربا. من غيرها تكلفة الدقيقة بصفر. </span><span class="where">/expenses</span></div></div>
+        <div class="link"><span class="dot">٥</span><div><b>تحسب تكلفة الدقيقة</b><span> — الطاقة الأول، وبعدين الحساب. </span><span class="where">/capacity · /minute-rate</span></div></div>
+        <div class="link"><span class="dot">٦</span><div><b>تجمّد تكلفة الموديل</b><span> — لقطة تكلفة بسعر تحويل، ومابتتغيرش بعد كده مهما غلي القماش. </span><span class="where">/costing</span></div></div>
+        <div class="link"><span class="dot">٧</span><div><b>تصنّع</b><span> — أمر إنتاج، تأكيد، صرف خامة، قص، خطوط، جودة، وبعدين إقفال. </span><span class="where">/production</span></div></div>
+        <div class="link"><span class="dot">٨</span><div><b>تشحن للبراند</b><span> — إذن شحن. لسه مافيش فاتورة، والبضاعة لسه بتاعة المصنع. </span><span class="where">/transfers</span></div></div>
+        <div class="link"><span class="dot">٩</span><div><b>المعرض يعدّ ويكوّد</b><span> — ساعتها بس تتعمل الفاتورة، وللعدد اللي وصل فعلاً. </span><span class="where">/goods-in</span></div></div>
+        <div class="link"><span class="dot">١٠</span><div><b>تبيع</b><span> — الدرج بيتفتح، القطعة بتتسكن، الدرج بيتقفل ويتعدّ. </span><span class="where">/pos</span></div></div>
+      </div>
+
+      <div class="stop"><b>الحتة اللي بتلخبط الناس:</b> «شحنت» ≠ «بعت». طول ما البضاعة في الطريق هي لسه في مخزن المصنع، ومش هتلاقيها في الكاشير. الكاشير هيقولك «فيه كذا قطعة مستنية عند المصنع» مع لينك للشحن.</div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 2 -->
+    <section class="chapter" id="c2">
+      <header><span class="n">٢</span><h2>المشتريات والمخزن</h2></header>
+
+      <div class="proc">
+        <h3>٢.١ تسجيل مورد</h3>
+        <div class="chips"><span class="chip screen">/suppliers</span><span class="chip role">مشتريات</span></div>
+        <ol class="steps">
+          <li>«مورد جديد» → كود مختصر، الاسم بالعربي والإنجليزي، اسم المسؤول، تليفون.</li>
+          <li><b>أيام الائتمان</b> — المورد بيدينا كام يوم قبل ما ندفع. الرقم ده بيدخل في حساب دورة الكاش، فمتحطش رقم من دماغك.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٢.٢ تسجيل خامة</h3>
+        <div class="chips"><span class="chip screen">/materials</span><span class="chip role">مشتريات</span></div>
+        <p class="why">التكلفة اللي السيستم بيحسب بيها مش سعر الفاتورة — دي السعر + الشحن + الجمارك. ده اللي القماش «نزل» بيه فعلاً على المخزن.</p>
+        <ol class="steps">
+          <li>كود، اسم، النوع (قماش / إكسسوار)، الوحدة (متر، قطعة…)، والمورد.</li>
+          <li>السعر الأساسي، ونسبة الشحن ونسبة الجمارك <b>ككسر</b> — يعني ٣٪ تتكتب <span class="mono">0.03</span> مش <span class="mono">3</span>.</li>
+          <li>الحد الأدنى للطلب، حجم الرول، مدة التوريد بالأيام، وحد إعادة الطلب.</li>
+          <li>بيانات القماش: التركيب، الجرام، العرض بالسنتي.</li>
+        </ol>
+        <div class="stop"><b>مثال:</b> ١٩٥ جنيه للمتر + شحن ٣٪ + جمارك ٢٪ = <span class="num">204.75</span> هي التكلفة اللي هتتحسب على الموديل. لو حطيت ١٩٥ بس، كل قطعة هتطلع أرخص من الحقيقة.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٢.٣ أمر شراء واستلام البضاعة</h3>
+        <div class="chips"><span class="chip screen">/purchasing</span><span class="chip role">مشتريات</span><span class="chip role">مخزن</span></div>
+        <ol class="steps">
+          <li><b>أمر شراء:</b> المورد، تاريخ الطلب، التاريخ المتوقع، وبنود (خامة + كمية + سعر).</li>
+          <li>لو المبلغ فوق حد الاعتماد، الأمر بيروح لشاشة الاعتمادات ولازم حد تاني يوافق قبل ما البضاعة تتستلم.</li>
+          <li><b>الاستلام:</b> افتح الأمر واضغط استلام، واكتب لكل بند:
+            <ul>
+              <li><b>المقبول</b> — اللي دخل المخزن فعلاً.</li>
+              <li><b>المرفوض</b> — اللي رجّعته للمورد.</li>
+              <li><b>السعر الفعلي</b> — اللي في فاتورة المورد، حتى لو أغلى من المتفق عليه.</li>
+            </ul>
+          </li>
+          <li>السيستم بيطلّع <b>انحراف السعر</b> لوحده، ويدخّل الكمية المقبولة المخزن بتكلفتها الحقيقية.</li>
+        </ol>
+        <div class="stop"><b>متزوّدش السعر عشان يظبط.</b> الفرق ده هو اللي بيوري إن القماش غلي، ومنه بيطلع تنبيه «مورد رفع السعر» وتقييم المورد. لو خبّيته، مش هتعرف إمتى تفاوض.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٢.٤ الجرد وتعديل المخزون</h3>
+        <div class="chips"><span class="chip screen">/inventory</span><span class="chip role">مخزن</span></div>
+        <ol class="steps">
+          <li>اختار المكان، السيستم بيطلّعلك ورقة عدّ فيها اللي المفروض موجود.</li>
+          <li>عدّ الرف بإيدك واكتب العدد الحقيقي. سيب اللي مظبوط زي ما هو.</li>
+          <li>احفظ. الفرق بيتقيّد على الدفاتر فوراً بتكلفته.</li>
+        </ol>
+        <div class="stop"><b>لو الفرق قيمته فوق <span class="num">5,000</span> جنيه</b> (الرقم في الإعدادات)، لازم شخص تاني يعتمده، <b>واللي عدّ مش بيعتمد عدّه</b>. والقطع المكوّدة اللي مش موجودة بتتسجّل «ضايعة»، والكاشير بعدها بيرفض يبيعها لو حد جاب الكود بتاعها.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٢.٥ كشف القماش</h3>
+        <div class="chips"><span class="chip screen">/materials/ledger</span><span class="chip role">مخزن</span><span class="chip role">إنتاج</span></div>
+        <p class="why">شاشة المخزون بتقولك «عندي كام». الكشف ده بيرد على السؤال اللي بيتسأل وإنت واقف في المخزن قدام قماش معيّن: اشتريت منه كام، سحبت منه كام، وفاضل كام.</p>
+        <ol class="steps">
+          <li>اختار النوع (قماش / إكسسوار / الكل).</li>
+          <li>لكل خامة: المشترى، المسحوب، والمتبقي بقيمته.</li>
+          <li><b>المسحوب مقسّم حسب راح فين</b> — اللي اتصرف على أمر إنتاج غير اللي اترمى. الاتنين طرح من نفس الرصيد، وهما مشكلتين مختلفتين خالص.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٢.٦ الشاشات اللي بتراجعها من غير ما تكتب حاجة</h3>
+        <div class="chips"><span class="chip screen">/inventory/dead-stock</span><span class="chip screen">/suppliers/scorecard</span><span class="chip screen">/suppliers/statements</span><span class="chip screen">/mrp</span></div>
+        <ol class="steps">
+          <li><b>المخزون الراكد</b> — اللي عدّى ٩٠ يوم على الرف وفلوسه نايمة فيه.</li>
+          <li><b>تقييم المورد</b> — السعر والتأخير والجودة جنب بعض، مش اسم وخلاص.</li>
+          <li><b>كشف حساب الموردين</b> — إحنا مدينين لمين بكام.</li>
+          <li><b>تخطيط الاحتياجات</b> — الأوامر اللي جاية محتاجة إيه من الخامات، وناقصك كام.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 3 -->
+    <section class="chapter" id="c3">
+      <header><span class="n">٣</span><h2>الموديل وتكلفته</h2></header>
+
+      <div class="proc">
+        <h3>٣.١ موديل جديد</h3>
+        <div class="chips"><span class="chip screen">/styles</span><span class="chip role">إنتاج</span></div>
+        <ol class="steps">
+          <li>كود الموديل، الاسم بالعربي والإنجليزي، التشكيلة، وسعر البيع للجمهور.</li>
+          <li><b>الهالك المخطط</b> ككسر (١٠٪ = <span class="mono">0.1</span>) — القماش اللي بيروح في القص.</li>
+          <li><b>المكونات:</b> كل خامة والكمية المعيارية للقطعة الواحدة (٢.٤ متر، زرار، سوستة…).</li>
+          <li><b>العمليات:</b> قص، خياطة، تشطيب، مكوى… وكل واحدة بدقايقها. مجموعهم هو دقايق القطعة.</li>
+          <li><b>الألوان والمقاسات</b> → السيستم بيولّد كل الأكواد (SKU) لوحده.</li>
+          <li>صور الموديل واللون — دي اللي بتظهر للكاشير على الشاشة.</li>
+        </ol>
+        <div class="stop"><b>متكتبش الدقايق رقم واحد من دماغك.</b> لما تكون عمليات، تقدر تفتحها وتشوف الخياطة واخدة كام والمكوى واخدة كام. الرقم الواحد مالوش مراجعة.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٣.٢ الطاقة وتكلفة الدقيقة</h3>
+        <div class="chips"><span class="chip screen">/capacity</span><span class="chip screen">/minute-rate</span><span class="chip role">إنتاج</span><span class="chip role">محاسب</span></div>
+        <p class="why">ده عمود السيستم كله. كل حاجة المصنع بيعملها بتتحسب بالدقيقة.</p>
+        <ol class="steps">
+          <li>في شاشة الطاقة، حدّد للشهر: عدد العمال، أيام الشغل، ساعات اليوم، <b>نسبة التشغيل</b>، و<b>الكفاءة</b>.
+            <ul>
+              <li>النسب <b>كسور</b>: ٨٥٪ = <span class="mono">0.85</span>. لو كتبت <span class="mono">85</span> السيستم هيرفض ويقولك.</li>
+              <li><b>نسبة التشغيل</b> = الدقايق المحجوزة بأوردرات. لو واطية دي مشكلة <b>مبيعات</b>.</li>
+              <li><b>الكفاءة</b> = الشغل اللي طلع مقابل الوقت المدفوع. لو واطية دي مشكلة <b>صالة</b>.</li>
+            </ul>
+          </li>
+          <li>في شاشة تكلفة الدقيقة، اضغط «احسب». السيستم بيقرا مصاريف المصنع من القيود المرحّلة — مش من إيدك.</li>
+          <li>بيطلعلك رقمين:
+            <ul>
+              <li><b>تكلفة الدقيقة الفعلية</b> — ده اللي البراند بيدفعه دلوقتي.</li>
+              <li><b>تكلفة الدقيقة عند الطاقة الكاملة</b> — لو المصنع كان مليان. وده <b>الأرضية</b> اللي عمرك ما تنزل تحتها في تسعير شغل بره.</li>
+            </ul>
+          </li>
+          <li>الفرق بينهم هو <b>الطاقة العاطلة</b>: تكلفة الكراسي الفاضية، محسوبة على كل قطعة بتخرج.</li>
+        </ol>
+        <div class="stop"><b>لو الرقم طلع صفر أو غريب:</b> غالباً مصاريف الشهر لسه ماتسجلتش، أو الطاقة مش متظبطة للشهر ده. سجّل المصاريف الأول وبعدين اضغط احسب تاني.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٣.٣ تجميد تكلفة الموديل</h3>
+        <div class="chips"><span class="chip screen">/costing</span><span class="chip role">محاسب</span><span class="chip role">صاحب العمل</span></div>
+        <ol class="steps">
+          <li>اختار الموديل وشهر تكلفة الدقيقة. السيستم بيوريك الحساب مفتوح: خامات + تصنيع = تكلفة المصنع، وعليها الهامش = <b>سعر التحويل</b>.</li>
+          <li>راجع السطر اللي بيقول «منها طاقة عاطلة» — ده جزء مدفون جوه التكلفة وبيقولك المصنع الفاضي بيكلفك كام في القطعة.</li>
+          <li>اضغط «تجميد التكلفة» واكتب السبب.</li>
+        </ol>
+        <div class="stop"><b>اللقطة المجمّدة مابتتعدلش أبداً.</b> لو القماش غلي بكرة، بتعمل لقطة <b>جديدة</b>. القديمة بتفضل زي ما هي عشان الأوردر اللي اتعمل بيها يفضل صح. ولو الهامش نزل تحت ١٢٪ السيستم بيرفع تنبيه أحمر — يعني المصنع بيدّي البراند سعر مش هيديه لحد بره، وخسارة المصنع بتتنقل للبراند وخلاص.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٣.٤ تسعير البراند</h3>
+        <div class="chips"><span class="chip screen">/pricing</span><span class="chip role">مدير البراند</span></div>
+        <p class="why">المصنع بيقف عند سعر التحويل. البراند لسه عنده معرض وشحن ورسوم دفع وتسويق ومرتجعات، وكل ده لازم يخرج من سعر البيع قبل ما نقول «كسبنا».</p>
+        <ol class="steps">
+          <li>الشاشة بتوريك لكل موديل: سعر التحويل، التكاليف المتغيرة، هامش المساهمة، والسعر المقترح.</li>
+          <li>راجع <span class="mono">/reports/break-even</span> — نقطة التعادل بتتقال كنسبة من الأوردر («٣٤٠ قطعة = ٦٢٪ من الرن»). فوق ٦٠٪ بتتعلّم كخطر.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 4 -->
+    <section class="chapter" id="c4">
+      <header><span class="n">٤</span><h2>الإنتاج — الصالة</h2></header>
+
+      <div class="proc">
+        <h3>٤.١ أمر الإنتاج من أوله لآخره</h3>
+        <div class="chips"><span class="chip screen">/production</span><span class="chip role">إنتاج</span></div>
+        <ol class="steps">
+          <li><b>افتح الأمر:</b> الموديل، الكمية المخططة، التاريخ، وتاريخ البدء والتسليم.</li>
+          <li><b>أكّد الأمر:</b> اختار شهر تكلفة الدقيقة. <b>التأكيد بيجمّد تكلفة القطعة</b> — بعد كده مهما تغيرت الأسعار، الأمر ده تكلفته اتقفلت.</li>
+          <li><b>اصرف الخامات:</b> لكل خامة — المكان، الكمية، التاريخ، وعدد القطع المقصوصة.
+            <ul>
+              <li>اصرف <b>كل</b> المكونات، مش القماش بس. الأمر اللي ماتصرفلوش الإكسسوارات هيرفض يقفل.</li>
+              <li>الخامة بتخرج بتكلفتها الحقيقية بنظام «الأول دخولاً أول خروجاً» — مش بمتوسط ولا برقم مكتوب بالإيد.</li>
+            </ul>
+          </li>
+          <li><b>اقفل الأمر:</b> اكتب اللي طلع لكل مقاس ولون على حدة، والمرفوض، وإجمالي الدقايق الفعلية، والمكان، والتاريخ.</li>
+          <li>ساعة الإقفال السيستم بيطبع <b>كود لكل قطعة</b> — واحدة واحدة، مش للموديل.</li>
+        </ol>
+        <div class="stop"><b>الكميات لازم أرقام صحيحة.</b> القطعة بتخرج كاملة. ولو كتبت نفس المقاس مرتين السيستم هيرفض بدل ما يجمعهم غلط.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٢ تذكرة القص</h3>
+        <div class="chips"><span class="chip screen">/production/cutting</span><span class="chip role">صالة</span></div>
+        <ol class="steps">
+          <li>اختار الأمر، واكتب طول الماركر بالمتر، عدد الطبقات، وعدد القطع اللي اتقصّت.</li>
+          <li>السيستم بيقارن اللي اتصرف باللي المفروض، ويطلّع <b>الهالك الفعلي</b>.</li>
+        </ol>
+        <div class="stop"><b>ده مش ورق زيادة.</b> الهالك الفعلي بيتقارن بالمخطط، ولو زاد الموديل بيتعلّم. التكلفة بتفضل بالنسبة المخططة — الفعلي بيروح لتقرير الانحراف، عشان تكاليف الماضي متتغيرش.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٣ شيفت الخط</h3>
+        <div class="chips"><span class="chip screen">/production/lines</span><span class="chip role">مشرف خط</span></div>
+        <ol class="steps">
+          <li>الخط، الأمر، المرحلة (قص / خياطة / تشطيب / جودة / تغليف).</li>
+          <li>الداخل، الخارج، عدد العمال، والدقايق المدفوعة.</li>
+          <li>السيستم بيحسب كفاءة الشيفت مقابل المعياري ويلوّنها.</li>
+        </ol>
+        <div class="stop"><b>ليه بنسجّل ده كل يوم؟</b> عشان لما الكفاءة تقع، تعرف <b>أنهي خط</b> ومتقفش عند متوسط المصنع.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٤ إنتاجية العامل</h3>
+        <div class="chips"><span class="chip screen">/production/operators</span><span class="chip role">مشرف</span></div>
+        <ol class="steps">
+          <li>اختار العامل واليوم، واكتب الدقايق المعيارية اللي أنتجها.</li>
+          <li>لو العامل مربوط بملف موظف، <b>الدقايق المدفوعة بتيجي من البصمة لوحدها</b> ومابتتكتبش بالإيد.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٥ الجودة وإعادة التشغيل</h3>
+        <div class="chips"><span class="chip screen">/production/quality</span><span class="chip role">جودة</span></div>
+        <ol class="steps">
+          <li><b>فحص:</b> الأمر، العدد المفحوص، العيوب، وملاحظة بالعيب إيه.</li>
+          <li><b>إعادة تشغيل:</b> النوع (إعادة خياطة / مكوى / تغليف / قص)، الدقايق للقطعة، والخامة المستهلكة لو فيه.</li>
+          <li>التكلفة بتتحسب: الدقايق × تكلفة الدقيقة المجمّدة، + الخامة بتكلفتها من المخزن. <b>مش بتتكتب بالإيد.</b></li>
+        </ol>
+        <div class="stop">لو الشاشة قالت مافيش تكلفة دقيقة للفترة، روح احسبها الأول من <span class="mono">/minute-rate</span> وارجع.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٦ القصاصات</h3>
+        <div class="chips"><span class="chip screen">/production/scrap</span><span class="chip role">صالة</span><span class="chip role">مخزن</span></div>
+        <ol class="steps">
+          <li>المصدر (أمر إنتاج أو خامة) والكمية.</li>
+          <li>راحت فين: <b>اتباعت</b> / <b>اترمت</b> / <b>اتستخدمت في عينات</b> / <b>رجعت المخزن</b>.</li>
+          <li>لو اتباعت اكتب المبلغ اللي اتاخد. الخسارة = التكلفة ناقص المبلغ ده.</li>
+        </ol>
+        <div class="stop">«رجعت المخزن» يعني القماش مانزلش أصلاً — مفيش خسارة ومفيش قيد. متستخدمهاش عشان تخفي هالك.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٤.٧ كود القطعة</h3>
+        <div class="chips"><span class="chip screen">/print/labels/…</span></div>
+        <p class="why">كل قطعة ليها كود ٨ حروف يخصها هي، مش الموديل. اتنين أسود مقاس M من نفس الرن بيتفرقوا عن بعض. ده اللي بيخلي «اتباعت أنهي واحدة» و«رجعت أنهي واحدة» و«التلاتة اللي ماوصلوش» أسئلة ليها إجابة.</p>
+        <ol class="steps">
+          <li>الأكواد بتتطبع ساعة إقفال أمر الإنتاج.</li>
+          <li>الليبل ٤٠×٢٠ مم، ليبل لكل قطعة، والمقاس في الإعدادات.</li>
+          <li>الحروف مافيهاش <span class="mono">0</span> ولا <span class="mono">O</span> ولا <span class="mono">1</span> ولا <span class="mono">I</span> ولا <span class="mono">L</span> — عشان محدش يقراها غلط، وفيه حرف تشييك في آخرها بيمسك أي حرف ناقص أو مقلوب.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 5 -->
+    <section class="chapter" id="c5">
+      <header><span class="n">٥</span><h2>من المصنع للبراند</h2></header>
+      <p>
+        دي شركتين مختلفتين، فالبضاعة بتعدّي بينهم بفاتورة. وبتعدّي على مرحلتين،
+        بنفس منطق إن الكوريير بيخليك تمضي على الاستلام.
+      </p>
+
+      <div class="proc">
+        <h3>٥.١ الشحن — المصنع</h3>
+        <div class="chips"><span class="chip screen">/transfers</span><span class="chip role">مخزن المصنع</span></div>
+        <ol class="steps">
+          <li>الشاشة بتوريك صف لكل كود بضاعة جاهز للشحن، وجنبه <b>سعر التحويل جاي من اللقطة المجمّدة</b> — مش بيتكتب.</li>
+          <li>اكتب الكمية والتاريخ واضغط شحن. بيتعمل <b>إذن شحن</b>.</li>
+          <li><b>مفيش فاتورة دلوقتي.</b> البضاعة لسه بتاعة المصنع وهي في الطريق.</li>
+        </ol>
+        <div class="stop">لو صف مقفول ومكتوب جنبه سبب، غالباً الموديل ده مالوش لقطة تكلفة مجمّدة. روح <span class="mono">/costing</span> وجمّدها.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٥.٢ الوارد — المعرض</h3>
+        <div class="chips"><span class="chip screen">/goods-in</span><span class="chip role">معرض</span></div>
+        <ol class="steps">
+          <li>افتح الشحنة. خانة العدد <b>فاضية بقصد</b> — لو كانت مليانة سلفاً حد كان هيمضي من غير ما يفتح الكرتونة.</li>
+          <li><b>عدّ بإيدك</b> واكتب العدد، واختار المكان اللي دخلت فيه وتاريخ الاستلام.</li>
+          <li>اضغط «اطبع الليبل والباركود»، لبّس الليبلات على القطع، وبعدين علّم «اتطبعت واتلبّست».</li>
+          <li>اضغط «استلم وادخل المعرض». <b>هنا بتتعمل الفاتورة</b>، وللعدد اللي وصل فعلاً.</li>
+        </ol>
+        <div class="stop">
+          <b>لو ناقص:</b> السيستم هيسألك حصل إيه، وهيسمّي القطع الضايعة بأكوادها. الناقص ده بيتحمّله <b>المصنع</b> كفاقد، والبراند بيتفوترله اللي وصل بس.<br>
+          <b>لو زيادة عن الإذن:</b> السيستم هيرفض. مش ممكن يوصل أكتر من اللي اتبعت — راجع العد.<br>
+          <b>من غير ليبل:</b> مفيش استلام. القطعة من غير باركود لا الكاشير يقدر يبيعها ولا الجرد يقدر يعدّها.
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 6 -->
+    <section class="chapter" id="c6">
+      <header><span class="n">٦</span><h2>المعرض والبيع</h2></header>
+
+      <div class="proc">
+        <h3>٦.١ فتح الدرج</h3>
+        <div class="chips"><span class="chip screen">/pos</span><span class="chip role">كاشير</span></div>
+        <ol class="steps">
+          <li>اختار الفرع واكتب <b>فكة أول اليوم</b> اللي في الدرج، واضغط فتح.</li>
+          <li>الشاشة بتوريك بس البضاعة اللي <b>على رف الفرع ده</b> — مش الكتالوج كله، عشان متوعدش زبون بحاجة مش موجودة.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٦.٢ البيع</h3>
+        <div class="chips"><span class="chip screen">/pos</span><span class="chip role">كاشير</span></div>
+        <ol class="steps">
+          <li><b>اسكان الليبل</b> — دي الطريقة الصح، لأن البيعة بتسمّي القطعة اللي خرجت بالظبط. أو دوس على صورة الموديل لو الكود مقروش.</li>
+          <li>عدّل الكمية لو أكتر من واحدة.</li>
+          <li><b>الخصم</b> — بيظهر لو صلاحيتك فيها خصم. الكاشير العادي بياخد السعر الكامل وبس.</li>
+          <li>اختار طريقة الدفع: <b>كاش</b> / <b>فيزا</b> / <b>إنستا باي</b> / <b>عند الاستلام</b>.</li>
+          <li><b>البيع بالأجل:</b> لازم تختار العميل بالاسم — دين من غير اسم مالوش لازمة. ولازم صلاحية، غير صلاحية الخصم.</li>
+          <li>اضغط إتمام. القطعة بتتشال من الرف وبتتسجّل «اتباعت».</li>
+        </ol>
+        <div class="stop">
+          <b>لو الاسكان رفض:</b> الكود ممكن يكون لقطعة اتباعت خلاص، أو لسه في المصنع، أو في الفرع التاني، أو اتسجّلت ضايعة في الجرد. الشاشة بتقولك أنهي واحدة فيهم بالظبط.<br>
+          بضاعة الأمانة (بند ٧.٣) <b>مابتتباعش بالأجل</b> — لازم تتدفع كاملة.
+        </div>
+      </div>
+
+      <div class="proc">
+        <h3>٦.٣ قفل الدرج</h3>
+        <div class="chips"><span class="chip screen">/pos</span><span class="chip role">محاسب</span><span class="chip role">مدير البراند</span></div>
+        <ol class="steps">
+          <li>عدّ الكاش اللي في الدرج فعلاً واكتبه.</li>
+          <li>السيستم بيقارن باللي المفروض ويطلّع الفرق.</li>
+        </ol>
+        <div class="stop"><b>اللي بيبيع مش بيعدّ الدرج.</b> المحاسب عنده صلاحية يقفل الدرج ومعندوش صلاحية يبيع عليه — بقصد.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٦.٤ المرتجعات</h3>
+        <div class="chips"><span class="chip screen">/returns</span><span class="chip role">كاشير</span><span class="chip role">مدير البراند</span></div>
+        <ol class="steps">
+          <li>دوّر على الأوردر بالرقم أو باسم/تليفون العميل.</li>
+          <li>اختار السطر والكمية الراجعة، ومبلغ الاسترجاع.</li>
+          <li>طريقة الاسترجاع: كاش / فيزا / تحويل بنكي / <b>خصم من حسابه</b>.</li>
+          <li>القطعة الراجعة رايحة فين: <b>ترجع الرف</b> / <b>تتصلّح وترجع</b> / <b>تتشطب</b>.</li>
+        </ol>
+        <div class="stop">مدة الاسترجاع <b>١٤ يوم</b> افتراضياً (في الإعدادات). ومش ممكن ترجّع أكتر من اللي اتباع — اللي رجع قبل كده بيتخصم لوحده، عشان نفس القطعة ماتترجّعش فلوسها مرتين.</div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 7 -->
+    <section class="chapter" id="c7">
+      <header><span class="n">٧</span><h2>بيع من نوع تاني</h2></header>
+
+      <div class="proc">
+        <h3>٧.١ أوردر بالرسايل والموقع</h3>
+        <div class="chips"><span class="chip screen">/sales</span><span class="chip screen">/integrations</span><span class="chip screen">/recovery</span><span class="chip role">مودريتور</span></div>
+        <ol class="steps">
+          <li>الأوردر اللي جاي على الرسايل بيتسجّل في <span class="mono">/sales</span>، و<b>لازم يتسجّل مين المودريتور</b> اللي عمله.</li>
+          <li>أوردرات الموقع بتدخل لوحدها. لو حسّيت إن فيه أوردر ماوصلش، من <span class="mono">/integrations</span> تقدر تسحب تاني وتشوف الأخطاء.</li>
+          <li><span class="mono">/recovery</span> — الناس اللي ملّت العربية وسابوها: الاسم والتليفون واللي كانوا عايزينه. اللي طالب ماتبعتلوش، بيظهر معلّم عشان محدش يكلّمه.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٧.٢ البازارات</h3>
+        <div class="chips"><span class="chip screen">/exhibitions</span><span class="chip role">مدير البراند</span></div>
+        <ol class="steps">
+          <li><b>افتح البازار:</b> الاسم، المكان اللي البضاعة هتطلع منه، وتاريخ البداية والنهاية.</li>
+          <li><b>ابعت البضاعة:</b> اختار القطع من الفرع. البازار بيبقى زي فرع مؤقت.</li>
+          <li><b>بيع عليه</b> من نفس شاشة الكاشير — بس البيعة بتتسجّل إنها بيعة بازار.</li>
+          <li><b>اقفل البازار:</b> عدّ اللي رجع. الفرق بيبان.</li>
+        </ol>
+        <div class="stop">لو الفرق كبير، لازم حد تاني يعتمده، <b>واللي قفل البازار مش بيعتمد العجز بتاعه</b>.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٧.٣ بضاعة الأمانة</h3>
+        <div class="chips"><span class="chip screen">/consignment</span><span class="chip role">مدير البراند</span></div>
+        <p class="why">بضاعة موجودة عندك ومش بتاعتك. اللي بتكسبه هو العمولة بس — باقي الفلوس دي فلوس الناس عندك.</p>
+        <ol class="steps">
+          <li><b>صاحب بضاعة جديد:</b> كود، اسم، ونسبة العمولة ككسر (٢٥٪ = <span class="mono">0.25</span>).</li>
+          <li><b>استلام بضاعة:</b> الوصف، المقاس واللون، الكمية، السعر، وتاريخ رجوعها.</li>
+          <li>بتتباع من شاشة الكاشير عادي مع باقي البضاعة.</li>
+          <li><b>التسوية:</b> ادفع لصاحبها المستحق له. الشاشة بتوريك «فلوس مش بتاعتك» ومكتوب جنبها لمين.</li>
+        </ol>
+      </div>
+
+      <div class="proc">
+        <h3>٧.٤ الأوردرات الخاصة</h3>
+        <div class="chips"><span class="chip screen">/custom-orders</span><span class="chip role">معرض</span></div>
+        <ol class="steps">
+          <li><b>خد الأوردر:</b> العميل، الموديل واللون والمقاس، الكمية، السعر، <b>العربون</b>، وتاريخ التسليم الموعود.</li>
+          <li><b>اربطه بأمر إنتاج</b> لما الشغل يبدأ.</li>
+          <li><b>علّمه جاهز</b> لما يخلص.</li>
+          <li><b>سلّمه</b> وخد الباقي. العربون بيتخصم لوحده.</li>
+        </ol>
+        <div class="stop">الإلغاء لازم بسبب مكتوب. والأوردر المسلّم مابيتلغيش — ده بقى مرتجع، روح <span class="mono">/returns</span>.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٧.٥ ذمم العملاء</h3>
+        <div class="chips"><span class="chip screen">/receivables</span><span class="chip role">محاسب</span></div>
+        <ol class="steps">
+          <li><b>حدّ الائتمان وأيام السداد</b> لكل عميل. لما يوصل للحد، البيع بالأجل بيقف عنده.</li>
+          <li><b>التحصيل:</b> اختار العميل والأوردر واكتب المبلغ وطريقة الدفع.</li>
+          <li>كشف حساب العميل بيوريك عليه إيه وبقاله قد إيه.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 8 -->
+    <section class="chapter" id="c8">
+      <header><span class="n">٨</span><h2>الفلوس والاعتمادات</h2></header>
+
+      <div class="proc">
+        <h3>٨.١ تسجيل مصروف</h3>
+        <div class="chips"><span class="chip screen">/expenses</span><span class="chip role">محاسب</span></div>
+        <p class="why">المصروف بيتسجّل يوم ما <b>يستحق</b>، مش يوم ما يتدفع. البرنامج القديم كان بيسجّل يوم الدفع، وعشان كده كل رقم كان أحسن من الحقيقة — الفواتير اللي لسه ماتدفعتش ماكانتش بتبان أصلاً.</p>
+        <ol class="steps">
+          <li>الكيان (مصنع / براند)، بند التكلفة، الوصف.</li>
+          <li>المبلغ <b>من غير ضريبة</b>، <b>تاريخ الاستحقاق الفعلي</b> (إمتى الالتزام حصل)، و<b>تاريخ السداد</b>.</li>
+          <li>احفظ. القيد بيتعمل فوراً، والمبلغ بيبقى مستحق علينا.</li>
+          <li><b>الدفع حركة تانية خالص</b> — لما تدفع، تفتح المصروف وتسجّل الدفعة. ينفع تدفع جزء.</li>
+        </ol>
+        <div class="stop">اللي لسه ماتدفعش بيتجمّع في <span class="mono">/expenses/aging</span> مترتّب بتاريخ الاستحقاق. ده اللي بيقولك إحنا مدينين بكام فعلاً.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٨.٢ الاعتمادات</h3>
+        <div class="chips"><span class="chip screen">/approvals</span><span class="chip role">معتمد مالي</span><span class="chip role">صاحب العمل</span></div>
+        <ol class="steps">
+          <li>أي مصروف أو أمر شراء <b>فوق <span class="num">10,000</span> جنيه</b> (رقم في الإعدادات) بيقف هنا، ومش بيتدفع قبل الموافقة.</li>
+          <li>وافق، أو رجّعه — والرفض <b>لازم بسبب</b>، عشان اللي كتبه يعرف يعمل إيه.</li>
+        </ol>
+        <div class="stop"><b>ليه فيه حد أصلاً؟</b> عشان إيصال تاكسي بخمسين جنيه لو وقف كل مرة، الناس هتلف حواليه وتقسّم الفواتير — وساعتها الرقابة تبقى أوحش من إنها متكونش موجودة. اللي بيستاهل توقيعين هو بس اللي بيقف.<br>
+        ولو اضطريت تعتمد حاجة إنت كاتبها، السيستم هيسمحلك <b>بس هيطلب سبب مكتوب</b> ويسجّلها إنها تجاوز. صاحب العمل نفسه مش مستثنى.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٨.٣ التسويات</h3>
+        <div class="chips"><span class="chip screen">/reconciliation</span><span class="chip role">محاسب</span></div>
+        <p class="why">الفلوس اللي الكوريير خدها من باب الزبون هي فلوسه هو لحد ما يوردها. عشان كده بتتحط في حساب وسيط — ورصيد الحساب ده بالظبط هو اللي هو مدين لنا بيه.</p>
+        <ol class="steps">
+          <li>لما التوريدة توصل، افتحها وعلّم <b>أوردر أوردر</b> — مش بالإجمالي.</li>
+          <li>الأوردر اللي مادفعوش فيه، سيبه من غير علامة عشان يفضل معلّق.</li>
+          <li><b>كشف البنك:</b> ارفعه، السيستم بيطابق اللي يقدر عليه لوحده، وإنت بتطابق أو بتفسّر الباقي بإيدك.</li>
+        </ol>
+        <div class="stop">لو الفرق ٤٠٠٠ جنيه على الإجمالي، شكله عمولة وهتعدّيها. لو طابقت أوردر أوردر، هتلاقي إنه <b>طرد معيّن محدش دفع فيه</b>. الفرق بين الطريقتين هو الفرق بين إنك تشوف المشكلة وإنك تفسّرها وتنساها.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٨.٤ دفتر اليومية وتصحيح الغلط</h3>
+        <div class="chips"><span class="chip screen">/journal</span><span class="chip role">محاسب</span></div>
+        <p class="why">القيد المرحّل مابيتعدلش ولا بيتمسح — لا من السيستم ولا من قاعدة البيانات نفسها. الطريقة الوحيدة الشريفة لتصحيح غلط هي إنك <b>تعكسه</b>.</p>
+        <ol class="steps">
+          <li>الشاشة بتوريك كل القيود، وتقدر تفلتر بالكيان أو الحساب أو المصدر أو الحالة.</li>
+          <li>لتصحيح قيد: اضغط «اعكس» واكتب <b>السبب بجملة مفهومة</b> (١٠ حروف على الأقل — «تصحيح» مش سبب).</li>
+          <li>بيتعمل قيد <b>مرآة جنب الأصلي</b>، والاتنين بيفضلوا في الدفاتر ومربوطين ببعض.</li>
+        </ol>
+        <div class="stop"><b>ليه مش بنعدّل الأصلي؟</b> عشان يبقى عندك ميزان مراجعة صح النهاردة وتاريخ اتغيّر ورا ضهر الناس. اللي بيراجع الدفاتر من حقه يشوف الغلطة <b>والتصحيح</b>، مش النتيجة النهائية بس.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٨.٥ سجل التدقيق — مين عمل إيه</h3>
+        <div class="chips"><span class="chip screen">/audit</span><span class="chip role">محاسب</span><span class="chip role">معتمد مالي</span><span class="chip role">صاحب العمل</span></div>
+        <ol class="steps">
+          <li>كل حركة ليها معنى متسجّلة: مين، وامتى، وإيه اللي اتغيّر، وأي سبب اتكتب.</li>
+          <li>فلتر بنوع الحركة أو بالشخص أو بالمستند.</li>
+          <li>ده المكان اللي بتروحه لما تسأل «مين اعتمد ده؟» أو «مين غيّر السعر؟».</li>
+        </ol>
+        <div class="stop"><b>قراءة السجل صلاحية لوحدها.</b> السجل بيسجّل حركات اللي بيعتمدوا ويرحّلوا كمان، فالقدرة إنك تقراه مش نفس القدرة إنك تتصرف.</div>
+      </div>
+
+      <div class="proc">
+        <h3>٨.٦ الكاش والتقارير</h3>
+        <div class="chips"><span class="chip screen">/cash-flow</span><span class="chip screen">/reports/…</span></div>
+        <ol class="steps">
+          <li><b>توقعات التدفق النقدي</b> — ١٣ أسبوع جاية من الالتزامات <b>اللي على الدفاتر فعلاً</b>، من غير أحلام مبيعات. الإيجار والمرتبات والأقساط بتتكتب هنا كبنود دورية.</li>
+          <li><b>قائمة دخل المصنع / البراند / المجموعة</b>، <b>نقطة التعادل</b>، <b>دورة الكاش</b>، <b>العائد على المخزون</b>، <b>معدل التصريف</b>، <b>تحليل الخصومات</b>.</li>
+          <li><b>ماذا لو</b> (<span class="mono">/scenarios</span>) — شهر حقيقي بحاجة واحدة متغيرة: القماش غلي ١٠٪، الأجور زادت، التشغيل طلع ٨٥٪. جرّب على الشاشة قبل ما تجرّب بفلوسك.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 9 -->
+    <section class="chapter" id="c9">
+      <header><span class="n">٩</span><h2>الموظفين والأجور</h2></header>
+
+      <div class="proc">
+        <h3>٩.١ الدورة الشهرية</h3>
+        <div class="chips"><span class="chip screen">/hr</span><span class="chip role">موارد بشرية</span><span class="chip role">معتمد مالي</span></div>
+        <ol class="steps">
+          <li><b>الموظفين:</b> تسجيل، وتعديل المرتب بيتسجّل كتاريخ (مش بيمسح القديم).</li>
+          <li><b>ارفع البصمة</b> للشهر.</li>
+          <li><b>استخرج الحضور</b> — السيستم بيطلّع الأيام والساعات والإضافي من البصمة.</li>
+          <li><b>تعديل يوم حضور</b> ينفع، بس <b>بسبب مكتوب</b> إجباري.</li>
+          <li><b>حضّر مسيّر الأجور</b> للشهر.</li>
+          <li><b>الاعتماد والترحيل</b> — <b>حد تاني غيرك</b>. اللي بيحضّر مابيعتمدش.</li>
+        </ol>
+        <div class="stop">لازم الشهر يكون مفتوح. ومسيّر الشهر بيتعمل مرة واحدة، عشان الأجور تدخل تكلفة الدقيقة <b>مرة واحدة بالظبط</b> — لا مرتين ولا ولا مرة.</div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 10 -->
+    <section class="chapter" id="c10">
+      <header><span class="n">١٠</span><h2>التصنيع للغير</h2></header>
+      <p>
+        ده مش شغل جانبي. إيراد التصنيع للغير بيتخصم من مجمع تكاليف المصنع، يعني
+        <b>كل دقيقة فاضية تبيعها فوق الأرضية بتنزّل تكلفة الدقيقة اللي البراند نفسه بيدفعها</b>.
+      </p>
+
+      <div class="proc">
+        <h3>١٠.١ عميل وعرض سعر وأمر</h3>
+        <div class="chips"><span class="chip screen">/cmt/clients</span><span class="chip screen">/cmt/quotes</span><span class="chip screen">/cmt/orders</span><span class="chip role">إنتاج</span></div>
+        <ol class="steps">
+          <li><b>العميل:</b> كود واسم.</li>
+          <li><b>عرض السعر:</b> الموديل، الكمية، دقايق القطعة، والسعر للدقيقة.
+            <ul>
+              <li>الشاشة بتوريك <b>الحد الأدنى</b> (تكلفة الدقيقة عند الطاقة الكاملة)، و<b>السيستم بيرفض</b> أي سعر تحته — مش بيحذّر، بيرفض.</li>
+              <li>فيه كمان حد أدنى للكمية ودقايق تجهيز بتتحسب.</li>
+            </ul>
+          </li>
+          <li><b>أكّد العرض</b> فيتحوّل لأمر، والدقايق بتتحجز على الطاقة.</li>
+          <li><b>اقفل الأمر</b> بالدقايق الفعلية اللي اتاخدت.</li>
+        </ol>
+        <div class="stop"><b>ليه الرفض مش تحذير؟</b> لأنك تحت الأرضية دي بتشتغل بفلوس البراند — البراند هو اللي بيدفع فرق تكلفة الدقايق اللي بعتها رخيص لواحد من بره.</div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 11 -->
+    <section class="chapter" id="c11">
+      <header><span class="n">١١</span><h2>قفلة الشهر — بالترتيب</h2></header>
+      <p>الترتيب ده مش اختياري. كل خطوة بتاكل من اللي قبلها.</p>
+      <ul class="check">
+        <li><b>١.</b> سجّل كل مصاريف الشهر — أجور، إيجار، كهربا، صيانة. أي مصروف ناقص = تكلفة دقيقة أقل من الحقيقة = كل قطعة اتسعّرت غلط.</li>
+        <li><b>٢.</b> حضّر مسيّر الأجور، واعتمده من حد تاني، ورحّله.</li>
+        <li><b>٣.</b> راجع الطاقة للشهر (<span class="mono">/capacity</span>) — عمال، أيام، ساعات، تشغيل، كفاءة.</li>
+        <li><b>٤.</b> احسب تكلفة الدقيقة (<span class="mono">/minute-rate</span>).</li>
+        <li><b>٥.</b> جمّد تكاليف الموديلات اللي هتتصنّع الشهر الجاي (<span class="mono">/costing</span>).</li>
+        <li><b>٦.</b> اقفل كل التوريدات والكشوف البنكية (<span class="mono">/reconciliation</span>).</li>
+        <li><b>٧.</b> راجع أعمار الذمم والمخزون الراكد وقائمة الدخل.</li>
+        <li><b>٨.</b> اقفل الشهر. بعد القفل مفيش كتابة فيه — والصلاحية دي عند المعتمد المالي مش عند المحاسب.</li>
+        <li><b>٩.</b> اتأكد إن النسخة الاحتياطية اتاخدت واتراجعت (بند ١٧).</li>
+      </ul>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 12 -->
+    <section class="chapter" id="c12">
+      <header><span class="n">١٢</span><h2>قواعد مش بتتكسر — وليه</h2></header>
+
+      <div class="rule-box">
+        <h3>المصروف بيتسجّل يوم ما يستحق، مش يوم ما يتدفع</h3>
+        <p class="why-label">ليه</p>
+        <p>لو سجّلناه يوم الدفع، الفواتير اللي علينا مابتبانش، وكل رقم في السيستم يبقى أحسن من الحقيقة. مفيش طريقة في السيستم تسجّل تكلفة يوم ما الفلوس تخرج.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>سعر التحويل للبراند زي سعر أي عميل بره</h3>
+        <p class="why-label">ليه</p>
+        <p>لو نزّلناه «عشان دي بضاعتنا»، خسارة المصنع بتتنقل لدفاتر البراند وخلاص — والسيستم يبقى مش قادر يقولك حاجة مفيدة عن أي واحد فيهم. تحت ١٢٪ هامش، السيستم بيرفع تنبيه أحمر.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>اللقطة المجمّدة والشهر المقفول مابيتغيروش</h3>
+        <p class="why-label">ليه</p>
+        <p>التصحيح بيبقى حركة جديدة بتشاور على القديمة — القيد بيتعكس من <span class="mono">/journal</span> بقيد مرآة، والاتنين بيفضلوا. ده أشهر مكان بيبدأ فيه سيستم زي ده يكدب من غير ما حد ياخد باله، وهو مقفول من أساس قاعدة البيانات نفسها.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>مفيش قطعة تدخل المعرض من غير كود</h3>
+        <p class="why-label">ليه</p>
+        <p>القطعة من غير باركود مش بتتباع ومش بتتعدّ. يعني هي عملياً مش موجودة في السيستم وموجودة على الرف — وده أسوأ من الاتنين.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>الشحن مش بيع</h3>
+        <p class="why-label">ليه</p>
+        <p>البضاعة تفضل بتاعة المصنع لحد ما المعرض يعدّها. عشان كده الشحنة اللي بتوصل ناقصة بتتفوتر ناقصة، والفرق بيتحمّله المصنع — البضاعة كانت في إيده.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>محدش بيوافق على اللي هو كتبه</h3>
+        <p class="why-label">ليه</p>
+        <p>القاعدة على <b>الشخص</b> مش على الوظيفة. الوظيفة ممكن تقول «المحاسب يكتب والمعتمد يوافق»، لكن الجملة الوحيدة اللي ليها معنى هي «مش الراجل ده». ولو اضطريت، بيتسجّل تجاوز بسبب مكتوب.</p>
+      </div>
+
+      <div class="rule-box">
+        <h3>الأرقام بتتحسب مابتتكتبش</h3>
+        <p class="why-label">ليه</p>
+        <p>سعر التحويل جاي من اللقطة، تكلفة الخامة جاية من المخزن، الدقايق المدفوعة جاية من البصمة. أي رقم بيتكتب بالإيد هو رقم محدش يقدر يراجعه.</p>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 13 -->
+    <section class="chapter" id="c13">
+      <header><span class="n">١٣</span><h2>لو ظهرت رسالة ووقفت</h2></header>
+      <p>الرسايل بتظهر بالإنجليزي. دوّر على أقرب جملة، ولو مش لاقيها ابعت صورة الشاشة للمسؤول.</p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>الرسالة</th><th>معناها</th><th>اعمل إيه</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="msg">Style … has no bill of materials</td><td>الموديل مالوش مكونات.</td><td>روح <span class="mono">/styles</span> وضيف الخامات الأول.</td></tr>
+            <tr><td class="msg">Style … has no operations, so it has no SMV</td><td>الموديل مالوش عمليات، يعني مالوش دقايق.</td><td>ضيف العمليات (قص، خياطة…) بدقايقها.</td></tr>
+            <tr><td class="msg">Order has no frozen cost snapshot; confirm it first</td><td>بتحاول تقفل أمر لسه ماتأكدش.</td><td>أكّد الأمر واختار شهر تكلفة الدقيقة.</td></tr>
+            <tr><td class="msg">That material is not in this style's bill of materials</td><td>بتصرف خامة مش في مكونات الموديل.</td><td>راجع الخامة، أو ضيفها للمكونات لو فعلاً بتتستخدم.</td></tr>
+            <tr><td class="msg">Garments come off the line whole; quantities must be integers</td><td>كتبت كسر في عدد القطع.</td><td>اكتب رقم صحيح.</td></tr>
+            <tr><td class="msg">The same SKU is listed twice in the output</td><td>نفس اللون والمقاس متكرر في الإقفال.</td><td>اجمعهم في سطر واحد.</td></tr>
+            <tr><td class="msg">A minute rate has to be calculated … before an order can be confirmed</td><td>مافيش تكلفة دقيقة محسوبة لأي شهر.</td><td><span class="mono">/capacity</span> ثم <span class="mono">/minute-rate</span>.</td></tr>
+            <tr><td class="msg">… is a fraction between 0 and 1 — 85% is 0.85, not 85</td><td>كتبت النسبة كرقم مش ككسر.</td><td>اكتب <span class="mono">0.85</span>.</td></tr>
+            <tr><td class="msg">The note says … More cannot arrive than left</td><td>عددت أكتر من اللي اتشحن.</td><td>عدّ تاني. لو فعلاً زيادة، كلّم المصنع — فيه إذن شحن غلط.</td></tr>
+            <tr><td class="msg">Goods in transit are … not counted in yet</td><td>البضاعة لسه في الطريق.</td><td>استلمها من <span class="mono">/goods-in</span> الأول.</td></tr>
+            <tr><td class="msg">Goods already in transit cannot be despatched again</td><td>الشحنة دي اتبعتت خلاص.</td><td>راجع <span class="mono">/transfers</span>، السطر اتنفّذ قبل كده.</td></tr>
+            <tr><td class="msg">That garment is not on this branch's shelf</td><td>الكود موجود بس مش في الفرع ده.</td><td>شوف الشاشة بتقول هو فين: مباع، عند المصنع، في فرع تاني، أو ضايع.</td></tr>
+            <tr><td class="msg">No garment carries the code …</td><td>الكود غلط أو الليبل تالف.</td><td>اكتبه بإيدك، ولو فضل رافض بيع بالضغط على الموديل.</td></tr>
+            <tr><td class="msg">A POS sale must belong to an open till session</td><td>الدرج مقفول.</td><td>افتح الدرج من <span class="mono">/pos</span>.</td></tr>
+            <tr><td class="msg">That till session is already closed</td><td>بتحاول تسجّل على شيفت مقفول.</td><td>افتح شيفت جديد. البيعة القديمة اتقفلت خلاص.</td></tr>
+            <tr><td class="msg">Choose the customer: a debt with no name cannot be chased</td><td>بيع بالأجل من غير عميل.</td><td>اختار العميل، أو ضيفه من زرار العميل السريع.</td></tr>
+            <tr><td class="msg">Consigned goods … must be paid in full</td><td>فيه بضاعة أمانة في العربية وبتحاول تبيع بالأجل.</td><td>حصّل كامل، أو شيل قطع الأمانة من العربية.</td></tr>
+            <tr><td class="msg">A line has no price — enter one</td><td>سطر من غير سعر.</td><td>اكتب السعر، أو شيل السطر.</td></tr>
+            <tr><td class="msg">… is over the … approval limit and has not been approved yet</td><td>المبلغ فوق الحد ولسه مااتعتمدش.</td><td>سيبه في <span class="mono">/approvals</span> لحد ما المعتمد يوافق.</td></tr>
+            <tr><td class="msg">You raised this expense, so somebody else has to approve it</td><td>بتعتمد حاجة إنت كاتبها.</td><td>خلي حد تاني يعتمد. ولو مفيش، اكتب سبب التجاوز وهيتسجّل باسمك.</td></tr>
+            <tr><td class="msg">That period is closed; payroll must be prepared in an open period</td><td>الشهر مقفول.</td><td>اشتغل على شهر مفتوح. مفيش رجوع للمقفول.</td></tr>
+            <tr><td class="msg">An attendance correction needs a reason</td><td>عدّلت حضور من غير سبب.</td><td>اكتب السبب.</td></tr>
+            <tr><td class="msg">the quote is below the full-capacity floor</td><td>عرض السعر تحت الأرضية.</td><td>ارفع السعر. تحتها البراند بيدفع فرق شغل عميل بره.</td></tr>
+            <tr><td class="msg">Account … is missing from the chart of accounts</td><td>حساب ناقص من شجرة الحسابات.</td><td>ده عطل إعداد مش غلطة منك — بلّغ المسؤول التقني فوراً.</td></tr>
+            <tr><td class="msg">زرار «اعكس» مقفول</td><td>سبب العكس أقصر من ١٠ حروف.</td><td>اكتب جملة تفهّم اللي هيقرا الدفاتر بعد سنة إيه اللي حصل.</td></tr>
+            <tr><td class="msg">Say why it is being sent back / needs a reason</td><td>خانة السبب فاضية.</td><td>اكتب سبب حقيقي — حد تاني هيقراه ويتصرف بيه.</td></tr>
+            <tr><td class="msg">Invalid email or password</td><td>بيانات غلط، أو الحساب مقفول مؤقتاً.</td><td>استنى ١٥ دقيقة، أو كلّم صاحب الحساب الرئيسي يعمل لك باسورد مؤقت.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 14 -->
+    <section class="chapter" id="c14">
+      <header><span class="n">١٤</span><h2>التنبيهات — السيستم بيقولك</h2></header>
+      <p>
+        إحدى عشر قاعدة بتتفحص على البيانات الحقيقية. التنبيه المتكرر بيتجمّع في واحد،
+        فالمشكلة اللي موجودة من تلات أيام هي تنبيه واحد مش تلاتة. تقدر تعلّمه «متشاف»
+        أو تأجّله — واللي بتأجّله بيرجع لو المشكلة لسه موجودة.
+        <span class="mono">/alerts</span>
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>التنبيه</th><th>معناه</th><th>الحد</th><th>الخطورة</th></tr></thead>
+          <tbody>
+            <tr><td>الهالك أعلى من المخطط</td><td>موديل بياكل قماش أكتر من المفروض.</td><td class="num">+2%</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>طاقة عاطلة</td><td>فيه دقايق فاضية الشهر ده أو الجاي.</td><td class="num">50,000 دقيقة</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>خامة تحت حد إعادة الطلب</td><td>الرصيد مش هيكفي مدة التوريد.</td><td class="num">+7 أيام</td><td><span class="sev crit">حرج</span></td></tr>
+            <tr><td>مخزون راكد</td><td>صنف قاعد على الرف من غير بيع.</td><td class="num">90 يوم</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>مورد رفع السعر</td><td>تكلفة خامة نزلت أغلى.</td><td class="num">+10%</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>نقطة التعادل مرتفعة</td><td>لازم تبيع نسبة كبيرة من الرن عشان تتعادل.</td><td class="num">60%</td><td><span class="sev crit">حرج</span></td></tr>
+            <tr><td>سعر التحويل أقل من العادل</td><td>المصنع بيدّي البراند سعر مش هيديه لحد بره.</td><td class="num">12%</td><td><span class="sev crit">حرج</span></td></tr>
+            <tr><td>عجز نقدي متوقع</td><td>المدفوعات هتزيد عن المتحصلات والرصيد.</td><td class="num">30 يوم</td><td><span class="sev crit">حرج</span></td></tr>
+            <tr><td>إعادة تشغيل مرتفعة</td><td>نسبة الإصلاح في أمر إنتاج عالية.</td><td class="num">5%</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>كفاءة خط منخفضة</td><td>خط معيّن تحت المستهدف.</td><td class="num">70%</td><td><span class="sev warn">تحذير</span></td></tr>
+            <tr><td>الطلب أقل من الحد الأدنى</td><td>محتاج ٤٢ متر والرول ١٠٠.</td><td>—</td><td><span class="sev info">للعلم</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 15 -->
+    <section class="chapter" id="c15">
+      <header><span class="n">١٥</span><h2>الإعدادات</h2></header>
+      <p>
+        مفيش رقم متحوّط جوه الكود. كل رقم بيتغيّر من <span class="mono">/settings</span>،
+        وأي تعديل بيتسجّل باسم اللي عمله. النسب كلها <b>كسور</b>.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>الإعداد</th><th>بيغيّر إيه</th><th>الافتراضي</th></tr></thead>
+          <tbody>
+            <tr><td class="msg">factory.markup.default</td><td>هامش المصنع على التكلفة.</td><td class="num">0.18</td></tr>
+            <tr><td class="msg">factory.markup.armsLengthMinimum</td><td>أقل هامش مقبول قبل التنبيه الأحمر.</td><td class="num">0.12</td></tr>
+            <tr><td class="msg">finance.approvalThreshold</td><td>فوقه المصروف محتاج توقيع تاني.</td><td class="num">10,000</td></tr>
+            <tr><td class="msg">inventory.adjustmentApprovalLimit</td><td>فوقه فرق الجرد محتاج اعتماد.</td><td class="num">5,000</td></tr>
+            <tr><td class="msg">inventory.deadStockDays</td><td>بعدها الصنف يبقى راكد.</td><td class="num">90</td></tr>
+            <tr><td class="msg">sales.returnWindowDays</td><td>مدة قبول المرتجع.</td><td class="num">14</td></tr>
+            <tr><td class="msg">waste.varianceThreshold</td><td>فرق الهالك اللي بعده الموديل يتعلّم.</td><td class="num">0.02</td></tr>
+            <tr><td class="msg">breakEven.highRiskPct</td><td>نسبة التعادل اللي فوقها خطر.</td><td class="num">0.60</td></tr>
+            <tr><td class="msg">capacity.defaultWorkingDays / HoursPerDay</td><td>أيام وساعات الشغل الافتراضية.</td><td class="num">26 · 8</td></tr>
+            <tr><td class="msg">payroll.overtimeMultiplier / employerCostPct</td><td>حساب الإضافي وتكلفة صاحب العمل.</td><td>—</td></tr>
+            <tr><td class="msg">label.widthMm / heightMm / …</td><td>مقاس رول الليبل والباركود.</td><td class="num">40 × 20</td></tr>
+            <tr><td class="msg">cmt.setupMinutes / minimumQuantity</td><td>دقايق التجهيز وأقل كمية لشغل بره.</td><td>—</td></tr>
+            <tr><td class="msg">ccc.*</td><td>أجزاء دورة الكاش (خامات، إنتاج، تام، تحصيل، ائتمان المورد).</td><td>—</td></tr>
+            <tr><td class="msg">vat.registered</td><td>الشركة مسجلة ضريبياً ولا لأ.</td><td class="num">false</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="stop" style="margin-top:1rem"><b>متغيّرش رقم من دول من غير ما تفهم بيدخل فين.</b> تغيير هامش المصنع بيغيّر كل سعر تحويل جديد، وتغيير أيام الركود بيغيّر شكل تقرير المخزون الراكد كله.</div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 16 -->
+    <section class="chapter" id="c16">
+      <header><span class="n">١٦</span><h2>الحسابات والصلاحيات</h2></header>
+      <p>
+        اتناشر دور. كل دور بيفتح شاشات معيّنة بس. الشاشة اللي مش شايفها،
+        مش من صلاحيتك — وده مقصود مش عطل. <span class="mono">/users</span>
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>الدور</th><th>بيعمل إيه</th><th>ممنوع عليه</th></tr></thead>
+          <tbody>
+            <tr><td><b>صاحب العمل</b></td><td>كل حاجة.</td><td>مفيش — بس كل حركة بتتسجّل باسمه، والتجاوز بيتكتب إنه تجاوز.</td></tr>
+            <tr><td><b>محاسب</b></td><td>القيود، المصروفات، تكلفة الدقيقة، التقارير، قفل الدرج.</td><td>مايعتمدش مصروف، مايفرجش فلوس، مايقفلش شهر، ومايبيعش على الكاشير.</td></tr>
+            <tr><td><b>معتمد مالي</b></td><td>يوافق على المصروفات وأوامر الشراء والأجور وفروق الجرد، ويقفل الشهر.</td><td>مايكتبش المستندات اللي بيوافق عليها.</td></tr>
+            <tr><td><b>إنتاج</b></td><td>أوامر الإنتاج، التسجيل، أوامر الشراء، الاستلام، عروض التصنيع للغير.</td><td>مايشوفش مرتبات ومايرحّلش قيود.</td></tr>
+            <tr><td><b>مخزن</b></td><td>الاستلام، التحويلات، تعديل المخزون.</td><td>مايعتمدش تعديله بنفسه.</td></tr>
+            <tr><td><b>مدير براند</b></td><td>البيع، الخصم، البيع بالأجل، المرتجعات، التسعير، الحملات، فتح وقفل الدرج.</td><td>مايدخلش على شاشات المصنع.</td></tr>
+            <tr><td><b>مودريتور</b></td><td>يعمل أوردرات الرسايل ويشوف العملاء والمخزون.</td><td>لا خصم ولا مرتجع ولا تعديل مخزون.</td></tr>
+            <tr><td><b>كاشير</b></td><td>يفتح ويبيع على الدرج.</td><td>الخصم والمرتجع صلاحيات منفصلة المشرف بيديها.</td></tr>
+            <tr><td><b>موارد بشرية</b></td><td>الموظفين وتحضير الأجور.</td><td>مايعتمدش الأجور.</td></tr>
+            <tr><td><b>تسويق</b></td><td>الحملات وتقارير البراند.</td><td>مايبيعش ومايعدّلش أسعار.</td></tr>
+            <tr><td><b>مشاهد</b></td><td>يقرا التقارير وبس.</td><td>مايكتبش أي حاجة.</td></tr>
+            <tr><td><b>حساب خدمة</b></td><td>ربط الموقع والبصمة — بيدخّل بيانات وبس.</td><td>أي حاجة تانية.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="proc" style="margin-top:1.25rem">
+        <h3>فتح حساب جديد أو تصفير باسورد</h3>
+        <div class="chips"><span class="chip screen">/users</span><span class="chip role">صاحب العمل</span></div>
+        <ol class="steps">
+          <li>«حساب جديد» → الاسم، الإيميل، الدور، وباسورد مؤقت.</li>
+          <li>ابعتله الباسورد المؤقت. السيستم هيجبره يغيّره قبل ما يفتح أي شاشة.</li>
+          <li><b>تصفير الباسورد</b> بنفس الطريقة — بتديه مؤقت جديد.</li>
+          <li>اللي مش هيشتغل تاني: <b>اقفل حسابه</b>، متمسحوش. الحركات اللي عملها لازم تفضل معروفة اتعملت منين.</li>
+        </ol>
+        <div class="stop">مفيش حد يقدر يقفل حساب نفسه، ومفيش حد يقدر يقفل <b>آخر</b> حساب صاحب عمل — عشان محدش يقفل الشركة بره سيستمها بالغلط.</div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 17 -->
+    <section class="chapter" id="c17">
+      <header><span class="n">١٧</span><h2>النسخ الاحتياطي والتشغيل</h2></header>
+      <p>البند ده للمسؤول التقني. لو مش إنت، عدّيه — بس اعرف إنه موجود.</p>
+
+      <div class="proc">
+        <h3>النسخة الاحتياطية اليومية</h3>
+        <div class="chips"><span class="chip screen">scripts/backup.sh</span></div>
+        <p class="why">النسخة اللي محدش جرّب يرجّعها مش نسخة احتياطية، دي أمنية. السكربت بيعمل النصين.</p>
+        <ol class="steps">
+          <li>بياخد نسخة من قاعدة البيانات، وبيرجّعها في قاعدة تجريبية على جنب.</li>
+          <li>بيتأكد إن الدفاتر <b>لسه متوازنة جوه النسخة</b>، وإن قواعد المحاسبة (التريجرز) عدّت معاها.</li>
+          <li>لو النسخة مارجعتش، <b>بيمسحها</b> — الملف اللي مايرجعش أوحش من إنه مايكونش موجود، لأن حد هيعتمد عليه.</li>
+          <li>بياخد كمان نسخة من صور المنتجات، عشان الكتالوج مايرجعش مربعات رمادية.</li>
+          <li>بيحتفظ بـ٣٠ يوم ويمسح الأقدم.</li>
+        </ol>
+        <div class="stop"><b>الاسترجاع:</b> <span class="mono">scripts/backup.sh restore FILE</span> — ودي <b>بتمسح كل اللي في قاعدة البيانات الحالية</b> وتحط مكانه. متشغّلهاش غير وإنت متأكد وواخد نسخة من الوضع الحالي الأول.</div>
+      </div>
+
+      <div class="proc">
+        <h3>تشغيل السيستم</h3>
+        <ol class="steps">
+          <li><span class="mono">npm run dev</span> — تشغيل للتطوير.</li>
+          <li><span class="mono">npm run build</span> ثم <span class="mono">npm start</span> — النسخة الحقيقية.</li>
+          <li><span class="mono">npm run db:deploy</span> — تطبيق تحديثات قاعدة البيانات.</li>
+          <li><span class="mono">npm test</span> و<span class="mono">npm run test:db</span> — الاختبارات.</li>
+          <li><span class="mono">npm run walkthrough</span> — بيمشي الدورة كلها على بيانات تجريبية ويقولك إيه اللي مش مظبوط. شغّله بعد أي تعديل كبير.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════ 18 -->
+    <section class="chapter" id="c18">
+      <header><span class="n">١٨</span><h2>تشيك ليست</h2></header>
+      <div class="cols">
+        <div>
+          <h3>كل يوم</h3>
+          <ul class="check">
+            <li>افتح التنبيهات وشوف الأحمر.</li>
+            <li>الوارد من المصنع: عدّ وكوّد واستلم.</li>
+            <li>افتح الدرج الصبح، اقفله بالليل بالعدّ.</li>
+            <li>سجّل شيفتات الخطوط والقص.</li>
+            <li>سجّل مصاريف اليوم أول بأول.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>كل أسبوع</h3>
+          <ul class="check">
+            <li>راجع الاعتمادات المعلقة.</li>
+            <li>سوّي توريدات الكوريير والفيزا.</li>
+            <li>راجع أعمار الذمم والتحصيل.</li>
+            <li>راجع الخامات تحت حد الطلب.</li>
+            <li>راجع الدقايق الفاضية الشهر الجاي.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>كل شهر</h3>
+          <ul class="check">
+            <li>امشي على بند ١١ بالترتيب.</li>
+            <li>راجع المخزون الراكد.</li>
+            <li>راجع تقييم الموردين.</li>
+            <li>راجع معدل التصريف والخصومات.</li>
+            <li>اتأكد إن النسخة الاحتياطية بتتاخد.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    الدليل ده بيوصف السيستم زي ما هو شغال دلوقتي. لو لقيت شاشة بتتصرف بشكل مختلف
+    عن اللي مكتوب هنا، <b>الشاشة هي الصح</b> والدليل محتاج يتحدّث — قول لمسؤول السيستم.
+    الأرقام اللي في بند ١٥ هي الافتراضية، وممكن تكون اتغيرت من شاشة الإعدادات.
+  </footer>
+</div>
+
+<script>
+  // Scrollspy: highlight the chapter the reader is in.
+  const links = [...document.querySelectorAll('#toc-list a')];
+  const byId = new Map(links.map((a) => [a.getAttribute('href').slice(1), a]));
+  const spy = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        links.forEach((a) => a.classList.remove('on'));
+        byId.get(e.target.id)?.classList.add('on');
+      }
+    },
+    { rootMargin: '-10% 0px -75% 0px' },
+  );
+  document.querySelectorAll('section.chapter').forEach((s) => spy.observe(s));
+
+  // Filter: a reference document is searched more often than it is read.
+  const q = document.getElementById('q');
+  const empty = document.getElementById('empty');
+  const chapters = [...document.querySelectorAll('section.chapter')];
+  const units = chapters.map((ch) => ({
+    chapter: ch,
+    blocks: [...ch.querySelectorAll('.proc, .rule-box, .link, .cols > div, ul.check > li')],
+    rows: [...ch.querySelectorAll('tbody tr')],
+  }));
+
+  function filter(term) {
+    const t = term.trim().toLowerCase();
+    let anyChapter = false;
+
+    for (const u of units) {
+      if (!t) {
+        u.blocks.forEach((b) => (b.style.display = ''));
+        u.rows.forEach((r) => (r.style.display = ''));
+        u.chapter.style.display = '';
+        continue;
+      }
+      let hits = 0;
+      const headText = u.chapter.querySelector('header').textContent.toLowerCase();
+      for (const b of u.blocks) {
+        const on = b.textContent.toLowerCase().includes(t);
+        b.style.display = on ? '' : 'none';
+        if (on) hits++;
+      }
+      for (const r of u.rows) {
+        const on = r.textContent.toLowerCase().includes(t);
+        r.style.display = on ? '' : 'none';
+        if (on) hits++;
+      }
+      const show = hits > 0 || headText.includes(t);
+      u.chapter.style.display = show ? '' : 'none';
+      if (show) anyChapter = true;
+    }
+    empty.style.display = t && !anyChapter ? 'block' : 'none';
+  }
+
+  q.addEventListener('input', () => filter(q.value));
+  document.getElementById('clear').addEventListener('click', () => {
+    q.value = '';
+    filter('');
+    q.focus();
+  });
+</script>
+
+</body>
+</html>

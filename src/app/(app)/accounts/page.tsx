@@ -5,6 +5,7 @@ import { chartOfAccounts, possibleParents } from "@/lib/accounts";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, dec } from "@/lib/money";
 import { AccountForm } from "./account-form";
+import { AccountRowActions } from "./account-row-actions";
 
 /**
  * شجرة الحسابات — the chart, and what each account actually holds.
@@ -198,7 +199,7 @@ export default async function AccountsPage({
             ) : (
               <span key="b" className="num font-medium">{formatMoney(a.balance.toString())}</span>
             ),
-            <span key="f" className="flex flex-wrap gap-1">
+            <span key="f" className="flex flex-wrap items-center gap-1">
               {a.includeInMinuteRate && (
                 <Badge tone="warn">{ar ? "تكلفة الدقيقة" : "minute rate"}</Badge>
               )}
@@ -207,6 +208,19 @@ export default async function AccountsPage({
               )}
               {a.isIntercompany && (
                 <Badge tone="neutral">{ar ? "بيني" : "intercompany"}</Badge>
+              )}
+              {mayManage && (
+                <AccountRowActions
+                  ar={ar}
+                  id={a.id}
+                  code={a.code}
+                  nameAr={a.nameAr}
+                  nameEn={a.nameEn}
+                  isActive={a.isActive}
+                  postings={a.postings}
+                  includeInMinuteRate={a.includeInMinuteRate}
+                  includeInBrandFixedPool={a.includeInBrandFixedPool}
+                />
               )}
             </span>,
           ])}

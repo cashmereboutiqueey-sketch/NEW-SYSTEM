@@ -302,9 +302,21 @@ describe("Shopify import idempotency", () => {
 
   it("keeps the same external id distinct across different sources", async () => {
     await createSale(saleInput({ source: "SHOPIFY", externalId: "1001" }), { userId: null });
-    await createSale(saleInput({ source: "POS", externalId: "1001", posSessionId: (
-      await openPosSession({ locationId, cashierUserId: cashierId, openingFloat: "0" }, ctx)
-    ).posSessionId }), { userId: cashierId });
+
+    // The POS half is paid for, because a counter sale that takes no money and
+    // names nobody is refused: the garment would leave with no record of who
+    // has it. The Shopify half stays unpaid, which is what a courier order is.
+    await createSale(
+      saleInput({
+        source: "POS",
+        externalId: "1001",
+        payments: [{ method: "CASH", amount: RETAIL * 2, fee: 0, collected: true }],
+        posSessionId: (
+          await openPosSession({ locationId, cashierUserId: cashierId, openingFloat: "0" }, ctx)
+        ).posSessionId,
+      }),
+      { userId: cashierId },
+    );
 
     expect(await db.salesOrder.count()).toBe(2);
   });
