@@ -51,6 +51,7 @@ export const navigation: NavSection[] = [
       { key: "journal", href: "/journal", phase: 2, scopes: ALL_SCOPES, icon: "file", shipped: true },
       { key: "auditTrail", href: "/audit", phase: 2, scopes: ALL_SCOPES, icon: "search", shipped: true },
       { key: "chartOfAccounts", href: "/accounts", phase: 2, scopes: ALL_SCOPES, icon: "layers", shipped: true },
+      { key: "tax", href: "/tax", phase: 2, scopes: ALL_SCOPES, icon: "percent", shipped: true },
     ],
   },
   {

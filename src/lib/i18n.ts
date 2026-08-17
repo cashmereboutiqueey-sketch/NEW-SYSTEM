@@ -52,6 +52,7 @@ export const dictionary = {
   journal: { ar: "دفتر اليومية", en: "Journal" },
   auditTrail: { ar: "سجل التدقيق", en: "Audit trail" },
   chartOfAccounts: { ar: "شجرة الحسابات", en: "Chart of accounts" },
+  tax: { ar: "الضريبة", en: "VAT" },
   moderatorOrder: { ar: "أوردر مودريتور", en: "Moderator order" },
   contributionMargin: { ar: "هامش المساهمة", en: "Contribution margin" },
   breakEven: { ar: "نقطة التعادل", en: "Break-even" },
