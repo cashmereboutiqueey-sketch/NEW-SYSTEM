@@ -89,6 +89,31 @@ const PAGES: { path: string; label: string; wants: string[] }[] = [
     wants: ["كشف حساب الموردين", "فات ميعاده"],
   },
   {
+    path: "/materials/ledger",
+    label: "material ledger — bought, drawn, left",
+    wants: ["كشف الخامات", "اتشترى", "اتسحب", "فاضل"],
+  },
+  {
+    path: "/production/scrap",
+    label: "scrap, with a way to record it",
+    wants: ["القصاصات", "سجّل قصاصات"],
+  },
+  {
+    path: "/production/lines",
+    label: "line efficiency, with a way to log a shift",
+    wants: ["كفاءة الخط", "سجّل وردية"],
+  },
+  {
+    path: "/production/quality",
+    label: "quality and rework",
+    wants: ["الجودة وإعادة التشغيل", "سجّل فحص", "سجّل إصلاح"],
+  },
+  {
+    path: "/production/operators",
+    label: "operator productivity",
+    wants: ["إنتاجية العامل", "سجّل يوم"],
+  },
+  {
     path: "/costing",
     label: "factory costing, markup shown beside margin",
     wants: ["سعر التحويل"],

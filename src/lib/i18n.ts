@@ -161,6 +161,7 @@ export const dictionary = {
   purchasePriceVariance: { ar: "انحراف سعر الشراء", en: "Purchase price variance" },
   moq: { ar: "الحد الأدنى للطلب", en: "MOQ" },
   materials: { ar: "الخامات", en: "Materials" },
+  materialLedger: { ar: "كشف الخامات", en: "Material ledger" },
 
   // --- cash ---
   cashFlowForecast: { ar: "توقعات التدفق النقدي", en: "Cash flow forecast" },

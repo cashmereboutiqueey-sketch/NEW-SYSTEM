@@ -93,8 +93,19 @@ function relationFieldsTo(target: string): string[] {
   return [...names];
 }
 
-const touched = (name: string, haystack: string) => {
+/**
+ * Whether anything reaches this model at all — by any of the three routes.
+ *
+ * The client accessor is the obvious one. Nested writes through a parent are
+ * the second: a purchase order line is never written any other way. Raw SQL
+ * against the table name is the third, and it is not a smell — document
+ * numbers are allocated by an atomic upsert precisely because two people
+ * saving at once must not receive the same number, and no ORM call can do
+ * that safely.
+ */
+const touched = (name: string, table: string, haystack: string) => {
   if (new RegExp(`\\b(?:db|tx|prisma)\\.${client(name)}\\b`).test(haystack)) return true;
+  if (new RegExp(`["'\`]\\s*${table}\\s*["'\`]`).test(haystack)) return true;
   return relationFieldsTo(name).some((field) =>
     new RegExp(`\\b${field}\\s*:\\s*\\{\\s*(create|createMany|connect|update|set)`).test(haystack),
   );
@@ -103,8 +114,8 @@ const touched = (name: string, haystack: string) => {
 const unused: string[] = [];
 const seedOnly: string[] = [];
 for (const model of models) {
-  if (touched(model.name, appOnly)) continue;
-  if (touched(model.name, allCode)) seedOnly.push(model.name);
+  if (touched(model.name, model.table, appOnly)) continue;
+  if (touched(model.name, model.table, allCode)) seedOnly.push(model.name);
   else unused.push(model.name);
 }
 
@@ -134,14 +145,21 @@ else {
   // feature is used. It is a fault when the table is empty *and* nothing
   // writes to it, which is the intersection reported below.
   console.log(`     ${empty.length} of ${models.length} tables are empty on this demo`);
-  const writes = (name: string) =>
+  const writes = (name: string, table: string) =>
     new RegExp(`\\b(?:db|tx|prisma)\\.${client(name)}\\.(create|createMany|upsert)`).test(allCode) ||
+    // Raw SQL, which is how document sequences are allocated: two people
+    // saving at once must not be handed the same number, and no ORM call can
+    // guarantee that the way an atomic upsert can.
+    new RegExp(`INSERT INTO\\s+"?${table}"?`, "i").test(allCode) ||
     // Nested creates through the parent count: a purchase order line is never
     // written any other way.
     relationFieldsTo(name).some((field) =>
       new RegExp(`\\b${field}\\s*:\\s*\\{\\s*(create|createMany)`).test(allCode),
     );
-  const neverWritten = empty.filter((n) => !writes(n));
+  const neverWritten = empty.filter((n) => {
+    const model = models.find((m) => m.name === n)!;
+    return !writes(model.name, model.table);
+  });
   if (neverWritten.length === 0) ok("every empty table has code that would fill it");
   else warn(`empty and nothing ever creates a row: ${neverWritten.join(", ")}`);
 }
