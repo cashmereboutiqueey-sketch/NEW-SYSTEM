@@ -118,6 +118,9 @@ export const navigation: NavSection[] = [
   {
     key: "groupPnl",
     items: [
+      // The way in. Every report in the system is reachable from here,
+      // arranged by the question rather than by which screen owns it.
+      { key: "reports", href: "/reports", phase: 5, scopes: ALL_SCOPES, icon: "chart", shipped: true },
       { key: "factoryPnl", href: "/reports/entity-pnl?entity=FACTORY", phase: 5, scopes: ["FACTORY", "GROUP"], icon: "chart", shipped: true },
       { key: "brandPnl", href: "/reports/entity-pnl?entity=BRAND", phase: 5, scopes: ["BRAND", "GROUP"], icon: "chart", shipped: true },
       { key: "groupPnl", href: "/reports/group-pnl", phase: 5, scopes: ["GROUP"], icon: "chart" , shipped: true },

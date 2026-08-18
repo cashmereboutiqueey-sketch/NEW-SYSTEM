@@ -110,6 +110,7 @@ export const dictionary = {
   partiallyPaid: { ar: "مدفوع جزئيًا", en: "Partially paid" },
 
   // --- P&L ---
+  reports: { ar: "التقارير", en: "Reports" },
   factoryPnl: { ar: "قائمة دخل المصنع", en: "Factory P&L" },
   brandPnl: { ar: "قائمة دخل البراند", en: "Brand P&L" },
   groupPnl: { ar: "قائمة دخل المجموعة", en: "Group P&L" },
