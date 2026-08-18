@@ -567,3 +567,94 @@ export async function setVariantActive(
     everSold: before._count.salesOrderLines,
   };
 }
+
+/**
+ * Create exactly the variants a list names, rather than every combination.
+ *
+ * `generateVariants` crosses every colour with every size, which is right when
+ * somebody is deciding what to make. It is wrong when the answer already
+ * exists somewhere else: a shop that sells four colours in five sizes but
+ * never made the black 3XL would get a variant for it, and that variant would
+ * then appear on the till, in the stock report, and in every list of things
+ * that have never sold.
+ *
+ * Pairs naming a colour or size that is not on file are returned rather than
+ * created, because a garment whose colour has no code cannot have a SKU, and
+ * inventing one here would put a code in the SKU that the colour table has
+ * never heard of.
+ */
+export async function addVariants(
+  input: {
+    styleId: string;
+    pairs: { colourCode: string; sizeCode: string }[];
+  },
+  ctx: AuditContext,
+): Promise<{ created: number; existed: number; skus: string[]; unknown: string[] }> {
+  const style = await db.style.findUnique({ where: { id: input.styleId } });
+  if (!style) throw new ProductError("Style not found.");
+
+  const [colours, sizes] = await Promise.all([
+    db.colorCode.findMany(),
+    db.sizeCode.findMany(),
+  ]);
+  const colourByCode = new Map(colours.map((c) => [c.code.toUpperCase(), c]));
+  const sizeByCode = new Map(sizes.map((s) => [s.code.toUpperCase(), s]));
+
+  const created: string[] = [];
+  const unknown: string[] = [];
+  let existed = 0;
+
+  for (const pair of input.pairs) {
+    const colour = colourByCode.get(pair.colourCode.toUpperCase());
+    const size = sizeByCode.get(pair.sizeCode.toUpperCase());
+
+    if (!colour || !size) {
+      unknown.push(
+        `${pair.colourCode}/${pair.sizeCode}` +
+          (colour ? " (size not on file)" : size ? " (colour not on file)" : " (neither on file)"),
+      );
+      continue;
+    }
+
+    const sku = buildSku({
+      styleCode: style.code,
+      colorCode: colour.code,
+      sizeCode: size.code,
+    });
+
+    const clash = await db.variant.findFirst({
+      where: {
+        OR: [
+          { sku },
+          { styleId: style.id, colorCodeId: colour.id, sizeCodeId: size.id },
+        ],
+      },
+    });
+    if (clash) {
+      existed += 1;
+      continue;
+    }
+
+    await db.variant.create({
+      data: {
+        styleId: style.id,
+        colorCodeId: colour.id,
+        sizeCodeId: size.id,
+        sku,
+      },
+    });
+    created.push(sku);
+  }
+
+  if (created.length > 0) {
+    await writeAudit(db, {
+      action: "VARIANTS_ADDED",
+      entityName: "Style",
+      entityId: style.id,
+      ctx,
+      after: { style: style.code, created: created.length, skus: created.slice(0, 20) },
+    });
+  }
+
+  return { created: created.length, existed, skus: created, unknown };
+}
