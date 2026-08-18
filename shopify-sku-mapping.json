@@ -1,0 +1,56 @@
+{
+  "_readme": [
+    "The two judgement calls the SKU generator cannot make on its own.",
+    "Edit this file rather than the script: these are decisions about the",
+    "business's own naming, and they should be readable by whoever has to",
+    "live with them.",
+    "",
+    "colours: a Shopify colour name on the left, the three-letter code on the",
+    "right. Several names may share a code where they are genuinely the same",
+    "colour — 'Mint' and 'Mint Green' are one colour written twice, and",
+    "'burgany' is a misspelling of Burgundy. Codes not already in the colour",
+    "table are created when the plan is applied.",
+    "",
+    "styleCodes: a Shopify product title on the left, its style code on the",
+    "right. Only needed where two products would otherwise produce the same",
+    "code from their first word."
+  ],
+
+  "colours": {
+    "Mint": "MNT",
+    "Mint Green": "MNT",
+    "Red": "RED",
+    "Burgundy": "BRG",
+    "burgany": "BRG",
+    "Orange": "ORG",
+    "Pink": "PNK",
+    "Blush Pink": "BPK",
+    "Light Brown": "LBR",
+    "Off White": "OWH",
+    "Olive Green": "OLV",
+    "Light Grey": "LGY",
+    "Dark Grey": "DGY",
+    "Kiwi Green": "KWI",
+    "butter yellow": "BTY"
+  },
+
+  "newColourNames": {
+    "MNT": { "en": "Mint", "ar": "نعناعي" },
+    "RED": { "en": "Red", "ar": "أحمر" },
+    "BRG": { "en": "Burgundy", "ar": "نبيتي" },
+    "ORG": { "en": "Orange", "ar": "برتقالي" },
+    "PNK": { "en": "Pink", "ar": "وردي" },
+    "BPK": { "en": "Blush Pink", "ar": "وردي فاتح" },
+    "LBR": { "en": "Light Brown", "ar": "بني فاتح" },
+    "OWH": { "en": "Off White", "ar": "أوف وايت" },
+    "LGY": { "en": "Light Grey", "ar": "رمادي فاتح" },
+    "DGY": { "en": "Dark Grey", "ar": "رمادي غامق" },
+    "KWI": { "en": "Kiwi Green", "ar": "أخضر كيوي" },
+    "BTY": { "en": "Butter Yellow", "ar": "أصفر زبدي" }
+  },
+
+  "styleCodes": {
+    "Tulip jeans set": "TULIPJEANS",
+    "tulip set": "TULIPSET"
+  }
+}
