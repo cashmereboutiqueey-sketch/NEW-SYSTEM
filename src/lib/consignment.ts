@@ -702,3 +702,67 @@ export async function sellableConsignedStock(locationId: string) {
     })
     .filter((i) => i.available > 0);
 }
+
+/**
+ * Retiring somebody whose goods you no longer take.
+ *
+ * Refused while they still have stock on your shelf or money owed to them.
+ * Those are the two things that make a consignor somebody you still have a
+ * relationship with, and hiding them from the screens while either is true is
+ * how a settlement gets forgotten.
+ */
+export async function setConsignorActive(
+  input: { consignorId: string; isActive: boolean },
+  ctx: AuditContext,
+) {
+  const before = await db.consignor.findUnique({
+    where: { id: input.consignorId },
+  });
+  if (!before) throw new ConsignmentError("Consignor not found.");
+
+  if (!input.isActive) {
+    // What arrived, less what sold and what went back: goods still on the
+    // shelf that belong to somebody else.
+    const items = await db.consignmentItem.findMany({
+      where: { consignorId: input.consignorId },
+      select: { quantityReceived: true, quantitySold: true, quantityReturned: true },
+    });
+    const stillHeld = items.reduce(
+      (t, i) => t.plus(dec(i.quantityReceived).minus(dec(i.quantitySold)).minus(dec(i.quantityReturned))),
+      dec(0),
+    );
+    if (stillHeld.greaterThan(0)) {
+      throw new ConsignmentError(
+        `${before.name} still has ${stillHeld.toString()} piece(s) on your shelf. ` +
+          "Return or sell those first.",
+      );
+    }
+
+    const owed = await owedTo(input.consignorId);
+    if (owed.greaterThan(0)) {
+      throw new ConsignmentError(
+        `${before.name} is still owed ${owed.toFixed(2)}. Settle up first.`,
+      );
+    }
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.consignor.update({
+      where: { id: input.consignorId },
+      data: { isActive: input.isActive },
+    });
+
+    await writeAudit(tx, {
+      action: input.isActive ? "CONSIGNOR_REINSTATED" : "CONSIGNOR_RETIRED",
+      entityName: "Consignor",
+      entityId: updated.id,
+      ctx,
+      before: { name: before.name, isActive: before.isActive },
+      after: { name: updated.name, isActive: updated.isActive },
+    });
+
+    return updated;
+  });
+
+  return { id: after.id, name: after.name, isActive: after.isActive };
+}

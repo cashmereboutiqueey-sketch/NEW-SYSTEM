@@ -443,3 +443,127 @@ export async function styleDetail(styleId: string) {
     },
   });
 }
+
+/* ──────────────────────── closing things down ───────────────────────────── */
+
+/**
+ * Retiring a collection or a variant.
+ *
+ * Both carry an isActive flag that nothing had ever set, so a season could be
+ * started and never finished and a size could be introduced and never dropped.
+ * The pickers filled up with things nobody makes any more, and the only way
+ * out was the database.
+ *
+ * Neither is ever deleted. A collection is what its styles belong to and a
+ * variant is what garments were made as; removing either would orphan the
+ * history and the SKUs that name it. Retiring takes it out of the pickers and
+ * leaves everything already made exactly where it is.
+ */
+
+export async function setCollectionActive(
+  input: { id: string; isActive: boolean },
+  ctx: AuditContext,
+) {
+  const before = await db.collection.findUnique({
+    where: { id: input.id },
+    include: { _count: { select: { styles: true } } },
+  });
+  if (!before) throw new ProductError("Collection not found.");
+
+  if (!input.isActive) {
+    // Closing a season while its styles are still being made is almost always
+    // a mistake — the collection would vanish from the pickers while the floor
+    // is still cutting it.
+    const live = await db.productionOrder.count({
+      where: {
+        style: { collectionId: input.id },
+        status: { in: ["CONFIRMED", "IN_PRODUCTION"] },
+      },
+    });
+    if (live > 0) {
+      throw new ProductError(
+        `${before.code} still has ${live} production run(s) open. Finish or cancel those first.`,
+      );
+    }
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.collection.update({
+      where: { id: input.id },
+      data: { isActive: input.isActive },
+    });
+
+    await writeAudit(tx, {
+      action: input.isActive ? "COLLECTION_REOPENED" : "COLLECTION_CLOSED",
+      entityName: "Collection",
+      entityId: updated.id,
+      ctx,
+      before: { isActive: before.isActive },
+      after: { isActive: updated.isActive },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    code: after.code,
+    isActive: after.isActive,
+    /** Styles that stay exactly as they are; retiring hides, it does not remove. */
+    styles: before._count.styles,
+  };
+}
+
+/**
+ * Dropping a size or a colour of one style.
+ *
+ * The stock already made in it is untouched and still sells — what stops is
+ * making more. Refusing while stock is on the shelf would be the wrong way
+ * round: dropping a variant is usually the decision that comes *before*
+ * running the last of it down.
+ */
+export async function setVariantActive(
+  input: { id: string; isActive: boolean },
+  ctx: AuditContext,
+) {
+  const before = await db.variant.findUnique({
+    where: { id: input.id },
+    include: {
+      style: { select: { code: true } },
+      _count: { select: { inventoryLots: true, salesOrderLines: true } },
+    },
+  });
+  if (!before) throw new ProductError("Variant not found.");
+
+  const onHand = await db.inventoryLot.aggregate({
+    where: { variantId: input.id, remainingQty: { gt: 0 } },
+    _sum: { remainingQty: true },
+  });
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.variant.update({
+      where: { id: input.id },
+      data: { isActive: input.isActive },
+    });
+
+    await writeAudit(tx, {
+      action: input.isActive ? "VARIANT_REINSTATED" : "VARIANT_DROPPED",
+      entityName: "Variant",
+      entityId: updated.id,
+      ctx,
+      before: { sku: before.sku, isActive: before.isActive },
+      after: { sku: updated.sku, isActive: updated.isActive },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    sku: after.sku,
+    isActive: after.isActive,
+    /** Still sellable, and worth saying so before somebody looks for it. */
+    stillOnHand: dec(onHand._sum.remainingQty ?? 0),
+    everSold: before._count.salesOrderLines,
+  };
+}

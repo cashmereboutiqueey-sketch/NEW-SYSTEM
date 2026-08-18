@@ -303,3 +303,66 @@ export async function campaignResults() {
     };
   });
 }
+
+/**
+ * Pausing or finishing a campaign.
+ *
+ * A campaign was started and could never be stopped, so every one ever run
+ * stayed RUNNING — and marketing cost is spread across the garments sold while
+ * campaigns are live. A campaign that finished in March and still says it is
+ * running keeps taking a share of the spend allocation for the rest of the
+ * year, which quietly moves cost onto styles that never benefited from it.
+ *
+ * Finishing sets the end date if it has none, because a campaign with no end
+ * is what caused the problem in the first place.
+ */
+export async function setCampaignStatus(
+  input: {
+    campaignId: string;
+    status: "PLANNED" | "RUNNING" | "PAUSED" | "FINISHED";
+    endedOn?: Date | null;
+  },
+  ctx: AuditContext,
+) {
+  const before = await db.campaign.findUnique({
+    where: { id: input.campaignId },
+    include: { _count: { select: { spend: true } } },
+  });
+  if (!before) throw new MarketingError("Campaign not found.");
+
+  const finishing = input.status === "FINISHED";
+  const endDate = finishing ? (input.endedOn ?? before.endDate ?? new Date()) : before.endDate;
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.campaign.update({
+      where: { id: input.campaignId },
+      data: { status: input.status, endDate },
+    });
+
+    await writeAudit(tx, {
+      action: "CAMPAIGN_STATUS_CHANGED",
+      entityName: "Campaign",
+      entityId: updated.id,
+      ctx,
+      before: {
+        status: before.status,
+        endDate: before.endDate?.toISOString().slice(0, 10) ?? null,
+      },
+      after: {
+        status: updated.status,
+        endDate: updated.endDate?.toISOString().slice(0, 10) ?? null,
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    name: after.nameAr,
+    status: after.status,
+    endDate: after.endDate,
+    /** Spend already recorded against it, which finishing does not touch. */
+    spendEntries: before._count.spend,
+  };
+}

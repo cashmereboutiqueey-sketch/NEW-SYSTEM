@@ -452,3 +452,60 @@ export async function rateCard(input: {
     tiers,
   };
 }
+
+/**
+ * Retiring a client you no longer make for.
+ *
+ * The flag was there and nothing set it, so a client who stopped dealing with
+ * the factory two years ago still appears in every dropdown. Never deleted:
+ * the quotes and orders in their name are the record of work that was done.
+ */
+export async function setClientActive(
+  input: { id: string; isActive: boolean },
+  ctx: AuditContext,
+) {
+  const before = await db.cMTClient.findUnique({
+    where: { id: input.id },
+    include: { _count: { select: { quotes: true, orders: true } } },
+  });
+  if (!before) throw new CMTError("Client not found.");
+
+  if (!input.isActive) {
+    // Work still in the factory for somebody being retired is a contradiction
+    // worth stopping at, rather than discovering when nobody can find them.
+    const open = await db.cMTOrder.count({
+      where: { clientId: input.id, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+    });
+    if (open > 0) {
+      throw new CMTError(
+        `${before.name} still has ${open} order(s) in the factory. Finish those first.`,
+      );
+    }
+  }
+
+  const after = await db.$transaction(async (tx) => {
+    const updated = await tx.cMTClient.update({
+      where: { id: input.id },
+      data: { isActive: input.isActive },
+    });
+
+    await writeAudit(tx, {
+      action: input.isActive ? "CMT_CLIENT_REINSTATED" : "CMT_CLIENT_RETIRED",
+      entityName: "CMTClient",
+      entityId: updated.id,
+      ctx,
+      before: { name: before.name, isActive: before.isActive },
+      after: { name: updated.name, isActive: updated.isActive },
+    });
+
+    return updated;
+  });
+
+  return {
+    id: after.id,
+    name: after.name,
+    isActive: after.isActive,
+    quotes: before._count.quotes,
+    orders: before._count.orders,
+  };
+}
