@@ -47,6 +47,8 @@ export type ShopifyOrder = {
   line_items: {
     id: number;
     sku: string | null;
+    /** Stable, and present even when the SKU snapshot on the line is empty. */
+    variant_id?: number | null;
     quantity: number;
     price: string;
     total_discount?: string;
@@ -190,13 +192,42 @@ export async function importOrders(
       const unknown: string[] = [];
 
       for (const item of order.line_items) {
-        if (!item.sku) {
-          unknown.push(item.title ?? `line ${item.id}`);
-          continue;
+        /**
+         * The SKU first, then the variant id.
+         *
+         * Shopify writes the SKU onto the line at the moment the order is
+         * placed and never revisits it, so an order taken before a SKU was
+         * filled in carries the empty string for ever. Correcting the
+         * catalogue does nothing for it. The variant id is stable and always
+         * present, and syncVariantMappings records which garment each one is
+         * — so a line with no usable SKU still resolves, and the shop's own
+         * history becomes importable rather than permanently stranded.
+         */
+        const bySku = item.sku
+          ? await db.variant.findUnique({ where: { sku: item.sku.trim().toUpperCase() } })
+          : null;
+
+        let variant = bySku;
+
+        if (!variant && item.variant_id != null) {
+          const mapping = await db.externalMapping.findUnique({
+            where: {
+              connectionId_objectType_externalId: {
+                connectionId: connection.id,
+                objectType: "variant",
+                externalId: String(item.variant_id),
+              },
+            },
+          });
+          if (mapping) {
+            variant = await db.variant.findUnique({ where: { id: mapping.internalId } });
+          }
         }
-        const variant = await db.variant.findUnique({ where: { sku: item.sku.trim().toUpperCase() } });
+
         if (!variant) {
-          unknown.push(item.sku);
+          // Named by whatever it does have, so the exception says something a
+          // person can act on rather than an id nobody recognises.
+          unknown.push(item.sku?.trim() || item.title || `line ${item.id}`);
           continue;
         }
 
@@ -664,4 +695,107 @@ export async function inventoryToPublish(locationCode = "LOC-ALX") {
   }
 
   return [...byVariant.values()].sort((a, b) => a.sku.localeCompare(b.sku));
+}
+
+/**
+ * Tie each Shopify variant to the garment it is, by id.
+ *
+ * Shopify writes the SKU onto an order line at the moment the order is placed
+ * and never revisits it. So a SKU corrected today does nothing for the orders
+ * already taken — they carry the empty string they were born with, for ever.
+ *
+ * What they do carry is `variant_id`, which is stable and always present. This
+ * records which local garment each Shopify variant is, matched by SKU while
+ * the SKUs are readable, so the importer can fall back to the id when the SKU
+ * on a line is missing or unrecognised.
+ *
+ * Idempotent, and matched only where the SKU is unambiguous: a mapping that
+ * points at the wrong garment would relieve the wrong stock, which is not
+ * recoverable by re-running anything.
+ */
+export async function syncVariantMappings(
+  input: { connectionId: string },
+  ctx: AuditContext,
+): Promise<{ mapped: number; alreadyMapped: number; noMatch: number; noSku: number }> {
+  const connection = await db.integrationConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+  });
+
+  type ShopifyVariant = { id: number; sku: string | null };
+  type ShopifyProduct = { id: number; variants: ShopifyVariant[] };
+
+  const variants: ShopifyVariant[] = [];
+  let path = "products.json?status=active&limit=250&fields=id,variants";
+
+  for (;;) {
+    const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
+    const res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": connection.accessToken ?? "" },
+    });
+    if (!res.ok) {
+      throw new ShopifyError(`Shopify returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const body = (await res.json()) as { products: ShopifyProduct[] };
+    for (const product of body.products) variants.push(...product.variants);
+
+    const next = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get("link") ?? "");
+    if (!next) break;
+    path = next[1].split("/admin/api/")[1].split("/").slice(1).join("/");
+  }
+
+  let mapped = 0;
+  let alreadyMapped = 0;
+  let noMatch = 0;
+  let noSku = 0;
+
+  for (const variant of variants) {
+    const sku = (variant.sku ?? "").trim().toUpperCase();
+    if (!sku) {
+      noSku += 1;
+      continue;
+    }
+
+    const local = await db.variant.findUnique({ where: { sku } });
+    if (!local) {
+      noMatch += 1;
+      continue;
+    }
+
+    const existing = await db.externalMapping.findUnique({
+      where: {
+        connectionId_objectType_externalId: {
+          connectionId: connection.id,
+          objectType: "variant",
+          externalId: String(variant.id),
+        },
+      },
+    });
+
+    if (existing) {
+      alreadyMapped += 1;
+      continue;
+    }
+
+    await db.externalMapping.create({
+      data: {
+        connectionId: connection.id,
+        objectType: "variant",
+        externalId: String(variant.id),
+        internalId: local.id,
+        externalRef: sku,
+      },
+    });
+    mapped += 1;
+  }
+
+  await writeAudit(db, {
+    action: "SHOPIFY_VARIANTS_MAPPED",
+    entityName: "IntegrationConnection",
+    entityId: connection.id,
+    ctx,
+    after: { mapped, alreadyMapped, noMatch, noSku },
+  });
+
+  return { mapped, alreadyMapped, noMatch, noSku };
 }

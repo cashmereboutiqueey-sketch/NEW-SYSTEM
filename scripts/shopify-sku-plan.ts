@@ -42,6 +42,10 @@ type Mapping = {
   colours?: Record<string, string>;
   newColourNames?: Record<string, { en: string; ar: string }>;
   styleCodes?: Record<string, string>;
+  sizes?: Record<string, string>;
+  componentOptions?: string[];
+  componentCodes?: Record<string, string>;
+  singleColour?: Record<string, string>;
 };
 
 const MAPPING_FILE = "shopify-sku-mapping.json";
@@ -54,6 +58,21 @@ const overrideColour = new Map(
 );
 const overrideStyle = new Map(
   Object.entries(mapping.styleCodes ?? {}).map(([title, code]) => [title.trim().toLowerCase(), code]),
+);
+const overrideSize = new Map(
+  Object.entries(mapping.sizes ?? {}).map(([value, code]) => [value.trim().toLowerCase(), code]),
+);
+const componentOptionNames = (mapping.componentOptions ?? []).map((n) => n.toLowerCase());
+const componentCodes = new Map(
+  Object.entries(mapping.componentCodes ?? {}).map(([value, code]) => [
+    value.trim().toLowerCase(),
+    code,
+  ]),
+);
+const singleColour = new Map(
+  Object.entries(mapping.singleColour ?? {})
+    .filter(([, code]) => code.trim() !== "")
+    .map(([title, code]) => [title.trim().toLowerCase(), code.trim().toUpperCase()]),
 );
 
 const shop = process.env.SHOPIFY_SHOP?.trim().toLowerCase();
@@ -137,8 +156,33 @@ function optionValue(variant: Variant, index: 1 | 2 | 3 | null): string | null {
 
 /** The size, uppercased and stripped to what the schema accepts. */
 function sizeCodeFor(value: string): string | null {
+  const alias = overrideSize.get(value.trim().toLowerCase());
+  if (alias) return alias.toUpperCase();
+
   const code = value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   return /^[A-Z0-9]{1,4}$/.test(code) ? code : null;
+}
+
+/**
+ * The component option, where a product has one.
+ *
+ * A vest is not a size of a set — it is a different garment sold alongside
+ * one. So it belongs in the style code, and TULIPVEST-BEI-M and
+ * TULIPPANTS-BEI-M are two styles rather than one style with a fourth
+ * dimension the convention has no room for. The whole set adds nothing,
+ * because the set is what the product is already named.
+ */
+function componentSuffix(product: Product, variant: Variant): string | null {
+  const option = product.options.find((o) => componentOptionNames.includes(o.name.toLowerCase()));
+  if (!option) return "";
+
+  const value = optionValue(variant, (option.position as 1 | 2 | 3) ?? null);
+  if (!value) return "";
+
+  const code = componentCodes.get(value.trim().toLowerCase());
+  // Null rather than empty: an unmapped component would silently collapse two
+  // different garments onto one SKU.
+  return code === undefined ? null : code;
 }
 
 const products = await activeProducts();
@@ -233,15 +277,22 @@ for (const { product, variant } of variants) {
     continue;
   }
 
-  const styleCode = styleCodeFor(product.title);
-  const colourValue = optionValue(variant, optionIndex(product, /colou?r|لون/i));
-  const sizeValue = optionValue(variant, optionIndex(product, /size|مقاس/i));
-
   const blocked = (why: string) =>
     rows.push({ ...base, proposedSku: "", action: "blocked", why });
 
+  const suffix = componentSuffix(product, variant);
+  if (suffix === null) {
+    blocked("a component this mapping has no code for");
+    continue;
+  }
+
+  const baseStyle = styleCodeFor(product.title);
+  const styleCode = `${baseStyle}${suffix}`;
+  const colourValue = optionValue(variant, optionIndex(product, /colou?r|لون/i));
+  const sizeValue = optionValue(variant, optionIndex(product, /size|مقاس/i));
+
   if (
-    (styleToProducts.get(styleCode)?.length ?? 0) > 1 &&
+    (styleToProducts.get(baseStyle)?.length ?? 0) > 1 &&
     !overrideStyle.has(product.title.trim().toLowerCase())
   ) {
     blocked(`style code ${styleCode} is shared with another product`);
@@ -251,24 +302,27 @@ for (const { product, variant } of variants) {
     blocked(`no usable style code from "${product.title}"`);
     continue;
   }
-  if (!colourValue) {
-    blocked("no colour option on this product");
-    continue;
-  }
 
-  const colourCode =
-    overrideColour.get(colourValue.trim().toLowerCase()) ??
-    byName.get(colourValue.trim().toLowerCase());
+  // A garment with one colourway Shopify never recorded, named in the mapping
+  // by somebody who looked at it. Never guessed: a colour that is wrong looks
+  // right, which is worse than a SKU that is missing.
+  const colourCode = colourValue
+    ? overrideColour.get(colourValue.trim().toLowerCase()) ??
+      byName.get(colourValue.trim().toLowerCase())
+    : singleColour.get(product.title.trim().toLowerCase());
+
   if (!colourCode) {
-    blocked(`no colour code for "${colourValue}"`);
+    blocked(
+      colourValue
+        ? `no colour code for "${colourValue}"`
+        : "one colourway, and nobody has said which — add it under singleColour",
+    );
     continue;
   }
 
-  if (!sizeValue) {
-    blocked("no size option on this product");
-    continue;
-  }
-  const sizeCode = sizeCodeFor(sizeValue);
+  // No size option at all means the garment comes in one size, which is a fact
+  // about the garment rather than missing data.
+  const sizeCode = sizeValue ? sizeCodeFor(sizeValue) : "OS";
   if (!sizeCode) {
     blocked(`size "${sizeValue}" does not fit the 1–4 character rule`);
     continue;

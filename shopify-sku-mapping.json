@@ -1,21 +1,32 @@
 {
   "_readme": [
-    "The two judgement calls the SKU generator cannot make on its own.",
+    "The judgement calls the SKU generator cannot make on its own.",
     "Edit this file rather than the script: these are decisions about the",
     "business's own naming, and they should be readable by whoever has to",
     "live with them.",
     "",
     "colours: a Shopify colour name on the left, the three-letter code on the",
     "right. Several names may share a code where they are genuinely the same",
-    "colour — 'Mint' and 'Mint Green' are one colour written twice, and",
-    "'burgany' is a misspelling of Burgundy. Codes not already in the colour",
-    "table are created when the plan is applied.",
+    "colour - 'Mint' and 'Mint Green' are one colour written twice, and",
+    "'burgany' is a misspelling of Burgundy.",
+    "",
+    "sizes: a Shopify size value on the left, the code on the right. Needed",
+    "where the value written on the product does not fit in four characters.",
+    "",
+    "componentOptions: option names that name a part of a garment rather than",
+    "a variation of it. A vest is not a size of a set, it is a different",
+    "garment sold alongside one - so it belongs in the style code, and",
+    "TULIPVEST-BEI-M and TULIPPANTS-BEI-M are two styles rather than one with",
+    "a fourth dimension the SKU convention has no room for.",
+    "",
+    "singleColour: products whose garment has one colourway that Shopify does",
+    "not record. Only fill one in when you know the answer - a guessed colour",
+    "is worse than a missing SKU, because it looks right.",
     "",
     "styleCodes: a Shopify product title on the left, its style code on the",
     "right. Only needed where two products would otherwise produce the same",
     "code from their first word."
   ],
-
   "colours": {
     "Mint": "MNT",
     "Mint Green": "MNT",
@@ -33,24 +44,89 @@
     "Kiwi Green": "KWI",
     "butter yellow": "BTY"
   },
-
   "newColourNames": {
-    "MNT": { "en": "Mint", "ar": "نعناعي" },
-    "RED": { "en": "Red", "ar": "أحمر" },
-    "BRG": { "en": "Burgundy", "ar": "نبيتي" },
-    "ORG": { "en": "Orange", "ar": "برتقالي" },
-    "PNK": { "en": "Pink", "ar": "وردي" },
-    "BPK": { "en": "Blush Pink", "ar": "وردي فاتح" },
-    "LBR": { "en": "Light Brown", "ar": "بني فاتح" },
-    "OWH": { "en": "Off White", "ar": "أوف وايت" },
-    "LGY": { "en": "Light Grey", "ar": "رمادي فاتح" },
-    "DGY": { "en": "Dark Grey", "ar": "رمادي غامق" },
-    "KWI": { "en": "Kiwi Green", "ar": "أخضر كيوي" },
-    "BTY": { "en": "Butter Yellow", "ar": "أصفر زبدي" }
+    "MNT": {
+      "en": "Mint",
+      "ar": "نعناعي"
+    },
+    "RED": {
+      "en": "Red",
+      "ar": "أحمر"
+    },
+    "BRG": {
+      "en": "Burgundy",
+      "ar": "نبيتي"
+    },
+    "ORG": {
+      "en": "Orange",
+      "ar": "برتقالي"
+    },
+    "PNK": {
+      "en": "Pink",
+      "ar": "وردي"
+    },
+    "BPK": {
+      "en": "Blush Pink",
+      "ar": "وردي فاتح"
+    },
+    "LBR": {
+      "en": "Light Brown",
+      "ar": "بني فاتح"
+    },
+    "OWH": {
+      "en": "Off White",
+      "ar": "أوف وايت"
+    },
+    "LGY": {
+      "en": "Light Grey",
+      "ar": "رمادي فاتح"
+    },
+    "DGY": {
+      "en": "Dark Grey",
+      "ar": "رمادي غامق"
+    },
+    "KWI": {
+      "en": "Kiwi Green",
+      "ar": "أخضر كيوي"
+    },
+    "BTY": {
+      "en": "Butter Yellow",
+      "ar": "أصفر زبدي"
+    },
+    "DNM": {
+      "en": "Denim",
+      "ar": "دنيم"
+    }
   },
-
   "styleCodes": {
     "Tulip jeans set": "TULIPJEANS",
     "tulip set": "TULIPSET"
+  },
+  "sizes": {
+    "one size": "OS",
+    "onesize": "OS",
+    "free size": "OS",
+    "os": "OS"
+  },
+  "componentOptions": [
+    "set",
+    "piece",
+    "type",
+    "component"
+  ],
+  "componentCodes": {
+    "full set": "",
+    "set": "",
+    "vest": "VEST",
+    "pants": "PANTS",
+    "trousers": "PANTS",
+    "top": "TOP",
+    "skirt": "SKIRT",
+    "shirt": "SHIRT"
+  },
+  "singleColour": {
+    "Tulip jeans set": "DNM",
+    "Ward – Cardigan": "",
+    "Yasmine set": ""
   }
 }
