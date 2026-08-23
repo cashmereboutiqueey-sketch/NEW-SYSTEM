@@ -12,6 +12,13 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 
+# prisma.config.ts reads `env("DATABASE_URL")` at the moment it loads, and it
+# throws when that is unset rather than deferring until something connects. It
+# loads here because `npm ci` runs `prisma generate` on postinstall. Nothing in
+# this stage opens a connection, so a placeholder satisfies it; it is set per
+# stage rather than globally, so no image layer ever carries a real credential.
+ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
+
 # The manifests, so this layer is rebuilt when dependencies change rather than
 # every time a line of source does — and the schema with them, because
 # `postinstall` runs `prisma generate` and that reads it. Without the schema
@@ -25,7 +32,10 @@ COPY prisma ./prisma
 
 # Retries, because a build that dies on one dropped connection is a build that
 # fails at random and tells whoever is watching that their code is broken.
-RUN npm config set fetch-retries 5  && npm config set fetch-retry-maxtimeout 120000  && npm config set fetch-timeout 600000  && npm ci --no-audit --no-fund
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm config set fetch-timeout 600000 \
+ && npm ci --no-audit --no-fund
 
 # ──────────────────────────────────  build  ──────────────────────────────────
 FROM node:24-alpine AS build
