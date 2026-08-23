@@ -94,10 +94,46 @@ async function shopifyFetch<T>(
     // rather than hammering the shop and getting throttled harder.
     throw new ShopifyError("Shopify is rate limiting this shop. Try again shortly.");
   }
+  // A 404 from the Admin API almost never means the path is wrong — those are
+  // fixed strings in this file. It means no store answered at that domain, and
+  // Shopify's DNS resolves every *.myshopify.com name whether a shop occupies
+  // it or not, so a wrong domain fails here rather than at connect time.
+  if (response.status === 404) {
+    throw new ShopifyError(
+      `No Shopify store answered at ${connection.externalRef}. ` +
+        `That is the shop's internal domain, which is usually not the brand ` +
+        `name — find it in Shopify under Settings → Domains.`,
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new ShopifyError(
+      `${connection.externalRef} rejected the access token. It may have been ` +
+        `revoked, or it may lack the scopes this needs.`,
+    );
+  }
   if (!response.ok) {
     throw new ShopifyError(`Shopify returned ${response.status}: ${await response.text()}`);
   }
   return response.json() as Promise<T>;
+}
+
+/**
+ * Asks a shop who it is, to prove a domain and token work together.
+ *
+ * Called before a connection is saved. Storing credentials first and finding
+ * out later is how a shop comes to be listed as connected while every sync
+ * fails — the screen says one thing and the truth only appears at the moment
+ * somebody needed it to work.
+ */
+export async function verifyShopConnection(input: {
+  externalRef: string;
+  accessToken: string | null;
+  apiVersion: string | null;
+}): Promise<{ name: string; domain: string; currency: string }> {
+  const { shop } = await shopifyFetch<{
+    shop: { name: string; domain: string; currency: string };
+  }>(input, "shop.json");
+  return shop;
 }
 
 /** Records an unmatched record for a person to resolve. */

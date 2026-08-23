@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { pullOrders, ShopifyError } from "@/lib/shopify";
+import { pullOrders, verifyShopConnection, ShopifyError } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
 import type { FormState } from "@/components/entity-form";
 
@@ -33,6 +33,37 @@ export async function connectShopifyAction(
 
     const accessToken = String(formData.get("accessToken") ?? "").trim();
     const webhookSecret = String(formData.get("webhookSecret") ?? "").trim();
+
+    // Ask the shop who it is before storing anything. Checking that the domain
+    // merely ends in .myshopify.com proves nothing: Shopify answers DNS for
+    // every name under it, occupied or not, so a plausible wrong domain saved
+    // cleanly, reported "connected", and then failed on every sync with a bare
+    // 404 that named neither the cause nor the fix.
+    //
+    // An existing token is reused when the field is left blank, so re-saving
+    // the form to correct a domain does not require pasting the token again —
+    // and cannot verify against a token the operator did not supply.
+    const existing = await db.integrationConnection.findUnique({
+      where: { provider_externalRef: { provider: "SHOPIFY", externalRef: shopDomain } },
+      select: { accessToken: true, apiVersion: true },
+    });
+    const tokenToCheck = accessToken || existing?.accessToken || null;
+    if (!tokenToCheck) {
+      return { error: "Enter an access token." };
+    }
+
+    let shop: { name: string; domain: string; currency: string };
+    try {
+      shop = await verifyShopConnection({
+        externalRef: shopDomain,
+        accessToken: tokenToCheck,
+        apiVersion: existing?.apiVersion ?? null,
+      });
+    } catch (error) {
+      // Nothing is written. A connection that does not work should not exist,
+      // so there is nothing to clean up after a failed attempt.
+      return { error: toMessage(error) };
+    }
 
     const connection = await db.integrationConnection.upsert({
       where: { provider_externalRef: { provider: "SHOPIFY", externalRef: shopDomain } },
@@ -66,7 +97,8 @@ export async function connectShopifyAction(
     });
 
     revalidatePath("/integrations");
-    return { success: `${shopDomain} connected.` };
+    // Named, because the point of verifying is being able to say which shop.
+    return { success: `Connected to ${shop.name} (${shop.domain}).` };
   } catch (error) {
     return { error: toMessage(error) };
   }
