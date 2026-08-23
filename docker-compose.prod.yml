@@ -58,7 +58,7 @@ services:
         condition: service_healthy
     # Migrations before the first request, never alongside it: a request
     # arriving mid-migration reads a half-changed schema.
-    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && exec node server.js"]
+    entrypoint: ["/bin/sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && exec node server.js"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
       interval: 30s
