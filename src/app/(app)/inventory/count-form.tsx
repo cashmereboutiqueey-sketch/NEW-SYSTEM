@@ -7,8 +7,8 @@ import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
 const field =
-  "rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm text-ink-900 " +
-  "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+  "rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm text-ink-900 " +
+  "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 
 export type CountRow = {
   lotId: string;

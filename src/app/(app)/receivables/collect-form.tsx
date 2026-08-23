@@ -52,7 +52,7 @@ export function CollectForm({
   }
 
   return (
-    <form action={action} className="min-w-[18rem] rounded-lg border border-ink-200 bg-white p-3">
+    <form action={action} className="min-w-[18rem] rounded-lg border border-ink-200 bg-panel p-3">
       <p className="mb-2 text-xs font-medium text-ink-700">
         {ar ? `تحصيل من ${customerName}` : `Collect from ${customerName}`}
       </p>
@@ -65,7 +65,7 @@ export function CollectForm({
           name="salesOrderId"
           value={orderId}
           onChange={(e) => setOrderId(e.target.value)}
-          className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-rose-deep"
         >
           {orders.map((o) => (
             <option key={o.id} value={o.id}>
@@ -90,7 +90,7 @@ export function CollectForm({
             placeholder={owed.toFixed(2)}
             dir="ltr"
             required
-            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-ink-500"
+            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-rose-deep"
           />
         </label>
 
@@ -98,7 +98,7 @@ export function CollectForm({
           <span className="mb-1 block text-ink-500">{ar ? "الطريقة" : "Method"}</span>
           <select
             name="method"
-            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-ink-500"
+            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-rose-deep"
           >
             <option value="CASH">{ar ? "كاش" : "Cash"}</option>
             <option value="CARD">{ar ? "فيزا" : "Card"}</option>

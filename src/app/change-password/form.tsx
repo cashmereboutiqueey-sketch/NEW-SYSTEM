@@ -5,7 +5,7 @@ import { changePasswordAction, type ChangePasswordState } from "./actions";
 
 const empty: ChangePasswordState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 outline-none focus:border-ink-500 focus:ring-2 focus:ring-ink-200";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 outline-none focus:border-rose-deep focus:ring-2 focus:ring-rose/60";
 
 export function ChangePasswordForm({ ar, forced }: { ar: boolean; forced: boolean }) {
   const [state, action, pending] = useActionState(changePasswordAction, empty);

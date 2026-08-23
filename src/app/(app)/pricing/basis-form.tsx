@@ -36,7 +36,7 @@ export function BasisForm({
   current: { units: string; overhead: string; marketing: string; target: string };
 }) {
   const field =
-    "w-full rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-ink-400";
+    "w-full rounded-md border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
   const label = "mb-1 block text-xs font-medium text-ink-600";
   const note = "mt-1 block text-[11px] text-ink-400";
 
@@ -139,7 +139,7 @@ export function BasisForm({
         </button>
         <a
           href="/pricing"
-          className="rounded-md border border-line px-4 py-2 text-sm text-ink-600 hover:border-ink-300"
+          className="rounded-md border border-ink-200 px-4 py-2 text-sm text-ink-600 hover:border-ink-300"
         >
           {ar ? "رجّع أرقام الدفاتر" : "Back to the books"}
         </a>

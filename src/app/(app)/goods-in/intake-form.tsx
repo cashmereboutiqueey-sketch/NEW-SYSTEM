@@ -7,8 +7,8 @@ import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
 const field =
-  "rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 " +
-  "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+  "rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 " +
+  "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export type IntakeRow = {
@@ -116,7 +116,7 @@ export function IntakeForm({
       </div>
 
       {/* ------------------------------------------------------ the label gate */}
-      <div className="rounded-lg border border-ink-200 bg-paper-50 p-3">
+      <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
         <div className="flex flex-wrap items-center gap-3">
           <a
             href={`/print/labels/despatch/${encodeURIComponent(row.despatchNumber)}`}

@@ -395,7 +395,7 @@ export default async function ReportsPage() {
             ))}
           </div>
 
-          <div className="mt-4 flex flex-wrap items-baseline gap-4 border-t border-line pt-3 text-sm">
+          <div className="mt-4 flex flex-wrap items-baseline gap-4 border-t border-ink-200 pt-3 text-sm">
             <span>
               {ar ? "هامش الربح" : "Profit margin"}{" "}
               <b className="num">
@@ -450,7 +450,7 @@ export default async function ReportsPage() {
                   <Link
                     key={e.href}
                     href={e.href}
-                    className="rounded-lg border border-line p-3 transition hover:border-ink-300"
+                    className="rounded-lg border border-ink-200 p-3 transition hover:border-ink-300"
                   >
                     <div className="text-sm font-medium text-ink-900">{ar ? e.ar : e.en}</div>
                     <div className="mt-0.5 text-xs text-ink-500">{ar ? e.askAr : e.askEn}</div>

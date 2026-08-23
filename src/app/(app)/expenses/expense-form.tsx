@@ -9,8 +9,8 @@ type Option = { id: string; label: string };
 const initial: ActionState = {};
 
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 " +
-  "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 " +
+  "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export function ExpenseForm({

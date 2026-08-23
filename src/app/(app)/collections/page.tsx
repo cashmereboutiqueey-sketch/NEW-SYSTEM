@@ -85,7 +85,7 @@ export default async function CollectionsPage({
   }) {
     if (!style) {
       return (
-        <div className="rounded-lg border border-line bg-surface p-3">
+        <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
           <div className="text-xs text-ink-500">{label}</div>
           <div className="mt-2 text-sm text-ink-300">{ar ? "لسه مافيش" : "Nothing yet"}</div>
         </div>
@@ -94,7 +94,7 @@ export default async function CollectionsPage({
     return (
       <Link
         href={`/styles?style=${style.id}`}
-        className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3 transition hover:border-ink-300"
+        className="flex items-center gap-3 rounded-lg border border-ink-200 bg-ink-50 p-3 transition hover:border-ink-300"
       >
         <Thumb imageName={style.imageName} alt={styleName(style)} />
         <div className="min-w-0">
@@ -128,7 +128,7 @@ export default async function CollectionsPage({
           className={
             factory
               ? "rounded-md bg-ink-900 px-3 py-1.5 text-white"
-              : "rounded-md border border-line px-3 py-1.5 text-ink-600 hover:border-ink-300"
+              : "rounded-md border border-ink-200 px-3 py-1.5 text-ink-600 hover:border-ink-300"
           }
         >
           {ar ? "بعين المصنع" : "As the Factory"}
@@ -138,7 +138,7 @@ export default async function CollectionsPage({
           className={
             !factory
               ? "rounded-md bg-ink-900 px-3 py-1.5 text-white"
-              : "rounded-md border border-line px-3 py-1.5 text-ink-600 hover:border-ink-300"
+              : "rounded-md border border-ink-200 px-3 py-1.5 text-ink-600 hover:border-ink-300"
           }
         >
           {ar ? "بعين البراند" : "As the Brand"}
@@ -200,7 +200,7 @@ export default async function CollectionsPage({
             }
           >
             <div className="mb-4 grid gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-line bg-surface p-3">
+              <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
                 <div className="text-xs text-ink-500">
                   {factory ? (ar ? "إجمالي فواتير التشكيلة" : "Collection invoiced") : (ar ? "إجمالي إيراد التشكيلة" : "Collection revenue")}
                 </div>

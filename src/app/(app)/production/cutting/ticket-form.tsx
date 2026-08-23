@@ -6,7 +6,7 @@ import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export type CuttableRun = {
@@ -115,7 +115,7 @@ export function TicketForm({ ar, runs }: { ar: boolean; runs: CuttableRun[] }) {
       </div>
 
       {laid > 0 && (
-        <div className="rounded-lg border border-line bg-surface p-3 text-sm">
+        <div className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-sm">
           <span className="num">{n(marker)}</span>{" "}
           {ar ? "متر ×" : "m ×"} <span className="num">{n(plies)}</span>{" "}
           {ar ? "طبقة =" : "plies ="} <b className="num">{laid.toFixed(2)}</b>{" "}

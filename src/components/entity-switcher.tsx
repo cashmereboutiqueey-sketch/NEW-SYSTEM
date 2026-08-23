@@ -55,7 +55,7 @@ export function EntitySwitcher({
             className={clsx(
               "rounded-[6px] px-3 py-1.5 text-sm font-medium transition",
               active
-                ? "bg-white text-ink-900 shadow-sm"
+                ? "bg-panel text-ink-900 shadow-sm"
                 : "text-ink-500 hover:text-ink-800",
             )}
           >

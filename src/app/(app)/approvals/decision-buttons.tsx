@@ -120,7 +120,7 @@ export function DecisionButtons({
           name="reason"
           required
           placeholder={ar ? "السبب — هيشوفه صاحبها" : "Reason — they will see it"}
-          className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-sm outline-none focus:border-rose-deep"
         />
         <div className="flex items-center gap-2">
           <button

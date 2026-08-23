@@ -51,7 +51,7 @@ export function SendForm({
             name="sendDate"
             defaultValue={today}
             dir="ltr"
-            className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+            className="rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
           />
         </label>
       </div>
@@ -96,7 +96,7 @@ export function SendForm({
                     // nobody chose.
                     placeholder="0"
                     dir="ltr"
-                    className="w-20 rounded-lg border border-ink-200 bg-white px-2 py-1 text-end text-sm outline-none focus:border-ink-500"
+                    className="w-20 rounded-lg border border-ink-200 bg-panel px-2 py-1 text-end text-sm outline-none focus:border-rose-deep"
                   />
                 </td>
               </tr>

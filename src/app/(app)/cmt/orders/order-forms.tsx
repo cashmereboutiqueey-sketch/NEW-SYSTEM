@@ -6,9 +6,9 @@ import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
 const small =
-  "w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm outline-none focus:border-rose-deep";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export type ConfirmableQuote = {
@@ -76,7 +76,7 @@ export function ConfirmForm({ ar, quotes }: { ar: boolean; quotes: ConfirmableQu
       </div>
 
       {quote && (
-        <div className="rounded-lg border border-line bg-surface p-3 text-sm">
+        <div className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-sm">
           {ar ? "هيتحجز" : "This books"}{" "}
           <b className="num">{Number(quote.totalMinutes).toLocaleString()}</b>{" "}
           {ar ? "دقيقة من طاقة الشهر، مقابل" : "minutes of this month's capacity, for"}{" "}

@@ -94,7 +94,7 @@ export function CloseForm({
             name="closeDate"
             defaultValue={today}
             dir="ltr"
-            className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+            className="rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
           />
         </label>
       </div>
@@ -134,7 +134,7 @@ export function CloseForm({
                       }
                       placeholder="—"
                       dir="ltr"
-                      className="w-20 rounded-lg border border-ink-200 bg-white px-2 py-1 text-end text-sm outline-none focus:border-ink-500"
+                      className="w-20 rounded-lg border border-ink-200 bg-panel px-2 py-1 text-end text-sm outline-none focus:border-rose-deep"
                     />
                   </td>
                   <td className="px-2 py-2 text-end num">
@@ -173,7 +173,7 @@ export function CloseForm({
           <select
             name="approvedByUserId"
             required
-            className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+            className="rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
           >
             <option value="">{ar ? "اختار حد" : "Choose"}</option>
             {approvers.map((a) => (
@@ -190,7 +190,7 @@ export function CloseForm({
         <input
           name="notes"
           placeholder={ar ? "حصل إيه؟" : "What happened?"}
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 

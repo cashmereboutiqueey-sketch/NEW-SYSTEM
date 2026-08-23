@@ -6,7 +6,7 @@ import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export type ParentOption = {
@@ -171,7 +171,7 @@ export function AccountForm({ ar, parents }: { ar: boolean; parents: ParentOptio
         </div>
       </div>
 
-      <div className="grid gap-2 rounded-lg border border-line bg-surface p-3 sm:grid-cols-2">
+      <div className="grid gap-2 rounded-lg border border-ink-200 bg-ink-50 p-3 sm:grid-cols-2">
         <label className="flex items-start gap-2 text-xs">
           <input type="checkbox" name="includeInMinuteRate" className="mt-0.5" />
           <span>

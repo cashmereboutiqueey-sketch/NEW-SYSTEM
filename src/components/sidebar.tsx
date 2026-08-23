@@ -20,13 +20,13 @@ export function Sidebar({
   return (
     <nav
       aria-label={t("appName", locale)}
-      className="flex h-full w-60 shrink-0 flex-col border-e border-ink-200 bg-white"
+      className="flex h-full w-60 shrink-0 flex-col border-e border-navy-deep bg-navy"
     >
-      <div className="flex items-center gap-2.5 border-b border-ink-200 px-4 py-3.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink-900 text-sm font-bold text-cashmere-200">
+      <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-3.5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cream text-sm font-bold text-navy">
           C
         </span>
-        <span className="text-sm font-semibold text-ink-900">
+        <span className="text-sm font-semibold text-white">
           {t("appName", locale)}
         </span>
       </div>
@@ -38,7 +38,7 @@ export function Sidebar({
 
           return (
             <div key={section.key} className="mb-4">
-              <h2 className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-400">
+              <h2 className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-panel/55">
                 {t(section.key, locale)}
               </h2>
               <ul className="space-y-0.5">
@@ -51,11 +51,11 @@ export function Sidebar({
                       <li key={item.href}>
                         <span
                           title={`${t("comingInPhase", locale)} ${item.phase}`}
-                          className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-ink-300"
+                          className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-panel/45"
                         >
                           <Icon name={item.icon} className="h-4 w-4 shrink-0" />
                           <span className="truncate">{t(item.key, locale)}</span>
-                          <span className="ms-auto rounded bg-ink-100 px-1.5 text-[10px] font-medium text-ink-400">
+                          <span className="ms-auto rounded bg-white/10 px-1.5 text-[10px] font-medium text-panel/55">
                             P{item.phase}
                           </span>
                         </span>
@@ -71,8 +71,8 @@ export function Sidebar({
                         className={clsx(
                           "flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition",
                           active
-                            ? "bg-ink-900 font-medium text-white"
-                            : "text-ink-600 hover:bg-ink-100 hover:text-ink-900",
+                            ? "bg-ink font-medium text-white"
+                            : "text-panel/75 hover:bg-white/10 hover:text-white",
                         )}
                       >
                         <Icon name={item.icon} className="h-4 w-4 shrink-0" />

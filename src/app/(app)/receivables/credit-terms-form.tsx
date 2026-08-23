@@ -34,7 +34,7 @@ export function CreditTermsForm({
   }
 
   return (
-    <form action={action} className="min-w-[16rem] rounded-lg border border-ink-200 bg-white p-3">
+    <form action={action} className="min-w-[16rem] rounded-lg border border-ink-200 bg-panel p-3">
       <p className="mb-2 text-xs font-medium text-ink-700">
         {ar ? `حد ${customerName}` : `${customerName}'s limit`}
       </p>
@@ -51,7 +51,7 @@ export function CreditTermsForm({
             min="0"
             defaultValue={Number(creditLimit).toFixed(2)}
             dir="ltr"
-            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-ink-500"
+            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-rose-deep"
           />
         </label>
 
@@ -64,7 +64,7 @@ export function CreditTermsForm({
             min="0"
             defaultValue={creditDays}
             dir="ltr"
-            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-ink-500"
+            className="w-full rounded-lg border border-ink-200 px-2 py-1.5 text-end text-sm outline-none focus:border-rose-deep"
           />
         </label>
       </div>

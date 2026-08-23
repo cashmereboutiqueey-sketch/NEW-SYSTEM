@@ -5,7 +5,7 @@ import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm outline-none focus:border-rose-deep";
 
 export type InlineField = {
   name: string;
@@ -70,7 +70,7 @@ export function AddInline({
   }
 
   return (
-    <form action={submit} className="rounded-lg border border-ink-300 bg-white p-3">
+    <form action={submit} className="rounded-lg border border-ink-300 bg-panel p-3">
       <p className="mb-2 text-xs font-medium text-ink-700">{title}</p>
 
       {Object.entries(hidden ?? {}).map(([name, value]) => (

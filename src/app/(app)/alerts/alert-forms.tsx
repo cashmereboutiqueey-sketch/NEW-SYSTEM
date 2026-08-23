@@ -51,7 +51,7 @@ export function AcknowledgeForm({
       <select
         name="snoozeDays"
         defaultValue="0"
-        className="rounded-lg border border-ink-200 bg-white px-2 py-1 text-xs text-ink-700"
+        className="rounded-lg border border-ink-200 bg-panel px-2 py-1 text-xs text-ink-700"
       >
         <option value="0">{ar ? "شفتها" : "Acknowledge"}</option>
         <option value="7">{ar ? "أجّلها أسبوع" : "Snooze a week"}</option>

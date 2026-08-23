@@ -120,7 +120,7 @@ export default async function ReconciliationPage({
             <a
               href="/reconciliation"
               className={`rounded-lg border px-3 py-1.5 text-sm ${
-                tab === "settlements" ? "border-ink-900 bg-ink-900 text-white" : "border-ink-200"
+                tab === "settlements" ? "border-rose bg-rose text-ink-900" : "border-ink-200"
               }`}
             >
               {ar ? "التوريدات" : "Remittances"}
@@ -128,7 +128,7 @@ export default async function ReconciliationPage({
             <a
               href="/reconciliation?tab=bank"
               className={`rounded-lg border px-3 py-1.5 text-sm ${
-                tab === "bank" ? "border-ink-900 bg-ink-900 text-white" : "border-ink-200"
+                tab === "bank" ? "border-rose bg-rose text-ink-900" : "border-ink-200"
               }`}
             >
               {ar ? "البنك" : "Bank"}
@@ -282,7 +282,7 @@ export default async function ReconciliationPage({
                     key={s.id}
                     href={`/reconciliation?tab=bank&statement=${s.id}`}
                     className={`rounded-lg border px-3 py-1.5 text-sm ${
-                      open?.id === s.id ? "border-ink-900 bg-ink-900 text-white" : "border-ink-200"
+                      open?.id === s.id ? "border-rose bg-rose text-ink-900" : "border-ink-200"
                     }`}
                   >
                     <span className="num" dir="ltr">

@@ -39,7 +39,7 @@ export default async function AuditPage({
   ]);
 
   const field =
-    "rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-ink-500";
+    "rounded-lg border border-ink-200 bg-panel px-2.5 py-1.5 text-sm outline-none focus:border-rose-deep";
 
   const when = (d: Date) => {
     const x = new Date(d);
@@ -136,7 +136,7 @@ export default async function AuditPage({
             <button type="submit" className="rounded-lg bg-ink-900 px-4 py-2 text-sm text-white">
               {ar ? "اعرض" : "Show"}
             </button>
-            <a href="/audit" className="rounded-lg border border-line px-4 py-2 text-sm text-ink-600">
+            <a href="/audit" className="rounded-lg border border-ink-200 px-4 py-2 text-sm text-ink-600">
               {ar ? "امسح" : "Clear"}
             </a>
           </form>
@@ -156,7 +156,7 @@ export default async function AuditPage({
                 <a
                   key={a.action}
                   href={`/audit?action=${encodeURIComponent(a.action)}`}
-                  className="rounded-lg border border-line px-3 py-1.5 text-xs hover:border-ink-300"
+                  className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs hover:border-ink-300"
                 >
                   <span className="num">{a.action}</span>
                   <span className="ms-2 num text-ink-400">{formatNumber(a.count)}</span>

@@ -103,7 +103,7 @@ export default async function CostingPage({
                   className={
                     "rounded-lg border px-3 py-1.5 text-sm " +
                     (selected?.id === s.id
-                      ? "border-ink-900 bg-ink-900 text-white"
+                      ? "border-rose bg-rose text-ink-900"
                       : "border-ink-200 text-ink-700 hover:border-ink-400")
                   }
                 >

@@ -154,7 +154,7 @@ export default async function PricingPage({
             }}
           />
 
-          <dl className="mt-4 grid gap-2 border-t border-line pt-3 text-sm sm:grid-cols-4">
+          <dl className="mt-4 grid gap-2 border-t border-ink-200 pt-3 text-sm sm:grid-cols-4">
             {[
               [ar ? "إيجار ومرتبات للقطعة" : "Overhead per garment", money(basis.overheadPerUnit)],
               [ar ? "تسويق للقطعة" : "Marketing per garment", money(basis.marketingPerUnit)],
@@ -196,7 +196,7 @@ export default async function PricingPage({
                 {ar ? "حساب المرتجع" : "Return allowance"}{" "}
                 <b className="num">{money(selected.style.returnAllowance)}</b>
               </span>
-              <span className="border-s border-line ps-4">
+              <span className="border-s border-ink-200 ps-4">
                 {ar ? "التكلفة الحقيقية" : "True cost"}{" "}
                 <b className="num">{money(selected.style.trueCost)}</b>
               </span>

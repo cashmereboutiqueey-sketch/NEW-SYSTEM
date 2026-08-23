@@ -58,7 +58,7 @@ export default async function TaxPage({
       />
 
       {!status.registered && (
-        <div className="mb-5 rounded-lg border border-line bg-surface p-3 text-sm">
+        <div className="mb-5 rounded-lg border border-ink-200 bg-ink-50 p-3 text-sm">
           <strong>{ar ? "مفيش ضريبة بتتحسب دلوقتي." : "No VAT is being charged."}</strong>{" "}
           {ar
             ? "ده مقصود: النشاط مش مسجّل في ضريبة القيمة المضافة، والنظام مش بيحسب ضريبة مش مستحقة عليك. النسب تحت جاهزة، والحسابين ١٤٥٠ و٢٣٠٠ موجودين ومستنيين — أول ما تتسجل، فعّل السويتش."
@@ -170,7 +170,7 @@ export default async function TaxPage({
             </label>
             <input
               id="from" name="from" type="date" dir="ltr" defaultValue={day(from)}
-              className="rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm num"
+              className="rounded-lg border border-ink-200 bg-panel px-2.5 py-1.5 text-sm num"
             />
           </div>
           <div>
@@ -179,7 +179,7 @@ export default async function TaxPage({
             </label>
             <input
               id="to" name="to" type="date" dir="ltr" defaultValue={day(to)}
-              className="rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm num"
+              className="rounded-lg border border-ink-200 bg-panel px-2.5 py-1.5 text-sm num"
             />
           </div>
           <button type="submit" className="rounded-lg bg-ink-900 px-4 py-2 text-sm text-white">

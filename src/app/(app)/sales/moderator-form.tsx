@@ -7,8 +7,8 @@ import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
 const field =
-  "rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 " +
-  "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+  "rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 " +
+  "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 /** Rounds the way the invoice does, so the screen shows what will be charged. */
@@ -267,7 +267,7 @@ export function ModeratorOrderForm({
                 type="button"
                 onClick={() => setMethod(value)}
                 className={`rounded-lg border px-3 py-2 text-sm ${
-                  method === value ? "border-ink-900 bg-ink-900 text-white" : "border-ink-200"
+                  method === value ? "border-rose bg-rose text-ink-900" : "border-ink-200"
                 }`}
               >
                 {text}

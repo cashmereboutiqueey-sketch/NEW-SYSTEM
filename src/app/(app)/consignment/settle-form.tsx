@@ -5,7 +5,7 @@ import { settleConsignorAction, type ConsignmentState } from "./actions";
 
 const empty: ConsignmentState = {};
 const small =
-  "w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm outline-none focus:border-rose-deep";
 
 /**
  * Handing a consignor the money the shop has been holding for them.

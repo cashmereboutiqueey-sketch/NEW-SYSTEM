@@ -481,8 +481,8 @@ export function PosTerminal({
   }
 
   const field =
-    "rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 " +
-    "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+    "rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 " +
+    "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
@@ -561,7 +561,7 @@ export function PosTerminal({
                         type="button"
                         onClick={() => add(p)}
                         disabled={left <= 0}
-                        className="min-w-[4.5rem] rounded-lg border border-ink-200 bg-white px-3 py-2 text-center transition-colors hover:border-ink-900 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="min-w-[4.5rem] rounded-lg border border-ink-200 bg-panel px-3 py-2 text-center transition-colors hover:border-ink-900 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <div className="text-sm font-semibold text-ink-900">{p.size}</div>
                         <div
@@ -584,7 +584,7 @@ export function PosTerminal({
                 key={s.styleId}
                 type="button"
                 onClick={() => setOpenStyleId(s.styleId)}
-                className="overflow-hidden rounded-xl border border-ink-200 bg-white text-start transition-colors hover:border-ink-400"
+                className="overflow-hidden rounded-xl border border-ink-200 bg-panel text-start transition-colors hover:border-ink-400"
               >
                 <div className="aspect-[3/4] w-full bg-ink-100">
                   {s.image ? (
@@ -724,7 +724,7 @@ export function PosTerminal({
         <input type="hidden" name="tendered" value={tendered || "0"} />
         <input type="hidden" name="customerId" value={customerId} />
 
-        <div className="rounded-xl border border-ink-200 bg-white p-3">
+        <div className="rounded-xl border border-ink-200 bg-panel p-3">
           <h2 className="mb-2 text-sm font-semibold text-ink-800">
             {ar ? "الفاتورة" : "Receipt"}
           </h2>
@@ -898,7 +898,7 @@ export function PosTerminal({
         </div>
 
         {/* ------------------------------------------------------- payment */}
-        <div className="rounded-xl border border-ink-200 bg-white p-3">
+        <div className="rounded-xl border border-ink-200 bg-panel p-3">
           <div className="mb-2 grid grid-cols-4 gap-1.5">
             {(["CASH", "CARD", "INSTAPAY", "COD"] as const).map((m) => (
               <button
@@ -908,7 +908,7 @@ export function PosTerminal({
                 className={
                   "rounded-lg border px-2 py-2 text-xs font-medium " +
                   (method === m
-                    ? "border-ink-900 bg-ink-900 text-white"
+                    ? "border-rose bg-rose text-ink-900"
                     : "border-ink-200 text-ink-700")
                 }
               >

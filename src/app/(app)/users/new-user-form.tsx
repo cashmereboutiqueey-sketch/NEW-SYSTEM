@@ -5,7 +5,7 @@ import { createUserAction, type UserState } from "./actions";
 
 const empty: UserState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
 
 /** A temporary password nobody has to invent under pressure. */
 function suggest(): string {

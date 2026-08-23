@@ -26,7 +26,7 @@ export function LoginForm({ locale }: { locale: Locale }) {
           required
           autoComplete="username"
           dir="ltr"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 outline-none focus:border-ink-500 focus:ring-2 focus:ring-ink-200"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 outline-none focus:border-rose-deep focus:ring-2 focus:ring-rose/60"
         />
       </div>
 
@@ -44,7 +44,7 @@ export function LoginForm({ locale }: { locale: Locale }) {
           required
           autoComplete="current-password"
           dir="ltr"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 outline-none focus:border-ink-500 focus:ring-2 focus:ring-ink-200"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 outline-none focus:border-rose-deep focus:ring-2 focus:ring-rose/60"
         />
       </div>
 

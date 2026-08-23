@@ -32,11 +32,11 @@ export default async function AppLayout({
   const { locale, scope } = await getPrefs();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-ink-50">
+    <div className="flex h-screen overflow-hidden bg-cream">
       <Sidebar locale={locale} scope={scope} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-ink-200 bg-white px-5 py-3">
+        <header className="flex items-center gap-3 border-b border-ink-200 bg-panel px-5 py-3">
           <EntitySwitcher current={scope} locale={locale} />
 
           <div className="ms-auto flex items-center gap-3">

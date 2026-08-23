@@ -73,7 +73,7 @@ export function ReverseForm({
               ? "الكمية اتسجلت غلط، الفاتورة كانت ٨٠ متر مش ١٠٠"
               : "The quantity was recorded wrong; the invoice was 80 metres, not 100"
           }
-          className="w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm outline-none focus:border-rose-deep"
         />
         <p className="mt-1 text-[11px] text-ink-400">
           {ar

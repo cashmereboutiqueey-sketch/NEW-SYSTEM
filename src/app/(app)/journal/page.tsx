@@ -58,7 +58,7 @@ export default async function JournalPage({
   const day = (d: Date | null) => (d ? new Date(d).toISOString().slice(0, 10) : "—");
 
   const field =
-    "rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-ink-500";
+    "rounded-lg border border-ink-200 bg-panel px-2.5 py-1.5 text-sm outline-none focus:border-rose-deep";
 
   return (
     <>
@@ -147,7 +147,7 @@ export default async function JournalPage({
             >
               {ar ? "اعرض" : "Show"}
             </button>
-            <a href="/journal" className="rounded-lg border border-line px-4 py-2 text-sm text-ink-600">
+            <a href="/journal" className="rounded-lg border border-ink-200 px-4 py-2 text-sm text-ink-600">
               {ar ? "امسح" : "Clear"}
             </a>
           </form>

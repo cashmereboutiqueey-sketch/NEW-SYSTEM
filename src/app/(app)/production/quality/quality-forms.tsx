@@ -6,7 +6,7 @@ import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
 const field =
-  "w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500";
+  "w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export type QualityRun = {
@@ -147,7 +147,7 @@ export function InspectionForm({ ar, runs }: { ar: boolean; runs: QualityRun[] }
         <div
           className={
             "rounded-lg border p-3 text-sm " +
-            (reconciles ? "border-line bg-surface" : "border-bad/30 bg-bad/5")
+            (reconciles ? "border-ink-200 bg-ink-50" : "border-bad/30 bg-bad/5")
           }
         >
           {reconciles ? (
@@ -360,7 +360,7 @@ export function ReworkForm({
         </p>
       ) : (
         totalMinutes > 0 && (
-          <div className="rounded-lg border border-line bg-surface p-3 text-sm">
+          <div className="rounded-lg border border-ink-200 bg-ink-50 p-3 text-sm">
             <span className="num">{totalMinutes.toFixed(0)}</span>{" "}
             {ar ? "دقيقة ×" : "min ×"} <span className="num">{rate.toFixed(4)}</span>{" "}
             {ar ? "= أجور" : "= labour"}{" "}

@@ -73,7 +73,7 @@ export function VariantForm({
               className={
                 "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm " +
                 (pickedColours.includes(c.id)
-                  ? "border-ink-900 bg-ink-900 text-white"
+                  ? "border-rose bg-rose text-ink-900"
                   : "border-ink-200 text-ink-700")
               }
             >
@@ -103,7 +103,7 @@ export function VariantForm({
               className={
                 "rounded-lg border px-3 py-1.5 text-sm " +
                 (pickedSizes.includes(s.id)
-                  ? "border-ink-900 bg-ink-900 text-white"
+                  ? "border-rose bg-rose text-ink-900"
                   : "border-ink-200 text-ink-700")
               }
             >
@@ -127,7 +127,7 @@ export function VariantForm({
                 dir="ltr"
                 className={
                   "rounded px-1.5 py-0.5 text-xs " +
-                  (p.isNew ? "bg-white text-ink-700" : "bg-ink-100 text-ink-400 line-through")
+                  (p.isNew ? "bg-panel text-ink-700" : "bg-ink-100 text-ink-400 line-through")
                 }
               >
                 {p.sku}

@@ -129,7 +129,7 @@ export default async function InventoryPage({
                 href={countingLocationId === l.id ? "/inventory" : `/inventory?count=${l.id}`}
                 className={`rounded-lg border px-3 py-1.5 text-sm ${
                   countingLocationId === l.id
-                    ? "border-ink-900 bg-ink-900 text-white"
+                    ? "border-rose bg-rose text-ink-900"
                     : "border-ink-200 text-ink-700"
                 }`}
               >

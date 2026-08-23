@@ -40,7 +40,7 @@ export function FreezeForm({ ar, periods }: { ar: boolean; periods: ScorablePeri
         </label>
         <select
           id="fiscalPeriodId" name="fiscalPeriodId" required
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         >
           {periods.map((p) => (
             <option key={p.id} value={p.id}>

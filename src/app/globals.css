@@ -3,46 +3,91 @@
 /* ---------------------------------------------------------------------------
    Cashmere OS design tokens.
    A working tool, not a marketing page: dense, legible, calm. Colour is used
-   only to carry meaning — red means money is leaking, amber means watch it.
+   only to carry meaning — red means money is leaking, rose means watch it.
+
+   The palette is Cashmere Boutique's own: navy anchors the brand, cream is the
+   page it all sits on, rose is the accent that is spent sparingly. The neutral
+   ramp below is not grey — it is navy diluted, so borders and helper text
+   belong to the same family as the sidebar and the headings.
 --------------------------------------------------------------------------- */
 
-@theme {
+/* `static` so the whole palette is emitted as custom properties whether or not
+   a utility class happens to reference it. Tailwind otherwise tree-shakes the
+   unused ones, which would leave `var(--color-chart-1)` resolving to nothing
+   the first time a chart reaches for it. */
+@theme static {
   --font-sans: "IBM Plex Sans Arabic", "Segoe UI", system-ui, -apple-system,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --color-ink-50: #f6f7f9;
-  --color-ink-100: #eceef2;
-  --color-ink-200: #d6dae2;
-  --color-ink-300: #b0b8c6;
-  --color-ink-400: #7d8899;
-  --color-ink-500: #5a6577;
-  --color-ink-600: #434c5c;
-  --color-ink-700: #333b48;
-  --color-ink-800: #1f2530;
-  --color-ink-900: #131820;
-  --color-ink-950: #0b0e14;
+  /* Brand anchors, named for what they are rather than where they sit. */
+  --color-navy: #0b2b55;
+  --color-navy-deep: #071e3c;
+  --color-cream: #f6eee1;
+  --color-rose: #d99a9b;
+  /* Rose at text/border weight. The brand rose is a 2.3:1 tint — fine as a
+     ring or a fill, not enough on its own to mark a focused field. */
+  --color-rose-deep: #a05a5c;
+  --color-rose-soft: #f4e5e6;
+  /* Warm white: every operational surface — cards, tables, inputs, the top
+     bar. Reads as white against cream without the clinical edge.
 
-  /* Cashmere: warm neutral, the brand's own register */
-  --color-cashmere-50: #faf7f2;
-  --color-cashmere-100: #f2ebdf;
-  --color-cashmere-200: #e4d5be;
-  --color-cashmere-300: #d2ba97;
-  --color-cashmere-400: #bf9c70;
-  --color-cashmere-500: #ad8455;
-  --color-cashmere-600: #916b46;
-  --color-cashmere-700: #74533a;
-  --color-cashmere-800: #5c4331;
-  --color-cashmere-900: #4a372a;
+     Named `panel` rather than `surface` on purpose: `bg-surface` and
+     `border-line` already appear in a handful of screens with no token behind
+     them, so they render nothing. Claiming those names here would silently
+     switch ~38 dormant backgrounds and borders on, which is a layout change,
+     not a colour one. They are left dead exactly as they were found. */
+  --color-panel: #f9fafb;
+  /* Body copy. Near-black, so a dense table stays a dense table. */
+  --color-ink: #15191f;
 
-  --color-good: #15803d;
-  --color-good-soft: #dcfce7;
-  --color-warn: #b45309;
-  --color-warn-soft: #fef3c7;
+  /* The neutral ramp, tinted towards navy and ending on it: `ink-900` is
+     Cashmere Navy itself, which is why headings and primary buttons land on
+     the brand colour without a single class changing. */
+  --color-ink-50: #f2f4f7;
+  --color-ink-100: #e7ebf2;
+  --color-ink-200: #d6dde9;
+  --color-ink-300: #aeb9cb;
+  --color-ink-400: #77869e;
+  --color-ink-500: #51617a;
+  --color-ink-600: #3a4a63;
+  --color-ink-700: #2c3b52;
+  --color-ink-800: #1f3350;
+  --color-ink-900: #0b2b55;
+  --color-ink-950: #061c3b;
+
+  /* Cashmere: the warm side of the palette, cream and the sands under it. */
+  --color-cashmere-50: #fdfaf5;
+  --color-cashmere-100: #f6eee1;
+  --color-cashmere-200: #eadcc6;
+  --color-cashmere-300: #dcc5a3;
+  --color-cashmere-400: #c9ae86;
+  --color-cashmere-500: #b0906a;
+  --color-cashmere-600: #937658;
+  --color-cashmere-700: #765e48;
+  --color-cashmere-800: #5d4a3a;
+  --color-cashmere-900: #4a3b2f;
+
+  /* Status still means what it meant. Green is desaturated so it sits on
+     cream rather than shouting over it; "needs attention" moves from amber to
+     the brand's dark rose; error stays a plain, unmistakable red, because an
+     error that looks like a warning gets treated like one. */
+  --color-good: #2f6b46;
+  --color-good-soft: #e3ede6;
+  --color-warn: #a05056;
+  --color-warn-soft: #f4e5e6;
   --color-bad: #b91c1c;
   --color-bad-soft: #fee2e2;
   --color-info: #1d4ed8;
   --color-info-soft: #dbeafe;
+
+  /* Chart series, in the order a chart should reach for them. */
+  --color-chart-1: #0b2b55;
+  --color-chart-2: #d99a9b;
+  --color-chart-3: #c9ae86;
+  --color-chart-4: #7e8c6a;
+  --color-chart-5: #4c6e96;
+  --color-chart-6: #94a9c2;
 }
 
 @layer base {
@@ -51,8 +96,8 @@
   }
 
   body {
-    background-color: var(--color-ink-50);
-    color: var(--color-ink-800);
+    background-color: var(--color-cream);
+    color: var(--color-ink);
     font-family: var(--font-sans);
     font-feature-settings: "tnum" 1;
   }
@@ -75,7 +120,7 @@
 
 @layer components {
   .card {
-    background-color: white;
+    background-color: var(--color-panel);
     border: 1px solid var(--color-ink-200);
     border-radius: 0.75rem;
   }

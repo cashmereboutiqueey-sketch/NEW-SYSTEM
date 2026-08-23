@@ -11,7 +11,7 @@
 /* --------------------------------------------------------------- screen */
 
 .print-preview {
-  background: #f4f4f2;
+  background: #f6eee1;
   padding: 1.5rem 0;
 }
 
@@ -265,7 +265,7 @@
 
 @media screen {
   .roll-label {
-    border: 1px dashed #cbd5e1;
+    border: 1px dashed #d6dde9;
     margin-bottom: 2mm;
     background: #fff;
   }

@@ -103,7 +103,7 @@ export default async function EntityPnlPage({
                 className={
                   "rounded-lg border px-3 py-1 text-sm " +
                   (entity.id === e.id
-                    ? "border-ink-900 bg-ink-900 text-white"
+                    ? "border-rose bg-rose text-ink-900"
                     : "border-ink-200 text-ink-700")
                 }
               >

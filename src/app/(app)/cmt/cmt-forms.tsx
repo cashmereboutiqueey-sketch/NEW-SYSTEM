@@ -7,8 +7,8 @@ import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
 const field =
-  "rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 " +
-  "focus:border-ink-400 focus:outline-none focus:ring-1 focus:ring-ink-300";
+  "rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 " +
+  "focus:border-rose-deep focus:outline-none focus:ring-1 focus:ring-rose";
 const label = "mb-1 block text-xs font-medium text-ink-600";
 
 export function ClientForm({ locale }: { locale: Locale }) {
@@ -232,7 +232,7 @@ export function QuoteStatusForm({
       <select
         name="status"
         defaultValue={status === "DRAFT" ? "SENT" : "ACCEPTED"}
-        className="rounded-lg border border-ink-200 bg-white px-2 py-1 text-xs text-ink-700"
+        className="rounded-lg border border-ink-200 bg-panel px-2 py-1 text-xs text-ink-700"
       >
         <option value="SENT">{ar ? "اتبعت" : "Sent"}</option>
         <option value="ACCEPTED">{ar ? "اتقبل" : "Accepted"}</option>

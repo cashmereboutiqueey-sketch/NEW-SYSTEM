@@ -25,7 +25,7 @@ export function OpenExhibitionForm({
           name="nameAr"
           required
           placeholder={ar ? "بازار الساحل" : "North Coast Bazaar"}
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 
@@ -36,7 +36,7 @@ export function OpenExhibitionForm({
         <input
           name="nameEn"
           dir="ltr"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 
@@ -44,7 +44,7 @@ export function OpenExhibitionForm({
         <span className="mb-1 block text-ink-600">{ar ? "المكان" : "City"}</span>
         <input
           name="city"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 
@@ -55,7 +55,7 @@ export function OpenExhibitionForm({
         <select
           name="parentLocationId"
           required
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         >
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
@@ -73,7 +73,7 @@ export function OpenExhibitionForm({
           defaultValue={today}
           required
           dir="ltr"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 
@@ -85,7 +85,7 @@ export function OpenExhibitionForm({
           defaultValue={inThree}
           required
           dir="ltr"
-          className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-ink-500"
+          className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
         />
       </label>
 
