@@ -35,6 +35,32 @@ services:
       start_period: 20s
     networks: [internal]
 
+  # Migrations run here rather than in the app, from the build stage — which
+  # already holds the full toolchain. The Prisma 7 CLI has a real dependency
+  # tree of its own (effect, dotenv, and more beneath them), and copying those
+  # into the runtime image one at a time is a game with no end: each missing
+  # one only shows up as another crash loop. The slim runtime image exists
+  # precisely so it does not carry build tooling, so the tooling stays here.
+  #
+  # It runs to completion and exits. The app waits for that exit to be a
+  # success, so a failed migration stops the deploy instead of starting a
+  # server against a half-migrated schema.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    image: cashmere-os-build:latest
+    container_name: cashmere-os-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://cashmere_os:${POSTGRES_PASSWORD}@db:5432/cashmere_os?schema=public
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
   app:
     build:
       context: .
@@ -53,12 +79,13 @@ services:
       # Garment photographs. A named volume, so rebuilding the image — which
       # happens on every deploy — cannot take them with it.
       - uploads:/app/data/uploads
+    # Migrations before the first request, never alongside it: a request
+    # arriving mid-migration reads a half-changed schema.
     depends_on:
       db:
         condition: service_healthy
-    # Migrations before the first request, never alongside it: a request
-    # arriving mid-migration reads a half-changed schema.
-    entrypoint: ["/bin/sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && exec node server.js"]
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
       interval: 30s

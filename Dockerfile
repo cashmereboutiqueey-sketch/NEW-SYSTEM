@@ -97,15 +97,8 @@ COPY --from=build /app/public ./public
 # on a module that exists three directories away. The entrypoint calls
 # build/index.js directly, which is what the symlink pointed at anyway.
 COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/src/generated ./src/generated
-
-# The datasource block in schema.prisma carries no url — it comes from
-# prisma.config.ts, so `migrate deploy` cannot find the database without it.
-# dotenv comes too, because the config imports it before anything else runs.
-COPY --from=build /app/prisma.config.ts ./prisma.config.ts
-COPY --from=build /app/node_modules/dotenv ./node_modules/dotenv
 
 RUN mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
 
