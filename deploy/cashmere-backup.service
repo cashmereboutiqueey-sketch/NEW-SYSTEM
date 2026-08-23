@@ -18,6 +18,11 @@ ExecStart=/opt/cashmere-os/scripts/backup.sh
 # Backups are worth keeping longer than a month of them is worth the disk.
 # Thirty days on a 96 GB disk is a few hundred megabytes.
 Environment=CASHMERE_BACKUP_KEEP_DAYS=30
+# The garment photographs. They live in a Docker volume rather than under the
+# checkout, so the script's default of data/uploads finds an empty path and
+# reports there is nothing to photograph — which reads like good news and means
+# the images are not in the backup at all.
+Environment=UPLOAD_DIR=/var/lib/docker/volumes/cashmere-os_uploads/_data
 # A dump that hangs must not still be holding the database when the next one
 # starts; better to fail loudly and be visible in the journal.
 TimeoutStartSec=30min
