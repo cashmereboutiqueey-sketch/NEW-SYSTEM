@@ -57,6 +57,13 @@ RUN npx prisma generate
 # copies them, so the runtime image does not carry node_modules whole.
 RUN npm run build
 
+# This project keeps no public/ — fonts come through next/font and garment
+# photographs live on a mounted volume, not in the image. Create it empty so
+# the runtime stage can copy it unconditionally: without this the COPY fails
+# on a missing path, and with it a public/ added later is picked up with no
+# change here.
+RUN mkdir -p /app/public
+
 # ───────────────────────────────── runtime ───────────────────────────────────
 FROM node:24-alpine AS runtime
 WORKDIR /app

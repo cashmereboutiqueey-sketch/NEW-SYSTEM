@@ -1,0 +1,18 @@
+# Runs the backup nightly.
+#
+# 03:00 Cairo: the shop is closed, nobody is posting, and a dump taken then is
+# a clean picture of a finished day rather than half of a live one.
+
+[Unit]
+Description=Nightly Cashmere OS backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# If the server was off at 03:00 — a reboot, a power cut — run on the next
+# start rather than skipping silently until tomorrow.
+Persistent=true
+# So every machine does not hit the disk at the same instant.
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

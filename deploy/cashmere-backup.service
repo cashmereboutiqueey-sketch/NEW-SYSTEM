@@ -1,0 +1,23 @@
+# Takes a verified backup of the Cashmere OS database.
+#
+# The script does not merely dump: it restores the dump into a scratch database
+# and checks the books balance inside it, then deletes the dump if that fails.
+# So a run that succeeds here means a file that has actually been restored once,
+# rather than a file nobody has ever opened.
+
+[Unit]
+Description=Cashmere OS database backup, verified by restoring it
+# The database lives in a container; there is nothing to dump before Docker.
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/cashmere-os
+ExecStart=/opt/cashmere-os/scripts/backup.sh
+# Backups are worth keeping longer than a month of them is worth the disk.
+# Thirty days on a 96 GB disk is a few hundred megabytes.
+Environment=CASHMERE_BACKUP_KEEP_DAYS=30
+# A dump that hangs must not still be holding the database when the next one
+# starts; better to fail loudly and be visible in the journal.
+TimeoutStartSec=30min

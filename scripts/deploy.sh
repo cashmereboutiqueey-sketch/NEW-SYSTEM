@@ -113,6 +113,16 @@ ssh_run "for i in \$(seq 1 30); do
 done
 echo '  it did not answer in two minutes — the log follows'; docker logs --tail 40 cashmere-os-app; exit 1"
 
+say "backups"
+# Installed on every deploy rather than once by hand, so a rebuilt server comes
+# back with its backups running instead of quietly without them.
+ssh_run "install -m 644 $DIR/deploy/cashmere-backup.service /etc/systemd/system/
+  install -m 644 $DIR/deploy/cashmere-backup.timer /etc/systemd/system/
+  chmod +x $DIR/scripts/backup.sh
+  systemctl daemon-reload
+  systemctl enable --now cashmere-backup.timer >/dev/null 2>&1
+  systemctl list-timers cashmere-backup.timer --no-pager | sed -n '2p' | awk '{print \"  next backup: \"\$1\" \"\$2\" \"\$3}'"
+
 say "as seen from outside"
 SITE="$(ssh_run "grep '^SITE_ADDRESS=' $DIR/.env | cut -d= -f2")"
 curl -s -o /dev/null -w "  https://$SITE  HTTP %{http_code}\n" "https://$SITE/login" || true
