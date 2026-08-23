@@ -1,0 +1,42 @@
+# HTTPS for Cashmere OS.
+#
+# Caddy asks Let's Encrypt for a certificate on first start and renews it
+# forever without being asked. Nothing here needs a cron entry, and nothing
+# expires quietly at three in the morning eighteen months from now.
+
+{$SITE_ADDRESS} {
+	# The app is not published to the host at all — this is the only route in,
+	# over the private network Docker gives the three containers.
+	reverse_proxy app:3000
+
+	encode gzip zstd
+
+	header {
+		# Only ever answer over HTTPS, for two years, and let a browser that
+		# has been here once refuse a downgrade before it even asks.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+
+		# The system renders no third-party content and embeds nowhere, so
+		# these cost nothing and close three whole classes of attack.
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+
+		# It answers in Arabic and English, never advertises what it runs on.
+		-Server
+	}
+
+	# Uploaded photographs are content-addressed — the name is a hash of the
+	# bytes — so a name can never point at different bytes later and a long
+	# cache is safe.
+	@uploads path /api/images/*
+	header @uploads Cache-Control "public, max-age=31536000, immutable"
+
+	log {
+		output file /data/access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+		format json
+	}
+}

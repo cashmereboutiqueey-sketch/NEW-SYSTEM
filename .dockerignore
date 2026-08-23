@@ -1,0 +1,28 @@
+# What must never reach a build context.
+#
+# Beyond keeping the image small, this is a security boundary: anything listed
+# here would otherwise be copied into a layer, and a layer is readable by
+# anyone who can pull the image.
+
+.env
+.env.*
+!.env.production.example
+backups/
+*.sql
+*.sql.gz
+shopify-sku-plan.csv
+shopify-sku-rollback.json
+
+.git
+.github
+node_modules
+.next
+.next-build
+data/uploads
+
+# Tests and docs do not run in production and only slow the build.
+**/*.test.ts
+**/*.test.tsx
+docs/
+*.md
+!README.md

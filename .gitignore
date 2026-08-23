@@ -27,3 +27,7 @@ data/uploads/
 # and the rollback names real variant ids. Regenerate rather than commit.
 shopify-sku-plan.csv
 shopify-sku-rollback.json
+
+# Production settings live on the server, never here.
+.env.production
+Caddyfile.local

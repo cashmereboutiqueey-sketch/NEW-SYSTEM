@@ -1,0 +1,98 @@
+# Cashmere OS in production.
+#
+# Three services and nothing else. Caddy is the only one the internet can
+# reach; the app is reachable only from Caddy, and the database only from the
+# app. Nothing but 80 and 443 is published, so there is no port to forget to
+# close.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Everything configurable lives in .env beside this file. It is never
+# committed, and the deploy script refuses to run without it.
+
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: cashmere-os-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cashmere_os
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: cashmere_os
+      # Egyptian collation, so ORDER BY on an Arabic name sorts the way a
+      # person reading the screen expects it to.
+      LANG: C.UTF-8
+    # No ports at all. The app reaches it over the private network by name;
+    # nothing outside this file can open a connection to it, which is stronger
+    # than binding to loopback and hoping.
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cashmere_os -d cashmere_os"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [internal]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cashmere-os:latest
+    container_name: cashmere-os-app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://cashmere_os:${POSTGRES_PASSWORD}@db:5432/cashmere_os?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      DEFAULT_LOCALE: ${DEFAULT_LOCALE:-ar}
+      NODE_ENV: production
+      UPLOAD_DIR: /app/data/uploads
+      TZ: Africa/Cairo
+    volumes:
+      # Garment photographs. A named volume, so rebuilding the image — which
+      # happens on every deploy — cannot take them with it.
+      - uploads:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    # Migrations before the first request, never alongside it: a request
+    # arriving mid-migration reads a half-changed schema.
+    entrypoint: ["/bin/sh", "-c", "npx prisma migrate deploy && exec node server.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: cashmere-os-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and its account key. Losing this volume means asking
+      # Let's Encrypt for a new certificate on the next start, and they rate
+      # limit that — five a week for the same name.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    networks: [internal]
+
+volumes:
+  db-data:
+  uploads:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge

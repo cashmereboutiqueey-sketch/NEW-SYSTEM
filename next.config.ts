@@ -17,6 +17,20 @@ const nextConfig: NextConfig = {
    * `next dev` leaves it unset and keeps `.next`.
    */
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
+
+  /**
+   * Standalone output, for the container image only.
+   *
+   * Next traces which files the server actually needs and copies them into
+   * `standalone`, so the runtime image carries those rather than node_modules
+   * whole — a few hundred megabytes against a couple of gigabytes.
+   *
+   * Behind a variable rather than always on: it is pure cost on a laptop,
+   * where the build runs many times a day and nothing ever reads the output.
+   * The Dockerfile sets it.
+   */
+  output: process.env.NEXT_STANDALONE === "1" ? "standalone" : undefined,
+
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",
