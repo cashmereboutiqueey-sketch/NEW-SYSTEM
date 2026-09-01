@@ -98,7 +98,14 @@ say "keeping the current image as the way back"
 ssh_run "docker image inspect cashmere-os:latest >/dev/null 2>&1 && docker tag cashmere-os:latest cashmere-os:previous && echo '  tagged cashmere-os:previous' || echo '  nothing to keep — first build'"
 
 say "building"
-ssh_run "cd $DIR && docker compose -f docker-compose.prod.yml build app 2>&1 | tail -5"
+# Both images, always. The migrate service runs from its own image built at the
+# `build` stage, and compose reuses an existing image rather than rebuilding it
+# — so building only the app left migrations running from whatever image
+# happened to be on the disk. That is silent and it is the dangerous kind: a
+# new migration would not be in the stale image, `migrate deploy` would report
+# nothing to do, and the fresh app would then start against a schema missing
+# the column it was built for.
+ssh_run "cd $DIR && docker compose -f docker-compose.prod.yml build app migrate 2>&1 | tail -5"
 
 say "starting"
 # Migrations run in the app's entrypoint, before it serves anything.
