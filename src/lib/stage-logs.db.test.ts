@@ -26,7 +26,15 @@ let day: Date;
 const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
-  const style = await db.style.findFirstOrThrow({ orderBy: { code: "asc" } });
+  // A style with a routing, not merely the first one alphabetically. Earned
+  // minutes come from the operations, so a style with none makes every
+  // assertion below compare zero against zero and pass for the wrong reason —
+  // or, once real garments were imported and one of them sorted first, fail
+  // for a reason that has nothing to do with stage logging.
+  const style = await db.style.findFirstOrThrow({
+    where: { operations: { some: {} } },
+    orderBy: { code: "asc" },
+  });
   styleId = style.id;
   lineId = (await db.productionLine.findFirstOrThrow({ where: { isActive: true } })).id;
   ownerId = (await db.user.findFirstOrThrow({ where: { role: "OWNER" } })).id;

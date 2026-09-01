@@ -76,6 +76,7 @@ export function verifyWebhookSignature(
 async function shopifyFetch<T>(
   connection: { externalRef: string; accessToken: string | null; apiVersion: string | null },
   path: string,
+  init?: { method: "POST"; body: unknown },
 ): Promise<T> {
   if (!connection.accessToken) {
     throw new ShopifyError("This shop has no access token configured.");
@@ -83,10 +84,12 @@ async function shopifyFetch<T>(
 
   const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
   const response = await fetch(url, {
+    method: init?.method ?? "GET",
     headers: {
       "X-Shopify-Access-Token": connection.accessToken,
       "Content-Type": "application/json",
     },
+    ...(init ? { body: JSON.stringify(init.body) } : {}),
   });
 
   if (response.status === 429) {
@@ -714,6 +717,26 @@ export async function inventoryToPublish(locationCode = "LOC-ALX") {
     include: { variant: { include: { style: true } } },
   });
 
+  // Whether a garment is tied to the website is recorded in externalMapping,
+  // which is what the order importer and the inventory publisher both read.
+  // This used to ask variant.shopifyVariantId, a column nothing has ever
+  // written, so every garment reported itself unlinked and the count of
+  // unlinked SKUs was simply the total.
+  const connection = await db.integrationConnection.findFirst({
+    where: { provider: "SHOPIFY", isActive: true },
+    select: { id: true },
+  });
+  const linkedLocalIds = new Set(
+    connection
+      ? (
+          await db.externalMapping.findMany({
+            where: { connectionId: connection.id, objectType: "variant" },
+            select: { internalId: true },
+          })
+        ).map((m) => m.internalId)
+      : [],
+  );
+
   const byVariant = new Map<string, { sku: string; style: string; available: number; linked: boolean }>();
   for (const lot of lots) {
     const v = lot.variant!;
@@ -726,11 +749,246 @@ export async function inventoryToPublish(locationCode = "LOC-ALX") {
       sku: v.sku,
       style: v.style.code,
       available: Number(lot.remainingQty),
-      linked: Boolean(v.shopifyVariantId),
+      linked: linkedLocalIds.has(v.id),
     });
   }
 
   return [...byVariant.values()].sort((a, b) => a.sku.localeCompare(b.sku));
+}
+
+/**
+ * Writes what the factory actually holds onto the website.
+ *
+ * Stock moves in both systems and, until this existed, only one direction was
+ * ever reported. A website order reached the ledger through the webhook, but a
+ * sale over the counter, at an exhibition, or a production run finishing fifty
+ * pieces changed the ERP and told Shopify nothing. So the website went on
+ * selling garments that had already left the building, and went on hiding
+ * garments that had just been made. The second is the quieter loss: an
+ * oversell produces a complaint, and an invisible garment produces silence.
+ *
+ * This reconciles rather than reacting to events. It reads what is really on
+ * the shelf, reads what Shopify believes, and writes only where they differ.
+ *
+ * Deliberately not called from inside the sale or production transactions. A
+ * write to Shopify inside a database transaction couples the ledger to
+ * somebody else's uptime: a slow reply holds a row lock, and a failed one
+ * would either roll back a sale that genuinely happened or leave the two
+ * disagreed with no record of which way. Reconciling afterwards cannot lose a
+ * movement, because it never asks what changed. It asks what is true now, and
+ * is therefore safe to run at any time, twice, or after a crash.
+ *
+ * Zero is pushed like any other number. A garment with none left must be
+ * written down to nothing, or it stays for sale for ever, which is the exact
+ * failure this exists to prevent.
+ */
+export async function publishInventory(
+  input: { connectionId: string; locationCode?: string; dryRun?: boolean },
+  ctx: AuditContext,
+): Promise<{
+  checked: number;
+  pushed: number;
+  unchanged: number;
+  unlinked: number;
+  failed: number;
+  changes: { sku: string; from: number | null; to: number }[];
+}> {
+  const connection = await db.integrationConnection.findUniqueOrThrow({
+    where: { id: input.connectionId },
+  });
+
+  // ---- where Shopify keeps its stock -------------------------------------
+  // Resolved rather than configured. A shop with one active location has only
+  // one possible answer, and asking an operator to paste an id they cannot
+  // check by eye is how a wrong domain goes unnoticed.
+  const { locations } = await shopifyFetch<{
+    locations: { id: number; name: string; active: boolean }[];
+  }>(connection, "locations.json");
+
+  const active = locations.filter((l) => l.active);
+  if (active.length === 0) {
+    throw new ShopifyError("This Shopify store has no active location to stock.");
+  }
+  if (active.length > 1) {
+    throw new ShopifyError(
+      `This Shopify store has ${active.length} active locations (` +
+        `${active.map((l) => l.name).join(", ")}). Publishing would have to ` +
+        `choose one, and choosing wrongly would empty the other.`,
+    );
+  }
+  const shopLocationId = active[0].id;
+
+  // ---- what the factory actually holds -----------------------------------
+  const location = await db.location.findUniqueOrThrow({
+    where: { code: input.locationCode ?? "LOC-ALX" },
+  });
+  const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+
+  const lots = await db.inventoryLot.findMany({
+    where: {
+      locationId: location.id,
+      entityId: brand.id,
+      state: "FINISHED_GOODS",
+      variantId: { not: null },
+    },
+    select: { variantId: true, remainingQty: true },
+  });
+
+  const onHand = new Map<string, number>();
+  for (const lot of lots) {
+    onHand.set(lot.variantId!, (onHand.get(lot.variantId!) ?? 0) + Number(lot.remainingQty));
+  }
+
+  // ---- which Shopify variant is which garment ----------------------------
+  const links = await db.externalMapping.findMany({
+    where: { connectionId: connection.id, objectType: "variant" },
+    select: { externalId: true, internalId: true },
+  });
+  const localByShopifyVariant = new Map(links.map((l) => [l.externalId, l.internalId]));
+
+  // The catalogue, for inventory_item_id — Shopify's own handle for a thing
+  // Shopify owns. Fetched rather than stored, because a copy kept here would
+  // be one more field that can quietly stop being true.
+  type ShopVariant = { id: number; sku: string | null; inventory_item_id: number };
+  const shopVariants: ShopVariant[] = [];
+  let path = "products.json?status=active&limit=250&fields=id,variants";
+
+  for (;;) {
+    const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
+    const res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": connection.accessToken ?? "" },
+    });
+    if (!res.ok) {
+      throw new ShopifyError(`Shopify returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+
+    const body = (await res.json()) as { products: { variants: ShopVariant[] }[] };
+    for (const product of body.products) shopVariants.push(...product.variants);
+
+    const next = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get("link") ?? "");
+    if (!next) break;
+    path = next[1].split("/admin/api/")[1].split("/").slice(1).join("/");
+  }
+
+  const targets: { sku: string; inventoryItemId: number; want: number }[] = [];
+  let unlinked = 0;
+
+  for (const sv of shopVariants) {
+    const localId = localByShopifyVariant.get(String(sv.id));
+    if (!localId) {
+      // Not mapped to a garment here, so left entirely alone. Writing a level
+      // for something this system does not know about would be an invention,
+      // and zero is the most damaging invention available.
+      unlinked += 1;
+      continue;
+    }
+    targets.push({
+      sku: sv.sku?.trim() || String(sv.id),
+      inventoryItemId: sv.inventory_item_id,
+      want: onHand.get(localId) ?? 0,
+    });
+  }
+
+  // ---- what Shopify believes today ---------------------------------------
+  const believed = new Map<number, number>();
+  for (let i = 0; i < targets.length; i += 50) {
+    const batch = targets.slice(i, i + 50);
+    const { inventory_levels } = await shopifyFetch<{
+      inventory_levels: { inventory_item_id: number; available: number | null }[];
+    }>(
+      connection,
+      `inventory_levels.json?location_ids=${shopLocationId}` +
+        `&inventory_item_ids=${batch.map((t) => t.inventoryItemId).join(",")}&limit=250`,
+    );
+    for (const level of inventory_levels) {
+      believed.set(level.inventory_item_id, level.available ?? 0);
+    }
+  }
+
+  // ---- write only the differences ----------------------------------------
+  const log = await db.syncLog.create({
+    data: {
+      connectionId: connection.id,
+      objectType: "inventory",
+      direction: "OUTBOUND",
+      status: "SUCCESS",
+      processed: targets.length,
+    },
+  });
+
+  const changes: { sku: string; from: number | null; to: number }[] = [];
+  const errors: { externalId: string; reason: string }[] = [];
+  let pushed = 0;
+  let unchanged = 0;
+  let failed = 0;
+
+  for (const target of targets) {
+    const now = believed.has(target.inventoryItemId)
+      ? believed.get(target.inventoryItemId)!
+      : null;
+
+    if (now === target.want) {
+      unchanged += 1;
+      continue;
+    }
+
+    changes.push({ sku: target.sku, from: now, to: target.want });
+    // A dry run reports every difference and writes none, so the first run
+    // against a live shop can be read before it is trusted.
+    if (input.dryRun) continue;
+
+    try {
+      await shopifyFetch(connection, "inventory_levels/set.json", {
+        method: "POST",
+        body: {
+          location_id: shopLocationId,
+          inventory_item_id: target.inventoryItemId,
+          available: target.want,
+        },
+      });
+      pushed += 1;
+    } catch (error) {
+      // One garment failing must not abandon the rest: the others are still
+      // wrong, and leaving them wrong to preserve a tidy error is worse.
+      failed += 1;
+      errors.push({
+        externalId: target.sku,
+        reason:
+          error instanceof ShopifyError
+            ? error.message
+            : "Unexpected error while publishing.",
+      });
+    }
+  }
+
+  await db.syncLog.update({
+    where: { id: log.id },
+    data: {
+      created: pushed,
+      duplicates: unchanged,
+      failed,
+      status: failed === 0 ? "SUCCESS" : pushed > 0 ? "PARTIAL" : "FAILED",
+      errors: errors.length > 0 ? JSON.parse(JSON.stringify(errors)) : undefined,
+      finishedAt: new Date(),
+    },
+  });
+
+  await writeAudit(db, {
+    action: "SHOPIFY_INVENTORY_PUBLISHED",
+    entityName: "IntegrationConnection",
+    entityId: connection.id,
+    ctx,
+    after: {
+      checked: targets.length,
+      pushed,
+      unchanged,
+      unlinked,
+      failed,
+      dryRun: Boolean(input.dryRun),
+    },
+  });
+
+  return { checked: targets.length, pushed, unchanged, unlinked, failed, changes };
 }
 
 /**

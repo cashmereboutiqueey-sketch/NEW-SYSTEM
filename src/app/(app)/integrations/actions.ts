@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { pullOrders, verifyShopConnection, ShopifyError } from "@/lib/shopify";
+import { pullOrders, publishInventory, verifyShopConnection, ShopifyError } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
 import type { FormState } from "@/components/entity-form";
 
@@ -125,6 +125,53 @@ export async function pullOrdersAction(
     const parts = [`${result.created} imported`];
     if (result.duplicates > 0) parts.push(`${result.duplicates} already had been`);
     if (result.failed > 0) parts.push(`${result.failed} need attention`);
+    return { success: parts.join(", ") + "." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function publishInventoryAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("settings:manage");
+
+    // Checking first is the default. The first run against a live shop should
+    // be read before it is believed, and a stock level written wrongly takes a
+    // garment off sale as convincingly as a correct one.
+    const dryRun = String(formData.get("mode") ?? "check") !== "publish";
+
+    const result = await publishInventory(
+      { connectionId: String(formData.get("connectionId") ?? ""), dryRun },
+      { userId: session.userId },
+    );
+
+    revalidatePath("/integrations");
+
+    if (dryRun) {
+      if (result.changes.length === 0) {
+        return { success: `Shopify already agrees on all ${result.checked} linked garments.` };
+      }
+      // The first few by name, because "37 differences" tells an operator
+      // nothing about whether the answer is plausible.
+      const sample = result.changes
+        .slice(0, 5)
+        .map((c) => `${c.sku}: ${c.from ?? "none"} → ${c.to}`)
+        .join(", ");
+      const more = result.changes.length > 5 ? `, and ${result.changes.length - 5} more` : "";
+      return {
+        success:
+          `${result.changes.length} of ${result.checked} would change — ${sample}${more}. ` +
+          `Nothing has been written yet.`,
+      };
+    }
+
+    const parts = [`${result.pushed} updated on Shopify`];
+    if (result.unchanged > 0) parts.push(`${result.unchanged} already correct`);
+    if (result.unlinked > 0) parts.push(`${result.unlinked} not linked to a garment here`);
+    if (result.failed > 0) parts.push(`${result.failed} failed`);
     return { success: parts.join(", ") + "." };
   } catch (error) {
     return { error: toMessage(error) };

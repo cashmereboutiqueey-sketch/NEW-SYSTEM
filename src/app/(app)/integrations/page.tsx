@@ -6,7 +6,7 @@ import { EntityForm } from "@/components/entity-form";
 import { formatNumber } from "@/lib/money";
 import { inventoryToPublish } from "@/lib/shopify";
 import {
-  connectShopifyAction, pullOrdersAction, resolveExceptionAction,
+  connectShopifyAction, pullOrdersAction, publishInventoryAction, resolveExceptionAction,
 } from "./actions";
 
 /**
@@ -174,8 +174,8 @@ export default async function IntegrationsPage() {
           <div className="mt-4 border-t border-ink-100 pt-4">
             <p className="mb-2 text-xs text-ink-500">
               {ar
-                ? `عنوان الويب هوك: /api/webhooks/shopify — سجّله في Shopify لأحداث orders/create و orders/paid.`
-                : `Webhook URL: /api/webhooks/shopify — register it in Shopify for orders/create and orders/paid.`}
+                ? `عنوان الويب هوك: /api/webhooks/shopify — الطلب بيوصل لوحده. السحب تحت للتعويض لو حصل انقطاع.`
+                : `Webhook URL: /api/webhooks/shopify — orders arrive on their own. Pulling below backfills anything a webhook missed.`}
             </p>
             <EntityForm
               locale={locale}
@@ -193,6 +193,34 @@ export default async function IntegrationsPage() {
                 },
               ]}
             />
+
+            <div className="mt-4 border-t border-ink-100 pt-4">
+              <p className="mb-2 text-xs text-ink-500">
+                {ar
+                  ? `نشر الرصيد بيكتب اللي فعلاً في المخزن على الموقع. المبيعات في المعرض أو المعارض بتقلّل المخزن هنا بس، فالموقع فضل يبيع حاجة خلصت. "راجع" بيوريك الفرق من غير ما يكتب حاجة.`
+                  : `Publishing writes what is really in the warehouse onto the website. Showroom and exhibition sales reduce stock here only, so the site goes on selling garments that have gone. "Check" shows the differences without writing anything.`}
+              </p>
+              <EntityForm
+                locale={locale}
+                action={publishInventoryAction}
+                hidden={{ connectionId: shopify.id }}
+                columns={2}
+                submitEn="Run"
+                submitAr="نفّذ"
+                fields={[
+                  {
+                    kind: "select", name: "mode", labelEn: "Stock publishing", labelAr: "نشر الرصيد",
+                    defaultValue: "check",
+                    options: [
+                      { value: "check", label: ar ? "مراجعة فقط — من غير كتابة" : "Check only — write nothing" },
+                      { value: "publish", label: ar ? "انشر على Shopify" : "Publish to Shopify" },
+                    ],
+                    hintEn: "Only garments linked to this shop are touched; anything unlinked is left alone.",
+                    hintAr: "بيتعامل بس مع القطع المربوطة بالمتجر؛ اللي مش مربوط بيتساب زي ما هو.",
+                  },
+                ]}
+              />
+            </div>
           </div>
         )}
       </Card>
