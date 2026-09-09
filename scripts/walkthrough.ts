@@ -8,6 +8,7 @@ import "dotenv/config";
 import { db } from "../src/lib/db";
 import { createSupplier, createMaterial } from "../src/lib/master-data";
 import { createPurchaseOrder, receiveGoods } from "../src/lib/purchasing";
+import { approvePurchaseOrder } from "../src/lib/approvals";
 import { createStyle, addBomLine, addOperation, generateVariants } from "../src/lib/products";
 import { createExpense } from "../src/lib/expenses";
 import { receiveMaterial } from "../src/lib/inventory";
@@ -73,6 +74,12 @@ for (const [route, why] of [
 
 const owner = await db.user.findFirstOrThrow({ where: { email: "owner@cashmere.eg" } });
 const ctx = { userId: owner.id, reason: null };
+
+// A suffix per run, because codes are unique and the walkthrough creates real
+// master data. Without it the second run dies at step 1 on the supplier the
+// first run created — and a full-cycle test that only works on a virgin
+// database is a test nobody runs twice, which is to say a test nobody runs.
+const run = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
 const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
 const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 const facLoc = await db.location.findFirstOrThrow({ where: { code: "LOC-FAC" } });
@@ -86,7 +93,7 @@ const on = (d: number) => new Date(day.getTime() + d * 86_400_000);
 // 1 ──────────────────────────────────────────────────────── add a supplier
 step("1. Add a supplier  →  /suppliers");
 const supplier = await createSupplier({
-  code: "sup-tanta", nameEn: "Tanta Weaving", nameAr: "طنطا للنسيج",
+  code: `sup-tanta-${run}`, nameEn: "Tanta Weaving", nameAr: "طنطا للنسيج",
   contactPerson: "أ. كريم فؤاد", phone: "01004445566", creditDays: 30,
 }, ctx);
 ok(`${supplier.code} — ${supplier.nameAr}, ${supplier.creditDays} days credit`);
@@ -95,7 +102,7 @@ ok(`${supplier.code} — ${supplier.nameAr}, ${supplier.creditDays} days credit`
 step("2. Add the fabric  →  /materials");
 const metre = await db.unitOfMeasure.findFirstOrThrow({ where: { code: "M" } });
 const fabric = await createMaterial({
-  code: "fab-crepe-160", nameEn: "Crepe 160gsm", nameAr: "كريب ١٦٠",
+  code: `fab-crepe-160-${run}`, nameEn: "Crepe 160gsm", nameAr: "كريب ١٦٠",
   type: "FABRIC", uomId: metre.id, supplierId: supplier.id,
   basePrice: 195, freightPct: 0.03, dutyPct: 0.02,
   moq: 100, packSize: 50, leadTimeDays: 12, reorderPoint: 150,
@@ -115,6 +122,29 @@ const po = await createPurchaseOrder({
 }, ctx);
 ok(`${po.poNumber} for ${Number(po.total).toFixed(2)}`);
 
+// An order this size cannot be received until somebody approves it, and the
+// walkthrough went straight from raising to receiving — so the one step that
+// actually stops the fabric arriving was the one step never exercised. It read
+// as a complete cycle and skipped the gate.
+//
+// The owner raised it, so approving it is a self-approval and the rule demands
+// a stated reason. A fresh install has exactly one person in it, which makes
+// this the normal path rather than the exception — and it is the path that
+// records who overrode what, which is the point of allowing it at all.
+step("3b. Approve it  →  /approvals");
+await approvePurchaseOrder(
+  {
+    purchaseOrderId: po.purchaseOrderId,
+    overrideReason: "Single-operator factory: the owner raises and approves.",
+  },
+  ctx,
+);
+const approved = await db.purchaseOrder.findUniqueOrThrow({
+  where: { id: po.purchaseOrderId },
+});
+ok(`${po.poNumber} approved — now ${approved.status.toLowerCase()}`);
+
+step("3c. Receive the goods  →  /purchasing");
 const poLine = await db.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.purchaseOrderId } });
 const receipt = await receiveGoods({
   purchaseOrderId: po.purchaseOrderId, receivedDate: on(12),
@@ -132,7 +162,7 @@ else ok(`580 m in stock at ${rawLot.unitCost}/m`);
 step("4. Create the product  →  /styles");
 const collection = await db.collection.findFirstOrThrow();
 const style = await createStyle({
-  code: "SAMIA", nameEn: "Samia Dress", nameAr: "فستان سامية",
+  code: `SAMIA${run}`, nameEn: "Samia Dress", nameAr: "فستان سامية",
   collectionId: collection.id, plannedWasteRate: 0.1, retailPrice: 1650,
 }, ctx);
 ok(`${style.code} created, planned waste ${Number(style.plannedWasteRate) * 100}%`);
@@ -244,13 +274,20 @@ else ok(`116 tags minted, all different — ${done.serials[0]} … ${done.serial
 
 // 8 ──────────────────────────────────────────────── does it reach the till?
 step("8. Open the till and look for it  →  /pos");
-const till = await openPosSession(
-  { locationId: alxLoc.id, cashierUserId: owner.id, openingFloat: "500" }, ctx,
-);
-ok(`till ${till.sessionNumber} open at ${alxLoc.nameAr}`);
+// A till left open by an earlier run is reused rather than fought with. Only
+// one can be open per location — which is right, a second drawer at the same
+// counter cannot be counted — but it means a walkthrough that always opens a
+// fresh one can only ever run once.
+const already = await openTillFor(alxLoc.id);
+const till = already
+  ? { sessionNumber: already.sessionNumber, posSessionId: already.id }
+  : await openPosSession(
+      { locationId: alxLoc.id, cashierUserId: owner.id, openingFloat: "500" }, ctx,
+    );
+ok(`till ${till.sessionNumber} ${already ? "already" : ""} open at ${alxLoc.nameAr}`);
 
 let onShelf = await sellableStock(alxLoc.id, brand.id);
-const found = onShelf.find((p) => p.styleCode === "SAMIA");
+const found = onShelf.find((p) => p.styleCode === style.code);
 
 if (!found) {
   ok("nothing on the shelf yet — the goods are still the factory's");
@@ -366,7 +403,7 @@ if (!found) {
   onShelf = await sellableStock(alxLoc.id, brand.id);
 }
 
-const sellable = onShelf.find((p) => p.styleCode === "SAMIA");
+const sellable = onShelf.find((p) => p.styleCode === style.code);
 if (!sellable) gap("still not sellable after the transfer");
 else {
   const total = onShelf.reduce((s, p) => s + Number(p.available), 0);
