@@ -79,7 +79,9 @@ const ctx = { userId: owner.id, reason: null };
 // master data. Without it the second run dies at step 1 on the supplier the
 // first run created — and a full-cycle test that only works on a virgin
 // database is a test nobody runs twice, which is to say a test nobody runs.
-const run = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
+// Seconds, not just minutes: two runs inside the same minute collided on the
+// supplier code the first one made.
+const run = new Date().toISOString().slice(5, 19).replace(/[-:T]/g, "");
 const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
 const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 const facLoc = await db.location.findFirstOrThrow({ where: { code: "LOC-FAC" } });
@@ -297,6 +299,10 @@ if (!found) {
     where: {
       state: "FINISHED_GOODS", remainingQty: { gt: 0 },
       variantId: { not: null }, entity: { kind: "FACTORY" },
+      // This run's garments only. Anything else sitting at the factory
+      // belongs to whatever else is in the database, and asserting on it
+      // is a claim about the fixture rather than about the code.
+      variant: { styleId: style.id },
     },
     _sum: { remainingQty: true },
   });
@@ -304,7 +310,10 @@ if (!found) {
   else ok("the till explains it: 116 waiting at the factory, with a link to /transfers");
 
   step("8b. Factory sends it  →  /transfers");
-  const queue = await awaitingDespatch();
+  // Scoped to this run. Counting every row in the database asserts that
+  // nothing else exists, which is a claim about the fixture rather than
+  // about the code under test — and it fails the moment there is demo data.
+  const queue = (await awaitingDespatch()).filter((q) => q.sku.startsWith(style.code));
   if (queue.length !== 6) gap(`screen lists ${queue.length} rows, expected one per SKU`);
   else ok(`screen lists all 6 SKUs, ${queue.reduce((s, q) => s + Number(q.quantity), 0)} garments`);
 
@@ -347,16 +356,19 @@ if (!found) {
     gap(`barcode is ${widest.toFixed(1)}mm on a ${format.widthMm}mm label — it will not scan`);
   } else ok(`barcode ${widest.toFixed(1)}mm on a ${format.widthMm}mm label`);
 
-  if ((await awaitingDespatch()).length > 0) gap("rows still queued at the factory after sending");
+  const stillQueued = (await awaitingDespatch())
+    .filter((q) => q.sku.startsWith(style.code));
+  if (stillQueued.length > 0) gap("rows still queued at the factory after sending");
   else ok("the factory queue empties");
 
-  const stillNotSellable = await sellableStock(alxLoc.id, brand.id);
+  const stillNotSellable = (await sellableStock(alxLoc.id, brand.id))
+    .filter((p) => p.styleCode === style.code);
   if (stillNotSellable.length > 0) {
     gap("goods in transit are sellable at the till — they should not be");
   } else ok("in transit is not sellable: the shop has not counted it yet");
 
   step("8c. Shop counts it in and tags it  →  /goods-in");
-  const arriving = await awaitingIntake();
+  const arriving = (await awaitingIntake()).filter((a) => a.sku.startsWith(style.code));
   if (arriving.length !== 6) gap(`goods-in lists ${arriving.length} rows, expected 6`);
   else ok(`goods-in lists 6 deliveries, ${arriving.reduce((s, r) => s + Number(r.expectedQty), 0)} garments expected`);
 
@@ -406,10 +418,11 @@ if (!found) {
 const sellable = onShelf.find((p) => p.styleCode === style.code);
 if (!sellable) gap("still not sellable after the transfer");
 else {
-  const total = onShelf.reduce((s, p) => s + Number(p.available), 0);
+  const mine = onShelf.filter((p) => p.styleCode === style.code);
+  const total = mine.reduce((s, p) => s + Number(p.available), 0);
   // 116 made, 2 lost on the road.
-  if (onShelf.length !== 6 || total !== 114) {
-    gap(`the till shows ${onShelf.length} SKUs totalling ${total}, expected 6 and 114`);
+  if (mine.length !== 6 || total !== 114) {
+    gap(`the till shows ${mine.length} SKUs totalling ${total}, expected 6 and 114`);
   } else ok("all 6 SKUs on the shelf, 114 garments — the 2 lost never arrived");
   ok(`${sellable.sku} — ${sellable.available} available at the till`);
   if (!sellable.retailPrice) {

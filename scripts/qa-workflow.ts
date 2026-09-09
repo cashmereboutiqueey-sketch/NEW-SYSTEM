@@ -15,7 +15,9 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { dec, type Decimal } from "../src/lib/money";
-import { receiveMaterial, issueMaterialToProduction } from "../src/lib/inventory";
+import {
+  receiveMaterial, issueMaterialToProduction, receiveFinishedGoods,
+} from "../src/lib/inventory";
 import { recordScrap } from "../src/lib/scrap";
 import { createSale } from "../src/lib/sales";
 import { collectPayment, setCreditTerms } from "../src/lib/receivables";
@@ -157,6 +159,48 @@ await step(
   // Out of raw materials, into work in progress. The value has not changed,
   // only where it is.
   { "1310": -ISSUE_COST, "1320": ISSUE_COST },
+);
+
+// ─────────────────── 2b. turn the work in progress into a garment ──────────
+//
+// Without this the script left the cloth in work in progress for ever. Nothing
+// complained at the time, and then audit-books — which has a check for exactly
+// this — reported stranded work in progress with no open run, permanently,
+// against books the script itself had poisoned. Two of the repo's own tools
+// disagreeing about the same number, one of them wrongly.
+//
+// It also closes a hole in the chain: buying, issuing and selling were each
+// covered, and the step that turns issued cloth into something sellable was
+// the one nobody checked.
+
+const madeVariant = await db.variant.findFirstOrThrow({
+  where: { style: { operations: { some: {} } } },
+});
+// Conversion is the labour the garment absorbs on top of its cloth. A small
+// figure keeps the arithmetic readable; the point is that the two halves sum.
+const CONVERSION = 200;
+
+await step(
+  "make it up: work in progress becomes a garment",
+  async () => {
+    await receiveFinishedGoods(
+      {
+        variantId: madeVariant.id,
+        locationId: store.id,
+        entityId: factory.id,
+        quantity: "1",
+        unitCost: String(ISSUE_COST + CONVERSION),
+        materialUnitCost: String(ISSUE_COST),
+        receivedDate: day,
+      },
+      ctx,
+    );
+  },
+  // Work in progress empties into the factory's own finished goods — 1330, not
+  // the brand's 1340, because the garment has not been transferred yet — and
+  // the conversion the floor absorbed is credited to 6190 rather than sitting
+  // as a cost twice.
+  { "1320": -ISSUE_COST, "1330": ISSUE_COST + CONVERSION, "6190": -CONVERSION },
 );
 
 // ──────────────────────────── 3. scrap an offcut ───────────────────────────
