@@ -198,6 +198,36 @@ describe("calculating the period rate", () => {
     expect(period.status).toBe("PROVISIONAL");
   });
 
+  it("refuses a pool the CMT credit has driven below zero", async () => {
+    // The real case this came from: capacity configured, no factory costs
+    // entered yet, and a single small contract job recorded. The credit had
+    // nothing to offset, so the pool went negative and the rate with it.
+    await setCapacity();
+
+    await expect(
+      calculatePeriodMinuteRate(
+        { entityId: factoryId, fiscalPeriodId: periodId, cmtRevenueCredit: "5" },
+        ctx,
+      ),
+    ).rejects.toThrow(/cannot cost less than nothing/);
+  });
+
+  it("allows a CMT credit the costs can absorb", async () => {
+    await setCapacity();
+    await expense(rentCategoryId, 100000, "Rent");
+
+    const result = await calculatePeriodMinuteRate(
+      { entityId: factoryId, fiscalPeriodId: periodId, cmtRevenueCredit: "20000" },
+      ctx,
+    );
+    const period = await db.minuteRatePeriod.findUniqueOrThrow({
+      where: { id: result.minuteRatePeriodId },
+    });
+
+    expect(period.netCostPool.toString()).toBe("80000");
+    expect(Number(period.actualMinuteRate)).toBeGreaterThan(0);
+  });
+
   it("stores a component per account for the drill-down", async () => {
     await setCapacity();
     await expense(rentCategoryId, 55000, "Rent");

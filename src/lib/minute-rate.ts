@@ -129,6 +129,27 @@ export async function calculatePeriodMinuteRate(
       },
     );
 
+    // A negative pool is arithmetic, not a rate anyone can use. It happens
+    // when the CMT credit exceeds the costs it is meant to offset — most often
+    // because no factory costs have been entered yet, so any contract work at
+    // all drives the pool below zero.
+    //
+    // Refused here, next to the capacity check, for the same reason that one
+    // exists: a nonsense rate does not fail where it is made. It travels. A
+    // negative rate makes conversion cost negative, and the first complaint
+    // comes from the far side of the system when a finished garment cannot be
+    // received, saying material cost exceeds total unit cost — which is true,
+    // and says nothing about the empty cost pool that caused it.
+    if (result.netCostPool.lessThan(0)) {
+      throw new MinuteRateError(
+        `The cost pool is ${result.netCostPool.toFixed(2)} — the CMT credit of ` +
+          `${dec(input.cmtRevenueCredit ?? 0).toFixed(2)} is larger than the ` +
+          `${pool.total} of factory costs recorded for this period. Record the ` +
+          `month's rent, wages and overheads first, or lower the CMT credit; a ` +
+          `minute of sewing cannot cost less than nothing.`,
+      );
+    }
+
     // Stored as inputs copied in, not referenced, so the row stays meaningful
     // even if the capacity configuration is later edited.
     const data = {
