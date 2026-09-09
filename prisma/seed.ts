@@ -26,6 +26,29 @@ function d(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
 
+/**
+ * Which part of the floor an operation belongs to.
+ *
+ * Seeded operations carried no stage at all, so `standardMinutesFor` found
+ * nothing for every stage, earned minutes came out at zero, and the stage-log
+ * form offered no stages to log against. Nothing failed — the factory floor
+ * was simply inert on a database that looked completely seeded, which is the
+ * hardest kind of gap to notice.
+ *
+ * Matched on the operation's own name rather than carried as a fourth field on
+ * every line, because the names already say which stage they are and a
+ * hand-kept parallel list is one more thing to get wrong.
+ */
+function stageFor(nameEn: string): "CUTTING" | "SEWING" | "FINISHING" {
+  const n = nameEn.toLowerCase();
+  if (n.includes("cutting")) return "CUTTING";
+  if (n.includes("pressing") || n.includes("finishing") || n.includes("packing")) {
+    return "FINISHING";
+  }
+  // Everything else is somebody at a machine joining two pieces of cloth.
+  return "SEWING";
+}
+
 async function main() {
   console.log("→ Seeding Cashmere OS…");
 
@@ -1265,13 +1288,17 @@ async function main() {
     for (const [i, o] of s.ops.entries()) {
       await db.styleOperation.upsert({
         where: { styleId_sequence: { styleId: style.id, sequence: i + 1 } },
-        update: {},
+        // The stage is repaired on an existing row rather than left alone.
+        // Every seeded operation was created without one, which made the
+        // whole factory floor inert on a database that looked fully seeded.
+        update: { stage: stageFor(o.nameEn) },
         create: {
           styleId: style.id,
           sequence: i + 1,
           nameEn: o.nameEn,
           nameAr: o.nameAr,
           smvMinutes: o.smv,
+          stage: stageFor(o.nameEn),
           lineId: linesByCode.get(o.line)?.id ?? null,
         },
       });
