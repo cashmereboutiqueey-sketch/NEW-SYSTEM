@@ -56,11 +56,18 @@
   }
 
   /* Everything that is not the document itself. Hidden rather than removed so
-     the same page serves both screen and paper. */
+     the same page serves both screen and paper.
+
+     `header` is matched bare as well as by class. It was written as
+     `header.app-header` and the application's header carried no such class, so
+     for as long as that stood, whoever was signed in printed across the top of
+     every garment label and every invoice. No printed document here builds a
+     <header>, <nav> or <aside> of its own, so the bare element is safe to hide
+     and does not depend on somebody remembering a class name. */
   .no-print,
   nav,
   aside,
-  header.app-header,
+  header,
   button,
   .print-preview > .print-controls {
     display: none !important;

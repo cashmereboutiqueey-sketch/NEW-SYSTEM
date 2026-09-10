@@ -36,7 +36,9 @@ export default async function AppLayout({
       <Sidebar locale={locale} scope={scope} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-ink-200 bg-panel px-5 py-3">
+        {/* app-header is what print.css hides. Without it the person signed in
+            prints across the top of every garment label and invoice. */}
+        <header className="app-header flex items-center gap-3 border-b border-ink-200 bg-panel px-5 py-3">
           <EntitySwitcher current={scope} locale={locale} />
 
           <div className="ms-auto flex items-center gap-3">

@@ -493,6 +493,12 @@ export function LabelSheet({
               value={l.serial}
               moduleWidthMm={format.moduleWidthMm}
               heightMm={format.barcodeHeightMm}
+              // The serial is printed below, by .roll-label-serial, which sets
+              // the size and letter-spacing this label was designed around.
+              // Left to its default the barcode draws it a second time, and on
+              // twenty millimetres of height the duplicate pushes the garment's
+              // own name out of the label entirely.
+              showText={false}
             />
             <div className="roll-label-serial num" dir="ltr">
               {l.serial}
