@@ -247,6 +247,16 @@
   justify-content: center;
   text-align: center;
   overflow: hidden;
+  /* The document sets line-height: 1.5, which is right for reading and far too
+     loose for a label. The serial and the price never overrode it, and at
+     6pt and 8pt that inherited leading alone came to about two millimetres —
+     on twenty millimetres of label, the difference between the name fitting
+     and the name losing its top half.
+     
+     Set here rather than on each child so anything added later inherits a
+     leading that suits a label instead of a paragraph. */
+  line-height: 1.1;
+
   /* A label split across two pages is two ruined labels. */
   break-inside: avoid;
   page-break-inside: avoid;
