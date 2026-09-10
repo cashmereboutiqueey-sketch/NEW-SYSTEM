@@ -45,8 +45,27 @@
 
   /* Roll labels set their own @page inline, from the configured size. */
 
+  /* The application shell is a full-height flex column with a scrolling main,
+     which is right on a screen and fatal on paper: an element whose overflow
+     is anything but visible is monolithic, and nothing inside it can be broken
+     across pages. Every document was therefore printing as one page — the
+     labels never separated, the overflow was clipped, and the scroll bars drew
+     their own arrows over the first label.
+     
+     display: contents removes these three boxes from the tree while keeping
+     their children, so the document becomes a direct, fragmentable child of
+     the page. Resetting height and overflow instead is not enough: the boxes
+     survive, and Chrome goes on treating them as unbreakable. */
+  .app-shell,
+  .app-column,
+  .app-main {
+    display: contents !important;
+  }
+
   html,
   body {
+    height: auto !important;
+    overflow: visible !important;
     background: #fff !important;
     margin: 0;
     padding: 0;

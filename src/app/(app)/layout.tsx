@@ -32,10 +32,10 @@ export default async function AppLayout({
   const { locale, scope } = await getPrefs();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-cream">
+    <div className="app-shell flex h-screen overflow-hidden bg-cream">
       <Sidebar locale={locale} scope={scope} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="app-column flex min-w-0 flex-1 flex-col">
         {/* app-header is what print.css hides. Without it the person signed in
             prints across the top of every garment label and invoice. */}
         <header className="app-header flex items-center gap-3 border-b border-ink-200 bg-panel px-5 py-3">
@@ -62,7 +62,7 @@ export default async function AppLayout({
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-5">{children}</main>
+        <main className="app-main flex-1 overflow-y-auto p-5">{children}</main>
       </div>
     </div>
   );
