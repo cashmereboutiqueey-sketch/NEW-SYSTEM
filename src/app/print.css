@@ -237,10 +237,17 @@
 
 .roll-label {
   box-sizing: border-box;
-  /* 0.8mm rather than 1mm top and bottom. On a 20mm label the stack of name,
-     barcode, serial and price comes to a little over 18mm, and the two
-     millimetres of padding were the difference between fitting and clipping. */
-  padding: 0.8mm 1.5mm;
+  /* Tight on every side, because a label has no room to be generous with.
+     
+     Vertically: the stack of name, barcode, serial and price comes to a little
+     over 18mm on a 20mm label, and 2mm of padding was the difference between
+     fitting and clipping.
+     
+     Horizontally: 1mm rather than 1.5mm. The barcode needs 35.75mm including
+     its quiet zones, and the wider padding left only 1.25mm of slack across
+     the whole label — which a printer whose paper is a tenth of a millimetre
+     narrower than the design will spend without asking. */
+  padding: 0.8mm 1mm;
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -483,9 +483,26 @@ export function LabelSheet({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: pageCss }} />
-      <div className="print-sheet sheet-roll">
+      <div className="sheet-roll">
         {labels.map((l) => (
-          <div key={l.serial} className="roll-label" dir={ar ? "rtl" : "ltr"}>
+          /*
+           * Each label is its own print-sheet.
+           *
+           * They were all one sheet with `break-after: page` on each label,
+           * which Chrome ignored — two garments printed on one label, and the
+           * overflow then clipped the name and raised scrollbars that looked
+           * like a dozen other faults.
+           *
+           * print-sheet already carries `page-break-after: always`, and it is
+           * what makes every invoice and despatch note come out one per page.
+           * Using the mechanism that demonstrably works beats a second attempt
+           * at the one that does not.
+           */
+          <div
+            key={l.serial}
+            className="print-sheet roll-label"
+            dir={ar ? "rtl" : "ltr"}
+          >
             <div className="roll-label-name">
               {ar ? l.nameAr : l.nameEn} · {ar ? l.colourAr : l.colourEn} · {l.size}
             </div>
