@@ -223,15 +223,24 @@
  * checked before any paper moves.
  */
 .sheet-roll {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
+  /* Block, not flex, and that is the whole point of this rule.
+     
+     Each label carries `break-after: page`, but browsers do not reliably
+     fragment the children of a flex container — the property is quietly
+     ignored, and labels flow on to one another until the sheet is full. Two
+     garments printed on one label is two labels wasted and a garment with
+     somebody else's barcode.
+     
+     The labels are fixed-width blocks, so they stack identically without it. */
+  display: block;
 }
 
 .roll-label {
   box-sizing: border-box;
-  padding: 1mm 1.5mm;
+  /* 0.8mm rather than 1mm top and bottom. On a 20mm label the stack of name,
+     barcode, serial and price comes to a little over 18mm, and the two
+     millimetres of padding were the difference between fitting and clipping. */
+  padding: 0.8mm 1.5mm;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -253,9 +262,18 @@
 .roll-label-name {
   font-size: 6.5pt;
   line-height: 1.15;
-  max-height: 2.3em;
+  /* One line, cut with an ellipsis rather than wrapped.
+     
+     Wrapping to a second line pushed the stack past the label's own height,
+     and .roll-label hides its overflow while centring its contents — so the
+     excess was taken off the top and the garment's name printed with its head
+     cut off. A name too long to fit should lose its tail visibly, not lose its
+     first line silently. */
+  white-space: nowrap;
   overflow: hidden;
-  margin-bottom: 0.5mm;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin-bottom: 0.4mm;
 }
 
 .roll-label-serial {
