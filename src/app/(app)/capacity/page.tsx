@@ -124,17 +124,39 @@ export default async function CapacityPage() {
               headers={[ar ? "البند" : "Measure", ar ? "القيمة" : "Value", ar ? "يعني إيه" : "Meaning"]}
               rows={[
                 [
-                  <span key="u">{ar ? "نسبة التشغيل" : "Utilisation"}</span>,
+                  <span key="u">{ar ? "نسبة التشغيل المخططة" : "Utilisation, planned"}</span>,
                   <span key="uv" className="num">{formatPercent(current.utilisationRate, locale)}</span>,
                   <span key="um" className="text-xs text-ink-500">
-                    {ar ? "نسبة الدقائق اللي عليها شغل — مشكلة مبيعات" : "Share of minutes with work — a sales problem"}
+                    {ar
+                      ? "رقم إنت كتبته وبيتقسم عليه المصاريف — مش قياس"
+                      : "A number you typed, and what the costs are spread over — not a measurement"}
                   </span>,
                 ],
                 [
-                  <span key="e">{ar ? "الكفاءة" : "Efficiency"}</span>,
+                  <span key="ua">{ar ? "المحجوز فعلاً" : "Utilisation, actual"}</span>,
+                  <span
+                    key="uav"
+                    className={`num ${
+                      current.bookedShare && current.bookedShare.lessThan(current.utilisationRate.times("0.5"))
+                        ? "font-medium text-bad"
+                        : ""
+                    }`}
+                  >
+                    {current.bookedShare ? formatPercent(current.bookedShare, locale) : "—"}
+                  </span>,
+                  <span key="uam" className="text-xs text-ink-500">
+                    {ar
+                      ? "الدقائق اللي عليها أوامر بجد. لو أقل بكتير من المخططة، كل قطعة تكلفتها أقل من الحقيقة"
+                      : "Minutes with real orders against them. Far below the planned figure means every garment is costed cheaper than it truly is"}
+                  </span>,
+                ],
+                [
+                  <span key="e">{ar ? "الكفاءة المخططة" : "Efficiency, planned"}</span>,
                   <span key="ev" className="num">{formatPercent(current.efficiencyRate, locale)}</span>,
                   <span key="em" className="text-xs text-ink-500">
-                    {ar ? "الدقائق المكتسبة على المدفوعة — مشكلة صالة" : "Earned over clocked minutes — a floor problem"}
+                    {ar
+                      ? "كمان رقم مكتوب. الكفاءة الحقيقية بتتحسب من ورديات الصالة في /production"
+                      : "Also typed. What the floor really earns is measured from shift logs in /production"}
                   </span>,
                 ],
                 [
