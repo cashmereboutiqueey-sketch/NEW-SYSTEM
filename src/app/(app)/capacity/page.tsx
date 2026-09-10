@@ -31,6 +31,21 @@ export default async function CapacityPage() {
   ]);
   const current = periods[0];
 
+  // What the page shows is a copy taken when the minute rate was last
+  // calculated, not the capacity as it stands. Freezing it is right — a rate
+  // whose inputs move underneath it explains nothing later — but it means the
+  // page where capacity is edited can go on showing figures from weeks ago,
+  // saying nothing, while the operator wonders whether the save worked.
+  const live = current ? configurable.find((c) => c.label === current.label) : undefined;
+  const stale =
+    !!live &&
+    live.operators !== null &&
+    (live.operators !== current.operators ||
+      !live.workingDays?.equals(current.workingDays) ||
+      !live.hoursPerDay?.equals(current.hoursPerDay) ||
+      !live.utilisationRate?.equals(current.utilisationRate) ||
+      !live.efficiencyRate?.equals(current.efficiencyRate));
+
   return (
     <>
       <PageHeader
@@ -79,6 +94,58 @@ export default async function CapacityPage() {
         </Card>
       ) : (
         <>
+          {stale && live && (
+            <Card
+              className="mb-4 border-warn"
+              title={ar ? "الأرقام تحت قديمة" : "The figures below are out of date"}
+              description={
+                ar
+                  ? "حفظت طاقة جديدة، بس تكلفة الدقيقة لسه محسوبة على القديمة. الصفحة بتوري اللي التكلفة اتبنت عليه."
+                  : "You have saved a new capacity, but the minute rate is still calculated on the old one. This page shows what the rate was built on."
+              }
+            >
+              <DataTable
+                headers={[
+                  ar ? "البند" : "",
+                  ar ? "المحفوظ دلوقتي" : "Saved now",
+                  ar ? "المحسوب عليه" : "The rate was built on",
+                ]}
+                rows={[
+                  [
+                    <span key="o">{ar ? "عمال" : "Operators"}</span>,
+                    <span key="on" className="num font-medium">{live.operators}</span>,
+                    <span key="oo" className="num text-ink-500">{current.operators}</span>,
+                  ],
+                  [
+                    <span key="d">{ar ? "أيام شغل" : "Working days"}</span>,
+                    <span key="dn" className="num font-medium">{formatNumber(live.workingDays!, locale)}</span>,
+                    <span key="do" className="num text-ink-500">{formatNumber(current.workingDays, locale)}</span>,
+                  ],
+                  [
+                    <span key="h">{ar ? "ساعات باليوم" : "Hours per day"}</span>,
+                    <span key="hn" className="num font-medium">{formatNumber(live.hoursPerDay!, locale)}</span>,
+                    <span key="ho" className="num text-ink-500">{formatNumber(current.hoursPerDay, locale)}</span>,
+                  ],
+                  [
+                    <span key="u">{ar ? "نسبة التشغيل" : "Utilisation"}</span>,
+                    <span key="un" className="num font-medium">{formatPercent(live.utilisationRate!, locale)}</span>,
+                    <span key="uo" className="num text-ink-500">{formatPercent(current.utilisationRate, locale)}</span>,
+                  ],
+                  [
+                    <span key="e">{ar ? "الكفاءة" : "Efficiency"}</span>,
+                    <span key="en" className="num font-medium">{formatPercent(live.efficiencyRate!, locale)}</span>,
+                    <span key="eo" className="num text-ink-500">{formatPercent(current.efficiencyRate, locale)}</span>,
+                  ],
+                ]}
+              />
+              <p className="mt-3 text-sm text-ink-600">
+                {ar
+                  ? "احسب تكلفة الدقيقة تاني من /minute-rate عشان الأرقام دي تتطبق على التسعير."
+                  : "Recalculate the minute rate at /minute-rate for these to reach your pricing."}
+              </p>
+            </Card>
+          )}
+
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile
               label={ar ? "دقائق متاحة" : "Available minutes"}
