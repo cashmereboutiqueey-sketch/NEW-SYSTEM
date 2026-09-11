@@ -13,20 +13,13 @@ import "dotenv/config";
 import { SignJWT } from "jose";
 import { db } from "../src/lib/db";
 import { ROLES, type Role } from "../src/core/permissions";
+import { sessionFor, retireQaUsers } from "./qa-session";
 
 const BASE = process.argv[2] ?? "http://localhost:3100";
 
 const problems: string[] = [];
 const ok = (m: string) => console.log(`   ✓ ${m}`);
 const bad = (m: string) => { problems.push(m); console.log(`   ✗ ${m}`); };
-
-async function sessionFor(role: Role, userId: string): Promise<string> {
-  return new SignJWT({ userId, email: `${role}@audit`, name: `Audit ${role}`, role })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(new TextEncoder().encode(process.env.AUTH_SECRET!));
-}
 
 async function get(path: string, token?: string) {
   const res = await fetch(`${BASE}${path}`, {
@@ -71,9 +64,7 @@ else ok("the login page is reachable");
 
 console.log("\n── a forged session");
 
-const forged = await new SignJWT({
-  userId: owner.id, email: "attacker@evil", name: "Attacker", role: "OWNER",
-})
+const forged = await new SignJWT({ userId: owner.id, sv: owner.sessionVersion })
   .setProtectedHeader({ alg: "HS256" })
   .setIssuedAt()
   .setExpirationTime("1h")
@@ -87,9 +78,7 @@ const garbage = await get("/", "not-a-token-at-all");
 if (garbage.status === 200) bad("a malformed token was accepted");
 else ok("a malformed token is refused");
 
-const expired = await new SignJWT({
-  userId: owner.id, email: owner.email, name: owner.name, role: owner.role,
-})
+const expired = await new SignJWT({ userId: owner.id, sv: owner.sessionVersion })
   .setProtectedHeader({ alg: "HS256" })
   .setIssuedAt(Math.floor(Date.now() / 1000) - 7200)
   .setExpirationTime(Math.floor(Date.now() / 1000) - 3600)
@@ -98,6 +87,33 @@ const expired = await new SignJWT({
 const expiredRes = await get("/", expired);
 if (expiredRes.status === 200) bad("an expired session was accepted");
 else ok("an expired session is refused");
+
+// Correctly signed and unexpired, but from before the account's sign-ins were
+// ended — a deactivation or password change. Honouring it is how a person who
+// has been switched off keeps working for the rest of the day.
+const revoked = await new SignJWT({ userId: owner.id, sv: owner.sessionVersion - 1 })
+  .setProtectedHeader({ alg: "HS256" })
+  .setIssuedAt()
+  .setExpirationTime("1h")
+  .sign(new TextEncoder().encode(process.env.AUTH_SECRET!));
+
+const revokedRes = await get("/", revoked);
+if (revokedRes.status === 200) bad("a session from before the account's sign-ins were ended was accepted");
+else ok("a session from before a sign-out-everywhere is refused");
+
+// The old cookie shape, with the role written inside it. A cookie must not be
+// able to name its own role.
+const oldShape = await new SignJWT({
+  userId: owner.id, email: owner.email, name: owner.name, role: "OWNER",
+})
+  .setProtectedHeader({ alg: "HS256" })
+  .setIssuedAt()
+  .setExpirationTime("1h")
+  .sign(new TextEncoder().encode(process.env.AUTH_SECRET!));
+
+const oldShapeRes = await get("/", oldShape);
+if (oldShapeRes.status === 200) bad("a cookie carrying its own role was accepted");
+else ok("a cookie carrying its own role is refused");
 
 /* ──────────────── 3. a role is sent away from what it may not see ──────── */
 
@@ -115,7 +131,7 @@ const pageMatrix: { role: Role; denied: string[]; allowed: string[] }[] = [
 ];
 
 for (const { role, denied, allowed } of pageMatrix) {
-  const token = await sessionFor(role, owner.id);
+  const token = await sessionFor(role);
 
   for (const path of denied) {
     const res = await get(path, token);
@@ -141,8 +157,8 @@ const salaries = await db.employee.findMany({
 if (salaries.length === 0) {
   console.log("   • no employees on file; salary withholding not exercised");
 } else {
-  const withSalary = await sessionFor("HR", owner.id);
-  const withoutSalary = await sessionFor("PRODUCTION", owner.id);
+  const withSalary = await sessionFor("HR");
+  const withoutSalary = await sessionFor("PRODUCTION");
 
   const seen = await get("/hr", withSalary);
   const unseen = await get("/hr", withoutSalary);
@@ -193,7 +209,7 @@ if (anonAction.status === 200) {
 
 console.log("\n── injection and traversal");
 
-const token = await sessionFor("OWNER", owner.id);
+const token = await sessionFor("OWNER");
 const nasty = [
   "/reports/entity-pnl?entity=FACTORY'%20OR%201=1--",
   "/inventory?count=%27%3B%20DROP%20TABLE%20users%3B--",
@@ -239,5 +255,6 @@ else {
   problems.forEach((p, i) => console.log(`${i + 1}. ${p}`));
 }
 
+await retireQaUsers();
 await db.$disconnect();
 process.exit(problems.length === 0 ? 0 : 1);

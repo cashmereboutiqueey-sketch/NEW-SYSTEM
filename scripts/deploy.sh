@@ -22,7 +22,11 @@ DIR="/opt/cashmere-os"
 REPO="${CASHMERE_REPO:-https://github.com/cashmereboutiqueey-sketch/NEW-SYSTEM.git}"
 BRANCH="${CASHMERE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 
-ssh_run() { ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$HOST" "$@"; }
+# Every remote command runs with -e and pipefail. Without pipefail,
+# `docker compose build | tail -5` reports the exit status of tail, which is
+# always 0, so a build that failed was announced as built and the script went
+# on to start whatever image was already on the disk.
+ssh_run() { ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$HOST" "set -eo pipefail; $*"; }
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 case "${1:-deploy}" in
@@ -92,7 +96,23 @@ ssh_run "test -f $DIR/.env" 2>/dev/null || {
 # ────────────────────────────────── deploy ──────────────────────────────────
 
 say "fetching the code"
-ssh_run "cd $DIR && git fetch --quiet origin '$BRANCH' && git checkout --quiet '$BRANCH' && git reset --hard --quiet 'origin/$BRANCH' && git log -1 --format='  now at %h  %s'"
+# The exact commit checked above, not whatever the branch points at by the time
+# the server fetches. Somebody pushing in between would otherwise ship a commit
+# nobody here looked at, under this commit's name.
+ssh_run "cd $DIR && git fetch --quiet origin '$BRANCH' && git checkout --quiet '$BRANCH' && git reset --hard --quiet '$LOCAL_SHA'
+  test \"\$(git rev-parse HEAD)\" = '$LOCAL_SHA' || { echo '  the server is not at $LOCAL_SHA' >&2; exit 1; }
+  git log -1 --format='  now at %h  %s'"
+
+say "backups"
+# Installed on every deploy rather than once by hand, so a rebuilt server comes
+# back with its backups running instead of quietly without them. Done before
+# the migration below, which uses the same unit.
+ssh_run "install -m 644 $DIR/deploy/cashmere-backup.service /etc/systemd/system/
+  install -m 644 $DIR/deploy/cashmere-backup.timer /etc/systemd/system/
+  chmod +x $DIR/scripts/backup.sh
+  systemctl daemon-reload
+  systemctl enable --now cashmere-backup.timer >/dev/null 2>&1
+  systemctl list-timers cashmere-backup.timer --no-pager | sed -n '2p' | awk '{print \"  next backup: \"\$1\" \"\$2\" \"\$3}'"
 
 say "keeping the current image as the way back"
 ssh_run "docker image inspect cashmere-os:latest >/dev/null 2>&1 && docker tag cashmere-os:latest cashmere-os:previous && echo '  tagged cashmere-os:previous' || echo '  nothing to keep — first build'"
@@ -107,9 +127,31 @@ say "building"
 # the column it was built for.
 ssh_run "cd $DIR && docker compose -f docker-compose.prod.yml build app migrate 2>&1 | tail -5"
 
+say "a backup from just before the migration"
+# Rolling back the image does not roll back the schema. If a migration goes
+# wrong, the way back is this dump, taken and restore-checked by the same unit
+# the nightly timer runs. `systemctl start` waits for a oneshot to finish and
+# fails if it did, which stops the deploy before anything is migrated.
+ssh_run "if docker inspect -f '{{.State.Running}}' cashmere-os-db 2>/dev/null | grep -q true; then
+  systemctl start cashmere-backup.service
+  echo '  taken and restored once to prove it'
+else
+  echo '  no database running yet — nothing to protect'
+fi"
+
 say "starting"
 # Migrations run in the app's entrypoint, before it serves anything.
 ssh_run "cd $DIR && docker compose -f docker-compose.prod.yml up -d 2>&1 | tail -6"
+
+# The Caddyfile is mounted into the container as a single file, and a file
+# replaced by git is a new file the running container never sees. `up -d` does
+# not restart Caddy for it either, since nothing in the compose file changed,
+# so the new configuration waits unseen until something else restarts it.
+ssh_run "cd $DIR
+  if [ \"\$(docker exec cashmere-os-caddy cat /etc/caddy/Caddyfile | sha256sum)\" != \"\$(sha256sum < Caddyfile)\" ]; then
+    docker compose -f docker-compose.prod.yml restart caddy >/dev/null
+    echo '  Caddy restarted for its new configuration'
+  fi"
 
 say "waiting for it to answer"
 ssh_run "for i in \$(seq 1 30); do
@@ -120,18 +162,8 @@ ssh_run "for i in \$(seq 1 30); do
 done
 echo '  it did not answer in two minutes — the log follows'; docker logs --tail 40 cashmere-os-app; exit 1"
 
-say "backups"
-# Installed on every deploy rather than once by hand, so a rebuilt server comes
-# back with its backups running instead of quietly without them.
-ssh_run "install -m 644 $DIR/deploy/cashmere-backup.service /etc/systemd/system/
-  install -m 644 $DIR/deploy/cashmere-backup.timer /etc/systemd/system/
-  chmod +x $DIR/scripts/backup.sh
-  systemctl daemon-reload
-  systemctl enable --now cashmere-backup.timer >/dev/null 2>&1
-  systemctl list-timers cashmere-backup.timer --no-pager | sed -n '2p' | awk '{print \"  next backup: \"\$1\" \"\$2\" \"\$3}'"
-
 say "as seen from outside"
-SITE="$(ssh_run "grep '^SITE_ADDRESS=' $DIR/.env | cut -d= -f2")"
+SITE="$(ssh_run "grep '^SITE_ADDRESS=' $DIR/.env | cut -d= -f2" || true)"
 curl -s -o /dev/null -w "  https://$SITE  HTTP %{http_code}\n" "https://$SITE/login" || true
 
 say "done"

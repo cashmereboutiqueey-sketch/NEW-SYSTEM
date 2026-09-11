@@ -279,6 +279,77 @@ describe("passwords", () => {
   });
 });
 
+/**
+ * Ending sign-ins that already exist.
+ *
+ * A session cookie carries the account's sessionVersion from the moment of
+ * sign-in, and a request is refused once the account's number has moved on.
+ * These check the number moves when it must and stays put when it need not.
+ * The comparison itself happens in getSession, per request.
+ */
+describe("ending sign-ins that already exist", () => {
+  const version = async (id: string) =>
+    (await db.user.findUniqueOrThrow({ where: { id } })).sessionVersion;
+
+  it("stamps the version a sign-in carries", async () => {
+    const { id } = await newUser();
+    const session = await authenticate("cashier@usertest.eg", GOOD);
+    expect(session!.sessionVersion).toBe(await version(id));
+  });
+
+  it("ends them when the account is switched off", async () => {
+    const { id } = await newUser();
+    const before = await version(id);
+    await setUserActive({ userId: id, isActive: false }, asOwner());
+    expect(await version(id)).toBeGreaterThan(before);
+  });
+
+  it("keeps a cookie from before a switch-off dead after switching back on", async () => {
+    const { id } = await newUser();
+    const signedIn = (await authenticate("cashier@usertest.eg", GOOD))!;
+    await setUserActive({ userId: id, isActive: false }, asOwner());
+    await setUserActive({ userId: id, isActive: true }, asOwner());
+    expect(await version(id)).not.toBe(signedIn.sessionVersion);
+  });
+
+  it("ends them when an owner resets the password", async () => {
+    const { id } = await newUser();
+    const before = await version(id);
+    await resetPassword({ userId: id, password: "brand-new-pass-4" }, asOwner());
+    expect(await version(id)).toBeGreaterThan(before);
+  });
+
+  it("ends every other one when the person changes it, and says which to keep", async () => {
+    const { id } = await newUser();
+    const before = await version(id);
+    const { sessionVersion } = await changeOwnPassword(
+      { userId: id, currentPassword: GOOD, newPassword: "chosen-by-me-2" },
+      { userId: id, reason: null },
+    );
+    expect(sessionVersion).toBeGreaterThan(before);
+    expect(sessionVersion).toBe(await version(id));
+  });
+
+  it("leaves them alone on a role change, which is read fresh anyway", async () => {
+    const { id } = await newUser();
+    const before = await version(id);
+    await setUserRole({ userId: id, role: "WAREHOUSE" }, asOwner());
+    expect(await version(id)).toBe(before);
+  });
+
+  it("does not move on a failed password change", async () => {
+    const { id } = await newUser();
+    const before = await version(id);
+    await expect(
+      changeOwnPassword(
+        { userId: id, currentPassword: "not-it-at-all", newPassword: "something-else-3" },
+        { userId: id, reason: null },
+      ),
+    ).rejects.toThrow();
+    expect(await version(id)).toBe(before);
+  });
+});
+
 describe("what the owner sees", () => {
   it("shows who is locked out right now", async () => {
     const { id } = await newUser();

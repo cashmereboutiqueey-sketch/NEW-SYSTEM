@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "test:db": "vitest run --config vitest.integration.config.ts",
+    "test:db:prepare": "tsx scripts/with-test-database.ts prisma migrate deploy && tsx scripts/with-test-database.ts prisma db seed",
     "test:all": "npm run test && npm run test:db",
     "db:demo": "tsx --conditions=react-server prisma/demo.ts",
     "db:fresh": "prisma migrate deploy && prisma generate && npm run db:seed && npm run db:demo",

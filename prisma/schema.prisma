@@ -69,6 +69,12 @@ model User {
   /// until they replace it, because a password two people know is not a
   /// password.
   mustChangePassword Boolean @default(false)
+
+  /// Stamped into every session cookie at sign-in and compared on every
+  /// request. Raising it signs the person out everywhere at once — on
+  /// deactivation and on any password change — because a cookie is otherwise
+  /// good for twelve hours whatever happens to the account behind it.
+  sessionVersion Int @default(0)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

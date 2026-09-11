@@ -23,10 +23,15 @@ export { hashPassword, verifyPassword };
 const MAX_FAILED_LOGINS = 8;
 const LOCKOUT_MINUTES = 15;
 
+/** Who just proved their password, and the sign-in generation to stamp. */
+export type SignedIn = Omit<SessionPayload, "mustChangePassword"> & {
+  sessionVersion: number;
+};
+
 export async function authenticate(
   email: string,
   password: string,
-): Promise<SessionPayload | null> {
+): Promise<SignedIn | null> {
   const user = await db.user.findUnique({
     where: { email: email.trim().toLowerCase() },
   });
@@ -72,10 +77,16 @@ export async function authenticate(
     email: user.email,
     name: user.name,
     role: user.role,
+    sessionVersion: user.sessionVersion,
   };
 }
 
-/** Server-component guard. Redirects to the login page when unauthenticated. */
+/**
+ * Server-component guard. Redirects to the login page when unauthenticated.
+ *
+ * Does not insist on a changed password, because /change-password itself is
+ * behind it; the app layout and the other guards do.
+ */
 export async function requireUser(): Promise<SessionPayload> {
   const session = await getSession();
   if (!session) redirect("/login");
@@ -90,13 +101,14 @@ export async function requirePermission(
   permission: Permission,
 ): Promise<SessionPayload> {
   const session = await requireUser();
+  if (session.mustChangePassword) redirect("/change-password");
   if (!can(session.role, permission)) redirect("/");
   return session;
 }
 
 export class ForbiddenError extends Error {
-  constructor(permission: Permission, role: string) {
-    super(`Role ${role} does not have permission ${permission}.`);
+  constructor(permission: Permission, role: string, reason?: string) {
+    super(reason ?? `Role ${role} does not have permission ${permission}.`);
     this.name = "ForbiddenError";
   }
 }
@@ -109,6 +121,16 @@ export class ForbiddenError extends Error {
 export async function authorize(permission: Permission): Promise<SessionPayload> {
   const session = await getSession();
   if (!session) throw new ForbiddenError(permission, "anonymous");
+  if (session.mustChangePassword) {
+    // The layout keeps these people on the change-password screen, but an
+    // action can be called without any screen at all. A password somebody
+    // else chose must not be enough to post a journal.
+    throw new ForbiddenError(
+      permission,
+      session.role,
+      `User ${session.userId} must replace their temporary password before doing anything.`,
+    );
+  }
   if (!can(session.role, permission)) throw new ForbiddenError(permission, session.role);
   return session;
 }

@@ -13,16 +13,19 @@
  */
 import "dotenv/config";
 import { db } from "../src/lib/db";
+import { normaliseShopDomain } from "../src/core/shopify-domain";
 
-const shop = process.env.SHOPIFY_SHOP?.trim().toLowerCase();
+const rawShop = process.env.SHOPIFY_SHOP ?? "";
 const token = process.env.SHOPIFY_TOKEN?.trim();
 const shouldPull = process.argv.includes("--pull");
 
-if (!shop || !token) {
+if (!rawShop.trim() || !token) {
   console.error("Set SHOPIFY_SHOP and SHOPIFY_TOKEN in the environment.");
   process.exit(1);
 }
-if (!shop.endsWith(".myshopify.com")) {
+// The whole shape, not the ending: the token is sent to this host.
+const shop = normaliseShopDomain(rawShop);
+if (!shop) {
   console.error("SHOPIFY_SHOP must be the .myshopify.com domain, not the public one.");
   process.exit(1);
 }
@@ -31,8 +34,13 @@ const API = "2024-10";
 
 async function admin<T>(path: string): Promise<T> {
   const res = await fetch(`https://${shop}/admin/api/${API}/${path}`, {
+    // A redirect would carry the token along with it; see src/lib/shopify.ts.
+    redirect: "manual",
     headers: { "X-Shopify-Access-Token": token!, "Content-Type": "application/json" },
   });
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(`${res.status} redirect on ${path}; not followed, the token would go with it`);
+  }
   if (!res.ok) throw new Error(`${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<T>;
 }

@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { pullOrders, publishInventory, verifyShopConnection, ShopifyError } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
+import { normaliseShopDomain } from "@/core/shopify-domain";
 import type { FormState } from "@/components/entity-form";
 
 function toMessage(error: unknown): string {
@@ -21,14 +22,16 @@ export async function connectShopifyAction(
   try {
     const session = await authorize("settings:manage");
 
-    const shopDomain = String(formData.get("shopDomain") ?? "")
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, "")
-      .replace(/\/$/, "");
-
-    if (!shopDomain.endsWith(".myshopify.com")) {
-      return { error: "Enter the shop's .myshopify.com domain, not its public address." };
+    // The whole shape, not just the ending: the access token is sent to this
+    // address, and text like `evil.example/#.myshopify.com` ends the right way
+    // while naming another host.
+    const shopDomain = normaliseShopDomain(String(formData.get("shopDomain") ?? ""));
+    if (!shopDomain) {
+      return {
+        error:
+          "Enter the shop's .myshopify.com domain (like cashmere-eg.myshopify.com), " +
+          "not its public address.",
+      };
     }
 
     const accessToken = String(formData.get("accessToken") ?? "").trim();

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { changeOwnPassword, UserError } from "@/lib/users";
+import { createSession } from "@/lib/session";
 
 export type ChangePasswordState = { error?: string };
 
@@ -22,18 +23,25 @@ export async function changePasswordAction(
     return { error: "التأكيد مش زي الباسورد الجديد." };
   }
 
+  let sessionVersion: number;
   try {
-    await changeOwnPassword(
+    ({ sessionVersion } = await changeOwnPassword(
       { userId: user.userId, currentPassword: current, newPassword: next },
       { userId: user.userId, reason: null },
-    );
+    ));
   } catch (error) {
     if (error instanceof UserError) return { error: error.message };
     console.error("Unhandled password change error:", error);
     return { error: "حصل خطأ. الباسورد ماتغيّرش." };
   }
 
-  // Outside the try: redirect works by throwing, and catching it here would
-  // report a successful change as a failure.
+  // The change signed out every session on the account, this one included.
+  // The person who just proved the old password stays in; nobody else does.
+  // Outside the try, because by now the password has changed and the message
+  // above would be a lie.
+  await createSession({ userId: user.userId, sessionVersion });
+
+  // Also outside the try: redirect works by throwing, and catching it there
+  // would report a successful change as a failure.
   redirect("/");
 }

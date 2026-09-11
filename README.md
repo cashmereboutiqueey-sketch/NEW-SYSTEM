@@ -381,7 +381,8 @@ node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and serve. Writes to `.next-build`, not `.next`, so it can run while a dev server is up. |
 | `npm test` | Unit tests for the domain logic. No database needed. |
-| `npm run test:db` | Integration tests against a real PostgreSQL instance |
+| `npm run test:db` | Integration tests against a real PostgreSQL instance. They delete data, so they run only against `TEST_DATABASE_URL`, which must name a `_test` database other than `DATABASE_URL`'s (see `.env.example`). |
+| `npm run test:db:prepare` | Migrate and seed that test database, once |
 | `npm run walkthrough` | Drives the whole business cycle end to end and reports gaps |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run db:migrate` | Create and apply a migration |

@@ -4,6 +4,7 @@ import { db } from "./db";
 import { createSale, SalesError } from "./sales";
 import { writeAudit, type AuditContext } from "./audit";
 import { dec } from "./money";
+import { isShopDomain, isApiVersion } from "@/core/shopify-domain";
 
 /**
  * The Shopify connector.
@@ -73,18 +74,53 @@ export function verifyWebhookSignature(
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-async function shopifyFetch<T>(
-  connection: { externalRef: string; accessToken: string | null; apiVersion: string | null },
+type ShopifyConnection = {
+  externalRef: string;
+  accessToken: string | null;
+  apiVersion: string | null;
+};
+
+/**
+ * The one door every request to Shopify goes through.
+ *
+ * It carries the access token, so it is also where the token's destination
+ * is decided. The domain is checked here rather than trusted from the form
+ * that saved it: a stored value from before the check existed, or one written
+ * some other way, must not be able to send the token anywhere but a shop.
+ *
+ * Redirects are refused rather than followed. Fetch keeps custom headers
+ * across a redirect, even to another host, so following one would hand the
+ * token to wherever the redirect pointed.
+ */
+async function shopifyRequest(
+  connection: ShopifyConnection,
   path: string,
   init?: { method: "POST"; body: unknown },
-): Promise<T> {
+): Promise<Response> {
   if (!connection.accessToken) {
     throw new ShopifyError("This shop has no access token configured.");
   }
+  if (!isShopDomain(connection.externalRef)) {
+    throw new ShopifyError(
+      `${JSON.stringify(connection.externalRef)} is not a Shopify shop domain. ` +
+        `Reconnect the shop with its .myshopify.com address.`,
+    );
+  }
+  const version = connection.apiVersion ?? API_VERSION;
+  if (!isApiVersion(version)) {
+    throw new ShopifyError(`${JSON.stringify(version)} is not a Shopify API version.`);
+  }
 
-  const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
+  const url = new URL(`https://${connection.externalRef}/admin/api/${version}/${path}`);
+  if (url.hostname !== connection.externalRef) {
+    // Unreachable while the domain check above holds. Kept because the cost
+    // of being wrong about that is a leaked token.
+    throw new ShopifyError(`Refusing to send the access token to ${url.hostname}.`);
+  }
+
   const response = await fetch(url, {
     method: init?.method ?? "GET",
+    redirect: "manual",
     headers: {
       "X-Shopify-Access-Token": connection.accessToken,
       "Content-Type": "application/json",
@@ -92,6 +128,14 @@ async function shopifyFetch<T>(
     ...(init ? { body: JSON.stringify(init.body) } : {}),
   });
 
+  if (response.status >= 300 && response.status < 400) {
+    throw new ShopifyError(
+      `${connection.externalRef} answered with a redirect${
+        response.headers.get("location") ? ` to ${response.headers.get("location")}` : ""
+      }. It was not followed, because the access token would have gone with it. ` +
+        `If the shop's domain has changed, reconnect it with the new one.`,
+    );
+  }
   if (response.status === 429) {
     // Shopify's leaky bucket. Surfacing it plainly lets the caller back off
     // rather than hammering the shop and getting throttled harder.
@@ -115,8 +159,19 @@ async function shopifyFetch<T>(
     );
   }
   if (!response.ok) {
-    throw new ShopifyError(`Shopify returned ${response.status}: ${await response.text()}`);
+    throw new ShopifyError(
+      `Shopify returned ${response.status}: ${(await response.text()).slice(0, 200)}`,
+    );
   }
+  return response;
+}
+
+async function shopifyFetch<T>(
+  connection: ShopifyConnection,
+  path: string,
+  init?: { method: "POST"; body: unknown },
+): Promise<T> {
+  const response = await shopifyRequest(connection, path, init);
   return response.json() as Promise<T>;
 }
 
@@ -854,14 +909,7 @@ export async function publishInventory(
   let path = "products.json?status=active&limit=250&fields=id,variants";
 
   for (;;) {
-    const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
-    const res = await fetch(url, {
-      headers: { "X-Shopify-Access-Token": connection.accessToken ?? "" },
-    });
-    if (!res.ok) {
-      throw new ShopifyError(`Shopify returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    }
-
+    const res = await shopifyRequest(connection, path);
     const body = (await res.json()) as { products: { variants: ShopVariant[] }[] };
     for (const product of body.products) shopVariants.push(...product.variants);
 
@@ -1022,14 +1070,7 @@ export async function syncVariantMappings(
   let path = "products.json?status=active&limit=250&fields=id,variants";
 
   for (;;) {
-    const url = `https://${connection.externalRef}/admin/api/${connection.apiVersion ?? API_VERSION}/${path}`;
-    const res = await fetch(url, {
-      headers: { "X-Shopify-Access-Token": connection.accessToken ?? "" },
-    });
-    if (!res.ok) {
-      throw new ShopifyError(`Shopify returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    }
-
+    const res = await shopifyRequest(connection, path);
     const body = (await res.json()) as { products: ShopifyProduct[] };
     for (const product of body.products) variants.push(...product.variants);
 

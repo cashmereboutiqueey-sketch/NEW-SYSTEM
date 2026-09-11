@@ -15,22 +15,16 @@
  *   npx tsx --conditions=react-server scripts/check-pages.ts [baseUrl]
  */
 import "dotenv/config";
-import { SignJWT } from "jose";
 import { db } from "../src/lib/db";
+import { sessionToken } from "./qa-session";
 import { collectionPerformance } from "../src/lib/analytics";
 import { brandPriceList } from "../src/lib/brand-pricing";
 import { formatMoney, formatPercent } from "../src/lib/money";
 
 const BASE = process.argv[2] ?? "http://localhost:3100";
 
-const owner = await db.user.findFirstOrThrow({ where: { role: "OWNER" } });
-const token = await new SignJWT({
-  userId: owner.id, email: owner.email, name: owner.name, role: owner.role,
-})
-  .setProtectedHeader({ alg: "HS256" })
-  .setIssuedAt()
-  .setExpirationTime("1h")
-  .sign(new TextEncoder().encode(process.env.AUTH_SECRET!));
+const owner = await db.user.findFirstOrThrow({ where: { role: "OWNER", isActive: true } });
+const token = await sessionToken(owner);
 
 const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });

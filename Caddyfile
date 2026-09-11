@@ -26,11 +26,12 @@
 		-Server
 	}
 
-	# Uploaded photographs are content-addressed — the name is a hash of the
-	# bytes — so a name can never point at different bytes later and a long
-	# cache is safe.
-	@uploads path /api/images/*
-	header @uploads Cache-Control "public, max-age=31536000, immutable"
+	# Nothing is said here about caching /api/images/*. The application sets
+	# it: "private" for a photograph, because the route is behind the session
+	# and a shared cache must not hand it to somebody who is not signed in.
+	# This file used to overwrite that with "public" for a year, which also
+	# stamped the redirect a signed-out request gets, so a browser that asked
+	# once before signing in could keep the login redirect instead of the image.
 
 	log {
 		output file /data/access.log {

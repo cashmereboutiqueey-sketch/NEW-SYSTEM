@@ -138,6 +138,8 @@ export async function setUserRole(
     );
   }
 
+  // No sign-out needed: the role is read from this row on every request, so
+  // the change applies to sessions already open from the next click.
   await db.$transaction(async (tx) => {
     await tx.user.update({ where: { id: user.id }, data: { role: input.role as Role } });
     await writeAudit(tx, {
@@ -173,6 +175,10 @@ export async function setUserActive(
       where: { id: user.id },
       data: {
         isActive: input.isActive,
+        // Switching somebody off ends the sessions they already have, rather
+        // than leaving each to run out its twelve hours. Raised on the way
+        // back as well, so a cookie from before the switch-off stays dead.
+        sessionVersion: { increment: 1 },
         // Coming back should not inherit a lockout from months ago.
         ...(input.isActive ? { failedLogins: 0, lockedUntil: null } : {}),
       },
@@ -213,6 +219,9 @@ export async function resetPassword(
       data: {
         passwordHash,
         mustChangePassword: true,
+        // Whoever was signed in with the old password — the person, or
+        // somebody who learned it — is signed out now, not in twelve hours.
+        sessionVersion: { increment: 1 },
         // A reset is also how somebody gets back in after locking themselves
         // out, so it clears the lockout.
         failedLogins: 0,
@@ -260,11 +269,14 @@ export async function unlockUser(
  * The current one is required even though they are already signed in: an
  * unattended screen is the most common way an account is taken over, and
  * asking costs one field.
+ *
+ * Every other sign-in on the account ends. Returns the new session version so
+ * the caller can re-issue the cookie of the person who made the change.
  */
 export async function changeOwnPassword(
   input: { userId: string; currentPassword: string; newPassword: string },
   ctx: AuditContext,
-): Promise<void> {
+): Promise<{ sessionVersion: number }> {
   checkPassword(input.newPassword);
 
   const user = await db.user.findUnique({ where: { id: input.userId } });
@@ -279,10 +291,10 @@ export async function changeOwnPassword(
 
   const passwordHash = await hashPassword(input.newPassword);
 
-  await db.$transaction(async (tx) => {
-    await tx.user.update({
+  return db.$transaction(async (tx) => {
+    const updated = await tx.user.update({
       where: { id: user.id },
-      data: { passwordHash, mustChangePassword: false },
+      data: { passwordHash, mustChangePassword: false, sessionVersion: { increment: 1 } },
     });
     await writeAudit(tx, {
       action: "USER_PASSWORD_CHANGED",
@@ -291,6 +303,7 @@ export async function changeOwnPassword(
       after: { name: user.name },
       ctx,
     });
+    return { sessionVersion: updated.sessionVersion };
   });
 }
 

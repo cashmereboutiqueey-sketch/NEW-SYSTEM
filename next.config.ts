@@ -31,6 +31,18 @@ const nextConfig: NextConfig = {
    */
   output: process.env.NEXT_STANDALONE === "1" ? "standalone" : undefined,
 
+  /**
+   * The project is its own root.
+   *
+   * Left to itself, Next looks upward for a lockfile to decide where the
+   * workspace starts, and on a machine with a package-lock.json in the home
+   * folder it picked that, traced files from the whole user profile, and
+   * failed on a folder it was not allowed to read. The same commit then built
+   * differently on a laptop and on the server. Every script, and the
+   * Dockerfile, runs Next from the project folder, so that is the root.
+   */
+  outputFileTracingRoot: process.cwd(),
+
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

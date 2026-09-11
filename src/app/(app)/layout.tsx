@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { t } from "@/lib/i18n";
 import { Sidebar } from "@/components/sidebar";
@@ -22,12 +21,9 @@ export default async function AppLayout({
   //
   // Checked here rather than in `requireUser` so /change-password, which sits
   // outside this layout, can still be reached; guarding it there would send
-  // the user in a circle.
-  const account = await db.user.findUnique({
-    where: { id: user.userId },
-    select: { mustChangePassword: true },
-  });
-  if (account?.mustChangePassword) redirect("/change-password");
+  // the user in a circle. The flag is read from the account on every request,
+  // not from the cookie, so a reset takes effect on the next click.
+  if (user.mustChangePassword) redirect("/change-password");
 
   const { locale, scope } = await getPrefs();
 

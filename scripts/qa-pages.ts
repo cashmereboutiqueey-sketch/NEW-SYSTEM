@@ -16,29 +16,22 @@
  *   npx tsx --conditions=react-server scripts/qa-pages.ts [baseUrl]
  */
 import "dotenv/config";
-import { SignJWT } from "jose";
 import { db } from "../src/lib/db";
 import { navigation } from "../src/lib/navigation";
-import { ROLES, permissionsFor, type Role } from "../src/core/permissions";
+import { ROLES, permissionsFor } from "../src/core/permissions";
+import { sessionFor, retireQaUsers } from "./qa-session";
 
 const BASE = process.argv[2] ?? "http://localhost:3100";
 
 const problems: string[] = [];
 const notes: string[] = [];
 
-async function sessionFor(role: Role, userId: string) {
-  return new SignJWT({ userId, email: `${role.toLowerCase()}@qa`, name: `QA ${role}`, role })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(new TextEncoder().encode(process.env.AUTH_SECRET!));
-}
-
 /**
- * A real user id, because the app layout looks the signed-in user up and a
- * token naming somebody who does not exist fails for the wrong reason.
+ * One real account per role, because the role is read from the account and a
+ * cookie cannot claim one of its own.
  */
-const anyUser = await db.user.findFirstOrThrow({ where: { isActive: true } });
+const tokens = new Map<string, string>();
+for (const role of ROLES) tokens.set(role, await sessionFor(role));
 
 const routes = [...new Set(navigation.flatMap((s) => s.items).filter((i) => i.shipped).map((i) => i.href))];
 
@@ -88,7 +81,7 @@ for (const href of routes) {
   const failures: string[] = [];
 
   for (const role of ROLES) {
-    const token = await sessionFor(role, anyUser.id);
+    const token = tokens.get(role)!;
     const res = await fetch(`${BASE}${href}`, {
       redirect: "manual",
       headers: { Cookie: `cashmere_session=${token}` },
@@ -139,5 +132,6 @@ if (problems.length === 0) {
   console.log(`\n${problems.length} problem(s)`);
 }
 
+await retireQaUsers();
 await db.$disconnect();
 process.exit(problems.length === 0 ? 0 : 1);

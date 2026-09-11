@@ -1,5 +1,7 @@
+import "dotenv/config";
 import { defineConfig } from "vitest/config";
 import path from "node:path";
+import { testDatabaseUrl } from "./src/test/test-database";
 
 const rootDir = import.meta.dirname;
 
@@ -11,11 +13,24 @@ const rootDir = import.meta.dirname;
  *
  * Kept separate from `vitest.config.ts` so `npm test` stays fast and needs no
  * database.
+ *
+ * They also delete data wholesale, so they run only against TEST_DATABASE_URL,
+ * which must name a `_test` database other than the application's. Checked
+ * here as the config loads, again against the server before any file runs,
+ * and once more inside each worker. See src/test/test-database.ts.
  */
+const databaseUrl = testDatabaseUrl();
+
 export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.db.test.ts"],
+    // Every file, and every service it calls, reads DATABASE_URL. Workers are
+    // given the test database under that name, and the files' own
+    // `dotenv/config` does not overwrite a variable already set.
+    env: { DATABASE_URL: databaseUrl },
+    globalSetup: ["./src/test/db-global-setup.ts"],
+    setupFiles: ["./src/test/db-worker-guard.ts"],
     // Postgres serialises the conflicting writes these tests provoke, and
     // shared seed rows make parallel files flaky.
     fileParallelism: false,
