@@ -35,7 +35,10 @@ export async function createEmployeeAction(
         department: (formData.get("department") as string) || null,
         jobTitle: (formData.get("jobTitle") as string) || null,
         hiredAt: String(formData.get("hiredAt") ?? ""),
+        payFrequency: String(formData.get("payFrequency") ?? "MONTHLY") as
+          "MONTHLY" | "WEEKLY" | "DAILY" | "PIECE_RATE",
         baseSalary: Number(formData.get("baseSalary") ?? 0),
+        pieceRate: formData.get("pieceRate") ? Number(formData.get("pieceRate")) : null,
         phone: (formData.get("phone") as string) || null,
         biometricDeviceUserId: (formData.get("biometricDeviceUserId") as string) || null,
         productionLineId: (formData.get("productionLineId") as string) || null,

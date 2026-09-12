@@ -75,7 +75,20 @@ export function splitOvertime(
   };
 }
 
+/**
+ * How somebody is paid, which decides what their pay is made of.
+ *
+ * A monthly salary is an entitlement that absence reduces. A weekly or daily
+ * wage is earned by turning up, so it is counted from days present rather than
+ * deducted from a month nobody promised. Piece work is paid for what was made
+ * and is not a time wage at all — absence and overtime mean nothing to it,
+ * because the only thing that pays is output.
+ */
+export type PayBasis = "MONTHLY" | "WEEKLY" | "DAILY" | "PIECE_RATE";
+
 export type PayInput = {
+  basis?: PayBasis;
+  /** Pay for one period of the basis: a month, a week, or a day. */
   baseSalary: Numeric;
   /** Working days in the period, from the capacity configuration. */
   standardDays: Numeric;
@@ -87,11 +100,30 @@ export type PayInput = {
   otherDeductions?: Numeric;
   /** Employer-side social insurance, as a fraction of gross. */
   employerCostPct?: Numeric;
+
+  /**
+   * Of the period's working days, how many this person was employed for.
+   * Somebody hired on the twentieth is owed the days from the twentieth, and
+   * somebody who left mid-month is owed the days up to the day they left.
+   * Defaults to the whole period.
+   */
+  daysEmployed?: Numeric;
+  /** Days actually worked. What a weekly or daily wage is paid on. */
+  daysPresent?: Numeric;
+  /** Working days in a week, for turning a weekly wage into a daily one. */
+  weekWorkingDays?: Numeric;
+  /** Garments finished, for piece work. */
+  piecesProduced?: Numeric;
+  /** What one finished garment pays. */
+  pieceRate?: Numeric;
 };
 
 export type PayResult = {
+  basis: PayBasis;
   dailyRate: Decimal | null;
   minuteRate: Decimal | null;
+  /** What the days or the pieces earned, before overtime and deductions. */
+  earned: Decimal;
   absenceDeduction: Decimal;
   overtimePay: Decimal;
   grossPay: Decimal;
@@ -103,27 +135,76 @@ export type PayResult = {
 };
 
 export function calculatePay(input: PayInput): PayResult {
+  const basis = input.basis ?? "MONTHLY";
   const base = dec(input.baseSalary);
-  const dailyRate = safeDiv(base, input.standardDays);
+  const standardDays = dec(input.standardDays);
+
+  // The day and the minute this person's pay works out to, whatever period
+  // their wage is quoted for. Everything below is priced off these two.
+  const dailyRate =
+    basis === "DAILY"
+      ? base
+      : basis === "WEEKLY"
+        ? safeDiv(base, input.weekWorkingDays ?? 6)
+        : safeDiv(base, standardDays);
   const minuteRate = dailyRate ? safeDiv(dailyRate, input.standardDayMinutes) : null;
 
-  const absenceDeduction = dailyRate
-    ? dailyRate.times(dec(input.daysAbsentUnpaid))
-    : dec(0);
+  // Only part of the period, for somebody hired or leaving inside it. A month
+  // nobody was employed for is not a month anybody is owed.
+  const daysEmployed = input.daysEmployed != null ? dec(input.daysEmployed) : standardDays;
+  const daysPresent = dec(input.daysPresent ?? 0);
+
+  if (basis === "PIECE_RATE") {
+    // Paid for what was made. Absence is not deducted from output and
+    // overtime does not multiply it: the garments are the wage.
+    const pieces = dec(input.piecesProduced ?? 0);
+    const earned = pieces.times(dec(input.pieceRate ?? 0));
+    const otherDeductions = dec(input.otherDeductions ?? 0);
+    const employerCost = earned.times(dec(input.employerCostPct ?? 0));
+    return {
+      basis,
+      dailyRate,
+      minuteRate,
+      earned,
+      absenceDeduction: dec(0),
+      overtimePay: dec(0),
+      grossPay: earned,
+      otherDeductions,
+      netPay: earned.minus(otherDeductions),
+      employerCost,
+      totalCostToBusiness: earned.plus(employerCost),
+    };
+  }
+
+  // A month is an entitlement that unpaid absence reduces; a week or a day is
+  // earned by turning up, so it is counted rather than deducted.
+  const entitlement =
+    basis === "MONTHLY"
+      ? dailyRate
+        ? dailyRate.times(daysEmployed)
+        : base
+      : dailyRate
+        ? dailyRate.times(daysPresent)
+        : dec(0);
+
+  const absenceDeduction =
+    basis === "MONTHLY" && dailyRate ? dailyRate.times(dec(input.daysAbsentUnpaid)) : dec(0);
 
   const overtimePay = minuteRate
     ? minuteRate.times(dec(input.approvedOvertimeMinutes)).times(dec(input.overtimeMultiplier))
     : dec(0);
 
   // Absence reduces gross, so it also reduces the employer's percentage cost.
-  const grossPay = base.minus(absenceDeduction).plus(overtimePay);
+  const grossPay = entitlement.minus(absenceDeduction).plus(overtimePay);
   const otherDeductions = dec(input.otherDeductions ?? 0);
   const netPay = grossPay.minus(otherDeductions);
   const employerCost = grossPay.times(dec(input.employerCostPct ?? 0));
 
   return {
+    basis,
     dailyRate,
     minuteRate,
+    earned: entitlement,
     absenceDeduction,
     overtimePay,
     grossPay,

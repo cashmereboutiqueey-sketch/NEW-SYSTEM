@@ -148,10 +148,27 @@ export default async function HrPage() {
                 required: true, defaultValue: new Date().toISOString().slice(0, 10), ltr: true,
               },
               {
+                kind: "select", name: "payFrequency", labelEn: "Paid by", labelAr: "بيتحاسب بالـ",
+                options: [
+                  { value: "MONTHLY", label: ar ? "الشهر" : "Month" },
+                  { value: "WEEKLY", label: ar ? "الأسبوع" : "Week" },
+                  { value: "DAILY", label: ar ? "اليوم" : "Day" },
+                  { value: "PIECE_RATE", label: ar ? "القطعة" : "Piece" },
+                ],
+                hintEn: "A month is an entitlement absence reduces; a week or a day is earned by turning up. Piece work is paid for what was made.",
+                hintAr: "الشهري استحقاق بيقل بالغياب، والأسبوعي واليومي بيتكسبوا بالحضور. والقطعة بتتحاسب على اللي اتعمل فعلًا.",
+              },
+              {
                 kind: "number", name: "baseSalary", labelEn: "Base salary", labelAr: "الأجر الأساسي",
                 required: true, step: "0.01", min: "0", ltr: true,
-                hintEn: "Gross per period. A later change is recorded as history, never an edit.",
-                hintAr: "الإجمالي للفترة. أي تغيير بعدين بيتسجّل كتاريخ مش تعديل.",
+                hintEn: "Gross per period — a month, a week, a day. Zero for piece work. A later change is recorded as history, never an edit.",
+                hintAr: "الإجمالي للفترة — شهر أو أسبوع أو يوم. صفر لو بالقطعة. أي تغيير بعدين بيتسجّل كتاريخ مش تعديل.",
+              },
+              {
+                kind: "number", name: "pieceRate", labelEn: "Per piece", labelAr: "أجر القطعة",
+                step: "0.01", min: "0", ltr: true,
+                hintEn: "Only for piece work: what one finished garment pays. Their pay comes from the garments recorded against them on the operators screen.",
+                hintAr: "للشغل بالقطعة بس: القطعة الواحدة بكام. أجره بيتحسب من القطع المسجلة له في شاشة إنتاجية العمال.",
               },
               { kind: "text", name: "phone", labelEn: "Phone", labelAr: "التليفون", ltr: true },
               {

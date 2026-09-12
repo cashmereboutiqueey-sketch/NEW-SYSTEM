@@ -32,7 +32,10 @@ export const employeeSchema = z.object({
   jobTitle: z.string().nullable().optional(),
   hiredAt: z.coerce.date(),
   payFrequency: z.enum(["MONTHLY", "WEEKLY", "DAILY", "PIECE_RATE"]).default("MONTHLY"),
+  /** Gross for one period of the frequency above: a month, a week, a day. */
   baseSalary: z.coerce.number().min(0),
+  /** What one finished garment pays, for somebody on piece work. */
+  pieceRate: z.coerce.number().min(0).nullable().optional(),
   phone: z.string().nullable().optional(),
   nationalId: z.string().nullable().optional(),
   biometricDeviceUserId: z.string().nullable().optional(),
@@ -47,6 +50,14 @@ export async function createEmployee(input: EmployeeInput, ctx: AuditContext) {
 
   const clash = await db.employee.findUnique({ where: { code: data.code } });
   if (clash) throw new PeopleError(`Employee code ${data.code} is already in use.`);
+
+  if (data.payFrequency === "PIECE_RATE") {
+    if (!data.pieceRate || data.pieceRate <= 0) {
+      throw new PeopleError("Somebody paid by the piece needs a rate per piece.");
+    }
+  } else if (data.baseSalary <= 0) {
+    throw new PeopleError("A wage is an amount of money. Record what they are paid.");
+  }
 
   if (data.biometricDeviceUserId) {
     // Two people on one badge means one of them is paid for the other's
@@ -73,6 +84,7 @@ export async function createEmployee(input: EmployeeInput, ctx: AuditContext) {
         hiredAt: data.hiredAt,
         payFrequency: data.payFrequency,
         baseSalary: dec(data.baseSalary).toString(),
+        pieceRate: data.pieceRate != null ? dec(data.pieceRate).toString() : null,
         phone: data.phone ?? null,
         nationalId: data.nationalId ?? null,
         biometricDeviceUserId: data.biometricDeviceUserId ?? null,

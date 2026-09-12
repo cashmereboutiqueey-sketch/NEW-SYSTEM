@@ -19,6 +19,9 @@ export async function recordProductivityAction(
         operatorId: String(formData.get("operatorId") ?? ""),
         logDate: new Date(String(formData.get("logDate") ?? "")),
         smvProduced: Number(formData.get("smvProduced") ?? 0),
+        piecesProduced: String(formData.get("piecesProduced") ?? "").trim()
+          ? Number(formData.get("piecesProduced"))
+          : null,
         clockedMinutes: typed ? Number(typed) : null,
         notes: String(formData.get("notes") ?? "").trim() || null,
       },

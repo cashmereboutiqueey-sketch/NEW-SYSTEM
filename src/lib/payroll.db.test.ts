@@ -42,6 +42,8 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.operatorProductivity.deleteMany({ where: { operator: { code: { startsWith: "OPT-" } } } });
+    await db.operator.deleteMany({ where: { code: { startsWith: "OPT-" } } });
     await db.payrollLine.deleteMany({});
     await db.payrollRun.deleteMany({});
     await db.attendanceDay.deleteMany({});
@@ -59,18 +61,53 @@ async function wipe() {
   }
 }
 
-async function makeEmployee(over: { salary?: string; device?: string; costCenterId?: string } = {}) {
+async function makeEmployee(
+  over: {
+    salary?: string;
+    device?: string;
+    costCenterId?: string;
+    payFrequency?: "MONTHLY" | "WEEKLY" | "DAILY" | "PIECE_RATE";
+    pieceRate?: string;
+    hiredAt?: Date;
+    endedAt?: Date;
+    name?: string;
+  } = {},
+) {
   return db.employee.create({
     data: {
       code: `EMP-${seq++}`,
-      name: "عامل إنتاج",
+      name: over.name ?? "عامل إنتاج",
       entityId: factoryId,
       costCenterId: over.costCenterId ?? factoryCcId,
-      hiredAt: periodStart,
+      hiredAt: over.hiredAt ?? periodStart,
+      endedAt: over.endedAt ?? null,
+      payFrequency: over.payFrequency ?? "MONTHLY",
       baseSalary: over.salary ?? "6700",
+      pieceRate: over.pieceRate ?? null,
       biometricDeviceUserId: over.device ?? null,
     },
   });
+}
+
+/** A day on the floor, as the attendance table records it. */
+async function present(employeeId: string, dayOffset: number, minutes = 480) {
+  const workDate = new Date(periodStart);
+  workDate.setUTCDate(workDate.getUTCDate() + dayOffset);
+  return db.attendanceDay.create({
+    data: {
+      employeeId,
+      workDate,
+      workedMinutes: String(minutes),
+      overtimeMinutes: "0",
+      isAbsent: false,
+      isLeave: false,
+    },
+  });
+}
+
+/** The line a run worked out for one person. */
+async function lineFor(payrollRunId: string, employeeId: string) {
+  return db.payrollLine.findFirstOrThrow({ where: { payrollRunId, employeeId } });
 }
 
 const dayAt = (dayOffset: number, hhmm: string) => {
@@ -365,5 +402,138 @@ describe("posting payroll", () => {
       WHERE e."status" = 'POSTED'
     `;
     expect(row.debit).toBe(row.credit);
+  });
+});
+
+describe("people are paid the way they are actually paid", () => {
+  const prepare = () =>
+    preparePayrollRun(
+      { entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null },
+    );
+
+  it("pays a weekly wage for the days turned up, not for a month nobody promised", async () => {
+    // 1,200 a week over a six-day week is 200 a day; four days present.
+    const employee = await makeEmployee({ payFrequency: "WEEKLY", salary: "1200" });
+    for (const d of [0, 1, 2, 3]) await present(employee.id, d);
+
+    const run = await prepare();
+    const line = await lineFor(run.payrollRunId, employee.id);
+
+    expect(Number(line.grossPay)).toBeCloseTo(800, 2);
+  });
+
+  it("pays a daily wage per day present", async () => {
+    const employee = await makeEmployee({ payFrequency: "DAILY", salary: "250" });
+    for (const d of [0, 1, 2]) await present(employee.id, d);
+
+    const run = await prepare();
+    expect(Number((await lineFor(run.payrollRunId, employee.id)).grossPay)).toBeCloseTo(750, 2);
+  });
+
+  it("pays piece work for the garments finished, and nothing for the days", async () => {
+    const employee = await makeEmployee({
+      payFrequency: "PIECE_RATE", salary: "0", pieceRate: "12.5", name: "خياطة بالقطعة",
+    });
+    const operator = await db.operator.create({
+      data: { code: `OPT-${seq++}-${Date.now()}`, name: employee.name, employeeId: employee.id },
+    });
+    for (const [d, pieces] of [[0, 40], [1, 35]] as const) {
+      const logDate = new Date(periodStart);
+      logDate.setUTCDate(logDate.getUTCDate() + d);
+      await db.operatorProductivity.create({
+        data: {
+          operatorId: operator.id, logDate,
+          smvProduced: "400", piecesProduced: pieces,
+          clockedMinutes: "480", efficiencyRate: "0.83",
+        },
+      });
+    }
+
+    const run = await prepare();
+    const line = await lineFor(run.payrollRunId, employee.id);
+
+    // 75 garments at 12.50.
+    expect(Number(line.grossPay)).toBeCloseTo(937.5, 2);
+    expect(Number(line.absenceDeduction)).toBe(0);
+  });
+
+  it("says so when a piece worker has no garments recorded, instead of paying zero quietly", async () => {
+    const employee = await makeEmployee({
+      payFrequency: "PIECE_RATE", salary: "0", pieceRate: "12.5", name: "خياطة بلا إنتاج",
+    });
+    await db.operator.create({
+      data: { code: `OPT-${seq++}-${Date.now()}`, name: employee.name, employeeId: employee.id },
+    });
+
+    const run = await prepare();
+
+    expect(run.warnings.join(" ")).toMatch(/no garments are recorded/i);
+  });
+
+  it("pays somebody hired mid-period for the part they were employed", async () => {
+    // Employed from the sixteenth of a thirty-day period: about half of it.
+    const hired = new Date(periodStart);
+    hired.setUTCDate(hired.getUTCDate() + 15);
+    const employee = await makeEmployee({ salary: "6000", hiredAt: hired });
+
+    const run = await prepare();
+    const line = await lineFor(run.payrollRunId, employee.id);
+
+    expect(Number(line.grossPay)).toBeGreaterThan(2_500);
+    expect(Number(line.grossPay)).toBeLessThan(3_500);
+  });
+
+  it("still pays somebody who left mid-period for the days they worked", async () => {
+    const left = new Date(periodStart);
+    left.setUTCDate(left.getUTCDate() + 9);
+    const employee = await makeEmployee({
+      salary: "6000", hiredAt: periodStart, endedAt: left, name: "مستقيل",
+    });
+    await db.employee.update({ where: { id: employee.id }, data: { status: "TERMINATED" } });
+
+    const run = await prepare();
+    const line = await lineFor(run.payrollRunId, employee.id);
+
+    // Ten days of a thirty-day period, not a whole month and not nothing.
+    expect(Number(line.grossPay)).toBeGreaterThan(1_500);
+    expect(Number(line.grossPay)).toBeLessThan(2_500);
+  });
+
+  it("leaves out somebody hired after the period ended", async () => {
+    // Somebody who was there, so the run itself has work to do.
+    await makeEmployee();
+
+    const period = await db.fiscalPeriod.findUniqueOrThrow({ where: { id: periodId } });
+    const later = new Date(period.endDate);
+    later.setUTCDate(later.getUTCDate() + 1);
+    const employee = await makeEmployee({ hiredAt: later, name: "لسه ماجاش" });
+
+    const run = await prepare();
+
+    expect(
+      await db.payrollLine.count({ where: { payrollRunId: run.payrollRunId, employeeId: employee.id } }),
+    ).toBe(0);
+  });
+
+  it("pays the salary that was in force then, not the one agreed since", async () => {
+    const employee = await makeEmployee({ salary: "9000" });
+    // The rise was agreed after this period: it must not restate it.
+    const period = await db.fiscalPeriod.findUniqueOrThrow({ where: { id: periodId } });
+    const wasEarning = new Date(period.startDate);
+    const raisedOn = new Date(period.endDate);
+    raisedOn.setUTCDate(raisedOn.getUTCDate() + 1);
+    await db.salaryHistory.createMany({
+      data: [
+        { employeeId: employee.id, baseSalary: "6000", effectiveFrom: wasEarning, reason: "Opening" },
+        { employeeId: employee.id, baseSalary: "9000", effectiveFrom: raisedOn, reason: "Rise" },
+      ],
+    });
+
+    const run = await prepare();
+    const line = await lineFor(run.payrollRunId, employee.id);
+
+    expect(Number(line.baseSalary)).toBe(6000);
+    expect(Number(line.grossPay)).toBeCloseTo(6000, 2);
   });
 });

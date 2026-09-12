@@ -6,7 +6,7 @@ import { writeAudit, type AuditContext } from "./audit";
 import { calculatePay, deriveDay } from "@/core/payroll";
 import type { DraftLine } from "@/core/ledger";
 import { violatesSeparationOfDuties } from "@/core/permissions";
-import { dec } from "./money";
+import { dec, type Decimal } from "./money";
 import { command } from "./command";
 
 /**
@@ -251,7 +251,13 @@ async function settingNumber(key: string, fallback: string): Promise<string> {
 export async function preparePayrollRun(
   input: { entityId: string; fiscalPeriodId: string },
   ctx: AuditContext,
-): Promise<{ payrollRunId: string; runNumber: string; employees: number; grossPay: string }> {
+): Promise<{
+  payrollRunId: string;
+  runNumber: string;
+  employees: number;
+  grossPay: string;
+  warnings: string[];
+}> {
   return command("payroll.preparePayrollRun", input, ctx, async () => {
     const period = await db.fiscalPeriod.findUnique({ where: { id: input.fiscalPeriodId } });
     if (!period) throw new PayrollError("Fiscal period not found.");
@@ -268,17 +274,65 @@ export async function preparePayrollRun(
       );
     }
 
+    // Everybody who was employed during the period, which is not the same as
+    // everybody employed now: somebody who left on the twentieth is owed the
+    // twenty days they worked, and somebody hired after it is owed nothing.
     const employees = await db.employee.findMany({
-      where: { entityId: input.entityId, status: { not: "TERMINATED" } },
-      include: { costCenter: true },
+      where: {
+        entityId: input.entityId,
+        hiredAt: { lte: period.endDate },
+        OR: [{ endedAt: null }, { endedAt: { gte: period.startDate } }],
+      },
+      include: {
+        costCenter: true,
+        // The salary in force then, not the salary now: a rise agreed in March
+        // must not restate February's payroll.
+        salaryHistory: {
+          where: { effectiveFrom: { lte: period.endDate } },
+          orderBy: { effectiveFrom: "desc" },
+          take: 1,
+        },
+        operator: { select: { id: true } },
+      },
     });
-    if (employees.length === 0) throw new PayrollError("No active employees for this entity.");
+    if (employees.length === 0) {
+      throw new PayrollError("Nobody was employed by this company during that period.");
+    }
 
     const standardDays = await settingNumber("capacity.defaultWorkingDays", "26");
     const hoursPerDay = await settingNumber("capacity.defaultHoursPerDay", "8");
     const overtimeMultiplier = await settingNumber("payroll.overtimeMultiplier", "1.5");
     const employerCostPct = await settingNumber("payroll.employerCostPct", "0.1875");
+    const weekWorkingDays = await settingNumber("payroll.weekWorkingDays", "6");
     const standardDayMinutes = dec(hoursPerDay).times(60);
+
+    // Garments finished by anybody paid for finishing them.
+    const operatorIds = employees.map((e) => e.operator?.id).filter((id): id is string => !!id);
+    const pieces = operatorIds.length
+      ? await db.operatorProductivity.groupBy({
+          by: ["operatorId"],
+          where: {
+            operatorId: { in: operatorIds },
+            logDate: { gte: period.startDate, lte: period.endDate },
+          },
+          _sum: { piecesProduced: true },
+        })
+      : [];
+    const piecesByOperator = new Map(pieces.map((p) => [p.operatorId, p._sum.piecesProduced ?? 0]));
+
+    /** The share of the period's working days somebody was employed for. */
+    const employedDays = (hiredAt: Date, endedAt: Date | null): Decimal => {
+      const day = 86_400_000;
+      const from = hiredAt > period.startDate ? hiredAt : period.startDate;
+      const to = endedAt && endedAt < period.endDate ? endedAt : period.endDate;
+      const whole = Math.round((period.endDate.getTime() - period.startDate.getTime()) / day) + 1;
+      const served = Math.round((to.getTime() - from.getTime()) / day) + 1;
+      if (served >= whole || whole <= 0) return dec(standardDays);
+      return dec(standardDays).times(Math.max(0, served)).div(whole).toDecimalPlaces(4);
+    };
+
+    /** Anything a person's pay could not be worked out from, said out loud. */
+    const warnings: string[] = [];
 
     return db.$transaction(async (tx) => {
       const runNumber = existing?.runNumber ?? (await nextDocumentNumber(tx, "PAY", period.startDate));
@@ -337,14 +391,37 @@ export async function preparePayrollRun(
         );
         const workedMinutes = days.reduce((s, d) => s.plus(dec(d.workedMinutes)), dec(0));
 
+        const daysPresent = days.filter((d) => !d.isAbsent && !d.isLeave).length;
+        const salary = e.salaryHistory[0]?.baseSalary ?? e.baseSalary;
+        const producedPieces = e.operator ? piecesByOperator.get(e.operator.id) ?? 0 : 0;
+
+        // A figure that cannot be worked out is reported, not paid as zero:
+        // a piece worker with no output recorded is far more likely to be a
+        // missing record than somebody who made nothing all month.
+        if (e.payFrequency === "PIECE_RATE") {
+          if (!e.pieceRate || dec(e.pieceRate).lessThanOrEqualTo(0)) {
+            warnings.push(`${e.name} is paid by the piece and has no piece rate set.`);
+          } else if (producedPieces === 0) {
+            warnings.push(`${e.name} is paid by the piece and no garments are recorded for them.`);
+          }
+        } else if (e.payFrequency !== "MONTHLY" && daysPresent === 0) {
+          warnings.push(`${e.name} is paid by the ${e.payFrequency.toLowerCase()} and has no attendance recorded.`);
+        }
+
         const pay = calculatePay({
-          baseSalary: e.baseSalary.toString(),
+          basis: e.payFrequency,
+          baseSalary: salary.toString(),
           standardDays,
           standardDayMinutes,
           daysAbsentUnpaid: absentDays,
           approvedOvertimeMinutes: approvedOvertime,
           overtimeMultiplier,
           employerCostPct,
+          daysEmployed: employedDays(e.hiredAt, e.endedAt).toString(),
+          daysPresent,
+          weekWorkingDays,
+          piecesProduced: producedPieces,
+          pieceRate: e.pieceRate?.toString() ?? "0",
         });
 
         const accountCode = e.costCenter
@@ -355,7 +432,7 @@ export async function preparePayrollRun(
           data: {
             payrollRunId: run.id,
             employeeId: e.id,
-            baseSalary: e.baseSalary,
+            baseSalary: salary,
             overtimePay: pay.overtimePay.toString(),
             absenceDeduction: pay.absenceDeduction.toString(),
             otherDeductions: "0",
@@ -390,7 +467,14 @@ export async function preparePayrollRun(
         action: "PAYROLL_PREPARED",
         entityName: "PayrollRun",
         entityId: run.id,
-        after: { runNumber, employees: employees.length, grossPay: gross.toString() },
+        after: {
+          runNumber,
+          employees: employees.length,
+          grossPay: gross.toString(),
+          // Recorded with the run: what was unclear when it was prepared is
+          // part of how it came out, and worth finding months later.
+          warnings,
+        },
         ctx,
       });
 
@@ -399,6 +483,8 @@ export async function preparePayrollRun(
         runNumber,
         employees: employees.length,
         grossPay: gross.toString(),
+        /** Pay that could not be worked out properly, for a person to settle. */
+        warnings,
       };
     });
   });

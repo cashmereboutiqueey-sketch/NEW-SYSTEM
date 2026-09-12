@@ -35,6 +35,11 @@ const productivitySchema = z.object({
   logDate: z.coerce.date(),
   smvProduced: z.coerce.number().min(0, "Standard minutes produced cannot be negative."),
   /**
+   * Finished garments. Standard minutes say how productive the day was;
+   * only a count of garments can pay somebody who is paid by the piece.
+   */
+  piecesProduced: z.coerce.number().int().min(0).nullable().optional(),
+  /**
    * Overrides attendance. Only for an operator with no HR record yet — and
    * the result says it was typed, because a clocked figure somebody chose is
    * a different kind of number from one a device recorded.
@@ -130,6 +135,7 @@ export async function recordProductivity(
         operator: operator.code,
         date: data.logDate.toISOString().slice(0, 10),
         smvProduced: smvProduced.toString(),
+        piecesProduced: data.piecesProduced ?? null,
         clockedMinutes: clocked.toString(),
         clockedFrom: measured ? "attendance" : "entered",
         efficiency: efficiency.toString(),

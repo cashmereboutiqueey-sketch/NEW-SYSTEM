@@ -1496,6 +1496,9 @@ model OperatorProductivity {
   operator       Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
   logDate        DateTime @db.Date
   smvProduced    Decimal  @db.Decimal(18, 4)
+  /// Finished garments, for anybody paid by the piece. Standard minutes say
+  /// how productive the day was; only a count of garments can pay a wage.
+  piecesProduced Int?
   clockedMinutes Decimal  @db.Decimal(18, 4)
   efficiencyRate Decimal  @db.Decimal(9, 6)
   notes          String?
@@ -2214,8 +2217,12 @@ model Employee {
   endedAt    DateTime? @db.Date
 
   payFrequency PayFrequency @default(MONTHLY)
-  /// Current gross pay per period. History lives in SalaryHistory.
+  /// Current gross pay for one period of the frequency above — a month, a
+  /// week, a day. History lives in SalaryHistory. Piece workers are paid from
+  /// pieceRate instead, and this stays at zero for them.
   baseSalary   Decimal      @db.Decimal(18, 4)
+  /// What one finished garment pays, for somebody on piece work.
+  pieceRate    Decimal?     @db.Decimal(18, 4)
 
   phone String?
   /// National identifier. Sensitive: readable only with the salary capability.

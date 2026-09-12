@@ -95,6 +95,21 @@ export function ProductivityForm({
             onChange={(e) => setSmv(e.target.value)}
           />
         </div>
+
+        <div>
+          <label className={label} htmlFor="piecesProduced">
+            {ar ? "عدد القطع اللي خلّصها" : "Garments finished"}
+          </label>
+          <input
+            id="piecesProduced" name="piecesProduced" type="number" min="0" step="1"
+            dir="ltr" className={`${field} num`}
+          />
+          <p className="mt-1 text-xs text-ink-500">
+            {ar
+              ? "لازم للي بيتحاسب بالقطعة — أجره بيتحسب من الرقم ده. سيبه فاضي لغيرهم."
+              : "Required for anybody paid by the piece: their wage is worked out from this. Leave it blank for everyone else."}
+          </p>
+        </div>
       </div>
 
       {needsMinutes ? (
