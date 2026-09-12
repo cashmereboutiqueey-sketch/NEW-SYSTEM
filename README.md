@@ -236,7 +236,10 @@ Working end to end, with tests and verified in the browser:
 
 | **Reconciliation** | Courier and gateway remittances cleared order by order against the clearing accounts, and bank statements matched line by line against the ledger. | `/reconciliation` |
 
-Not built yet: deployment to the VPS.
+Deployment: `scripts/deploy.sh` builds and starts the committed branch on the
+server, taking a verified backup before any migration. Backups, alerting and
+recovery — including recovering onto a replacement server — are in
+[deploy/RECOVERY.md](deploy/RECOVERY.md).
 
 Every screen in the navigation now has a page, and every screen that should
 accept input does. The audit that proves it runs as part of `npm run
@@ -357,12 +360,18 @@ npm run dev                 # http://localhost:3000
 publicly exposed. Point `DATABASE_URL` at your own instance instead if you
 prefer — nothing in the application depends on Docker.
 
-Generate the two secrets `.env` needs:
+Generate the secrets `.env` needs:
 
 ```bash
 openssl rand -base64 32                                                  # AUTH_SECRET
+openssl rand -base64 32                                                  # INTEGRATION_SECRET_KEY
 node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"  # POSTGRES_PASSWORD
 ```
+
+`INTEGRATION_SECRET_KEY` seals the Shopify credentials in the database, so a
+copy of the database does not hand them over. A server needs one more —
+`APP_DB_PASSWORD`, the login the application itself runs as, which can read and
+write rows and nothing else. See `.env.production.example`.
 
 ### Seeded sign-in
 

@@ -89,9 +89,23 @@ ssh_run "test -f $DIR/.env" 2>/dev/null || {
   echo "laptop and in a terminal history is a secret with two more places to" >&2
   echo "leak from:" >&2
   echo "  openssl rand -base64 32   # POSTGRES_PASSWORD" >&2
+  echo "  openssl rand -base64 32   # APP_DB_PASSWORD" >&2
   echo "  openssl rand -base64 48   # AUTH_SECRET" >&2
+  echo "  openssl rand -base64 32   # INTEGRATION_SECRET_KEY" >&2
   exit 1
 }
+
+# Settings added since the server's .env was written. Checked before anything
+# is built, so a missing one stops the deploy here with its name, rather than
+# after a ten-minute build with a compose error.
+ssh_run "missing=''
+  for k in APP_DB_PASSWORD INTEGRATION_SECRET_KEY; do
+    grep -Eq \"^\$k=.+\" $DIR/.env || missing=\"\$missing \$k\"
+  done
+  if [ -n \"\$missing\" ]; then
+    echo \"  $DIR/.env is missing:\$missing — see .env.production.example\" >&2
+    exit 1
+  fi"
 
 # ────────────────────────────────── deploy ──────────────────────────────────
 
@@ -113,6 +127,18 @@ ssh_run "install -m 644 $DIR/deploy/cashmere-backup.service /etc/systemd/system/
   systemctl daemon-reload
   systemctl enable --now cashmere-backup.timer >/dev/null 2>&1
   systemctl list-timers cashmere-backup.timer --no-pager | sed -n '2p' | awk '{print \"  next backup: \"\$1\" \"\$2\" \"\$3}'"
+# Whether they leave the server. Said on every deploy until they do, because a
+# backup on the machine it protects is lost with that machine.
+ssh_run "if grep -Eq '^CASHMERE_OFFSITE=.+' /etc/cashmere/backup.env 2>/dev/null; then
+    for tool in age rclone; do
+      command -v \$tool >/dev/null || { apt-get update -qq >/dev/null && apt-get install -y -qq \$tool >/dev/null; }
+    done
+    echo \"  sealed copies go to \$(grep '^CASHMERE_OFFSITE=' /etc/cashmere/backup.env | cut -d= -f2-)\"
+  else
+    echo '  WARNING: backups never leave this server. See deploy/RECOVERY.md.'
+  fi
+  grep -Eq '^CASHMERE_BACKUP_PING_URL=.+' /etc/cashmere/backup.env 2>/dev/null \
+    || echo '  WARNING: nothing will notice a failed or missed backup. See deploy/RECOVERY.md.'"
 
 say "keeping the current image as the way back"
 ssh_run "docker image inspect cashmere-os:latest >/dev/null 2>&1 && docker tag cashmere-os:latest cashmere-os:previous && echo '  tagged cashmere-os:previous' || echo '  nothing to keep — first build'"
@@ -155,7 +181,7 @@ ssh_run "cd $DIR
 
 say "waiting for it to answer"
 ssh_run "for i in \$(seq 1 30); do
-  if docker exec cashmere-os-app wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1; then
+  if docker exec cashmere-os-app wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
     echo '  the application is answering'; exit 0
   fi
   sleep 4

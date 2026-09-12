@@ -9,12 +9,28 @@
 #
 # Everything configurable lives in .env beside this file. It is never
 # committed, and the deploy script refuses to run without it.
+#
+# Every service has a memory, CPU and process ceiling, and rotated logs. They
+# share one machine of about 8 GB with no swap: without ceilings a runaway
+# report or a log that never stops growing takes the database and the backups
+# down with it. The figures leave room for the nightly backup's restore check
+# and for a build during a deploy.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
   db:
     image: postgres:18-alpine
     container_name: cashmere-os-db
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
     environment:
       POSTGRES_USER: cashmere_os
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -53,9 +69,15 @@ services:
     image: cashmere-os-build:latest
     container_name: cashmere-os-migrate
     restart: "no"
+    logging: *logging
+    mem_limit: 1g
     environment:
+      # The owner: migrations change structure, which the app must not.
       DATABASE_URL: postgresql://cashmere_os:${POSTGRES_PASSWORD}@db:5432/cashmere_os?schema=public
-    command: ["npx", "prisma", "migrate", "deploy"]
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+    # Then the app's own login and its grants, so tables a migration adds are
+    # usable at once. See scripts/ensure-app-role.mjs.
+    command: ["sh", "-c", "npx prisma migrate deploy && node scripts/ensure-app-role.mjs"]
     depends_on:
       db:
         condition: service_healthy
@@ -68,9 +90,18 @@ services:
     image: cashmere-os:latest
     container_name: cashmere-os-app
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 512
     environment:
-      DATABASE_URL: postgresql://cashmere_os:${POSTGRES_PASSWORD}@db:5432/cashmere_os?schema=public
+      # Not the owner. cashmere_app reads and writes rows and nothing else — it
+      # cannot alter a table, switch off a trigger or create a login.
+      DATABASE_URL: postgresql://cashmere_app:${APP_DB_PASSWORD}@db:5432/cashmere_os?schema=public
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      # Opens the Shopify credentials sealed in the database. Kept here and not
+      # there, so a copy of the database or a backup does not give them away.
+      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:?set INTEGRATION_SECRET_KEY in .env}
       DEFAULT_LOCALE: ${DEFAULT_LOCALE:-ar}
       NODE_ENV: production
       UPLOAD_DIR: /app/data/uploads
@@ -87,7 +118,9 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
+      # /api/health asks the database, not just the web server: a login page
+      # renders happily while every screen behind it is failing.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -98,6 +131,9 @@ services:
     image: caddy:2-alpine
     container_name: cashmere-os-caddy
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    pids_limit: 256
     ports:
       - "80:80"
       - "443:443"
