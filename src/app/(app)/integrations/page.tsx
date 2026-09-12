@@ -4,9 +4,10 @@ import { requirePermission } from "@/lib/auth";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
 import { formatNumber } from "@/lib/money";
-import { inventoryToPublish } from "@/lib/shopify";
+import { inventoryToPublish, failedWebhookEvents } from "@/lib/shopify";
 import {
   connectShopifyAction, pullOrdersAction, publishInventoryAction, resolveExceptionAction,
+  replayWebhookAction,
 } from "./actions";
 
 /**
@@ -23,7 +24,7 @@ export default async function IntegrationsPage() {
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const [connections, exceptions, recentSyncs, publishable] = await Promise.all([
+  const [connections, exceptions, recentSyncs, publishable, failedDeliveries] = await Promise.all([
     db.integrationConnection.findMany({ orderBy: { createdAt: "asc" } }),
     db.integrationException.findMany({
       where: { status: "OPEN" },
@@ -36,6 +37,7 @@ export default async function IntegrationsPage() {
       take: 10,
     }),
     inventoryToPublish().catch(() => []),
+    failedWebhookEvents(),
   ]);
 
   const shopify = connections.find((c) => c.provider === "SHOPIFY");
@@ -121,6 +123,51 @@ export default async function IntegrationsPage() {
                   className="rounded-lg border border-ink-300 px-2 py-1 text-xs text-ink-700"
                 >
                   {ar ? "تم" : "Close"}
+                </button>
+              </form>,
+            ])}
+          />
+        </Card>
+      )}
+
+      {shopify?.servedApiVersion && shopify.servedApiVersion !== (shopify.apiVersion ?? "2026-04") && (
+        <p role="alert" className="mb-4 rounded-lg bg-warn/10 px-3 py-2 text-sm text-warn">
+          {ar
+            ? `Shopify بيرد بإصدار ${shopify.servedApiVersion} مش الإصدار المطلوب — الإصدار المطلوب خرج من الدعم. لازم يتحدّث ويتجرّب.`
+            : `Shopify is answering with API version ${shopify.servedApiVersion}, not the one requested — the requested version is out of support. It needs updating and testing.`}
+        </p>
+      )}
+
+      {/* ------------------------------------------- deliveries that failed */}
+      {failedDeliveries.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "إشعارات من الموقع ماتنفّذتش" : "Website deliveries that failed"}
+          description={
+            ar
+              ? "النظام بيعيد المحاولة لوحده كل ١٠ دقايق لحد ٦ مرات. اللي فضل هنا محتاج تدخّل — صلّح السبب وبعدين أعد التنفيذ."
+              : "The system retries on its own every 10 minutes, up to six times. What is still here needs a person: fix the cause, then replay."
+          }
+        >
+          <DataTable
+            headers={[
+              ar ? "النوع" : "Topic",
+              ar ? "المحاولات" : "Attempts",
+              ar ? "السبب" : "Why",
+              ar ? "وصل" : "Received",
+              "",
+            ]}
+            rows={failedDeliveries.map((f) => [
+              <code key={`${f.id}-t`} dir="ltr" className="text-xs">{f.topic}</code>,
+              <span key={`${f.id}-n`} className="num">{f.attempts}</span>,
+              <span key={`${f.id}-e`} className="text-xs text-bad">{f.lastError ?? "—"}</span>,
+              <span key={`${f.id}-d`} className="num text-xs" dir="ltr">
+                {f.receivedAt.toISOString().slice(0, 16).replace("T", " ")}
+              </span>,
+              <form key={`${f.id}-a`} action={replayWebhookAction}>
+                <input type="hidden" name="eventId" value={f.id} />
+                <button type="submit" className="rounded-lg border border-ink-300 px-2 py-1 text-xs text-ink-700">
+                  {ar ? "أعد التنفيذ" : "Replay"}
                 </button>
               </form>,
             ])}

@@ -4,7 +4,14 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
-import { importOrders, verifyWebhookSignature, type ShopifyOrder } from "./shopify";
+import {
+  importOrders,
+  receiveWebhook,
+  retryFailedWebhooks,
+  failedWebhookEvents,
+  verifyWebhookSignature,
+  type ShopifyOrder,
+} from "./shopify";
 
 /** The Shopify connector against a real database. */
 
@@ -20,7 +27,6 @@ let sku: string;
 let day: Date;
 let userId: string;
 
-const ctx = { userId: null as string | null, reason: null };
 let orderSeq = 5000;
 
 beforeAll(async () => {
@@ -42,6 +48,9 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.shopifyWebhookEvent.deleteMany({});
+    await db.commandReceipt.deleteMany({});
+    await db.return.deleteMany({});
     await db.integrationException.deleteMany({});
     await db.externalMapping.deleteMany({});
     await db.syncLog.deleteMany({});
@@ -324,5 +333,165 @@ describe("webhook signatures", () => {
     // first — an exception here would take the webhook endpoint down.
     expect(() => verifyWebhookSignature(body, "short", secret)).not.toThrow();
     expect(verifyWebhookSignature(body, "short", secret)).toBe(false);
+  });
+});
+
+async function onHand(): Promise<number> {
+  const lots = await db.inventoryLot.findMany({ where: { variantId } });
+  return lots.reduce((s, l) => s + Number(l.remainingQty), 0);
+}
+
+async function receivable(): Promise<number> {
+  const [row] = await db.$queryRaw<{ balance: string }[]>`
+    SELECT COALESCE(SUM(l."debit") - SUM(l."credit"), 0)::text AS balance
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE a."code" = '1210' AND e."status" = 'POSTED'
+  `;
+  return Number(row.balance);
+}
+
+/**
+ * An order's later news.
+ *
+ * Once an order was mapped, every later delivery about it was skipped as a
+ * duplicate — so a pending order that was then paid stayed unpaid in the
+ * books, and a cancelled one stayed sold.
+ */
+describe("what happens to an order after it is imported", () => {
+  it("records the payment when a pending order is later paid", async () => {
+    const pending = order({ financial_status: "pending" });
+    await importOrders({ connectionId, orders: [pending] }, { userId });
+    expect(await receivable()).toBeCloseTo(3000, 2);
+
+    const result = await importOrders(
+      { connectionId, orders: [{ ...pending, financial_status: "paid" }] },
+      { userId },
+    );
+    expect(result.updated).toBe(1);
+    expect(await receivable()).toBeCloseTo(0, 2);
+
+    // A second "paid" for the same order changes nothing.
+    const again = await importOrders(
+      { connectionId, orders: [{ ...pending, financial_status: "paid" }] },
+      { userId },
+    );
+    expect(again.updated).toBe(0);
+    expect(await db.salesPayment.count()).toBe(1);
+  });
+
+  it("reverses a cancelled order: stock back, money back", async () => {
+    const paid = order();
+    await importOrders({ connectionId, orders: [paid] }, { userId });
+    expect(await onHand()).toBe(98);
+
+    await importOrders(
+      { connectionId, orders: [{ ...paid, cancelled_at: day.toISOString() }] },
+      { userId },
+    );
+    expect(await onHand()).toBe(100);
+    expect(await db.return.count()).toBe(1);
+
+    // Cancelled twice is cancelled once.
+    await importOrders(
+      { connectionId, orders: [{ ...paid, cancelled_at: day.toISOString() }] },
+      { userId },
+    );
+    expect(await db.return.count()).toBe(1);
+  });
+
+  it("clears the debt rather than paying cash out when an unpaid order is cancelled", async () => {
+    const pending = order({ financial_status: "pending" });
+    await importOrders({ connectionId, orders: [pending] }, { userId });
+    await importOrders(
+      { connectionId, orders: [{ ...pending, cancelled_at: day.toISOString() }] },
+      { userId },
+    );
+    expect(await receivable()).toBeCloseTo(0, 2);
+    expect(await onHand()).toBe(100);
+  });
+
+  it("raises a refund for a person once, instead of guessing what came back", async () => {
+    const paid = order();
+    await importOrders({ connectionId, orders: [paid] }, { userId });
+    const refunded = { ...paid, financial_status: "partially_refunded" };
+    await importOrders({ connectionId, orders: [refunded] }, { userId });
+    await importOrders({ connectionId, orders: [refunded] }, { userId });
+
+    const raised = await db.integrationException.findMany({ where: { reason: { startsWith: "Refunded on Shopify" } } });
+    expect(raised).toHaveLength(1);
+    expect(await onHand()).toBe(98);
+  });
+});
+
+describe("the webhook inbox", () => {
+  it("records a delivery and answers a repeat of it without doing anything twice", async () => {
+    const o = order();
+    const first = await receiveWebhook({ connectionId, webhookId: "wh-1", topic: "orders/create", payload: o });
+    const repeat = await receiveWebhook({ connectionId, webhookId: "wh-1", topic: "orders/create", payload: o });
+
+    expect(first.duplicate).toBe(false);
+    expect(repeat.duplicate).toBe(true);
+    expect(await db.salesOrder.count()).toBe(1);
+    const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { webhookId: "wh-1" } });
+    expect(event.status).toBe("PROCESSED");
+  });
+
+  it("acknowledges a topic it does not act on, and keeps it", async () => {
+    const result = await receiveWebhook({
+      connectionId, webhookId: "wh-2", topic: "products/update", payload: { id: 1 },
+    });
+    expect(result.ignored).toBe(true);
+    expect(await db.shopifyWebhookEvent.count()).toBe(1);
+  });
+
+  it("retries what failed, unattended, once the cause is gone", async () => {
+    // A delivery whose first attempt died on something transient — the
+    // database restarting mid-import — is left recorded and failed.
+    const o = order();
+    await db.shopifyWebhookEvent.create({
+      data: {
+        connectionId,
+        webhookId: "wh-3",
+        topic: "orders/create",
+        payload: o as unknown as object,
+        status: "FAILED",
+        attempts: 1,
+        lastError: "the connection was lost",
+      },
+    });
+
+    const pass = await retryFailedWebhooks();
+
+    expect(pass.tried).toBe(1);
+    expect(pass.recovered).toBe(1);
+    const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { webhookId: "wh-3" } });
+    expect(event.status).toBe("PROCESSED");
+    // And the sale it was carrying is now on the books.
+    expect(await db.salesOrder.count({ where: { shopifyOrderId: String(o.id) } })).toBe(1);
+  });
+
+  it("stops retrying after six attempts and leaves it for a person", async () => {
+    // Malformed beyond anything a retry can fix.
+    await db.shopifyWebhookEvent.create({
+      data: {
+        connectionId,
+        webhookId: "wh-4",
+        topic: "orders/create",
+        payload: { id: 9901, line_items: null } as unknown as object,
+        status: "FAILED",
+        attempts: 1,
+        lastError: "unexpected",
+      },
+    });
+
+    for (let attempt = 0; attempt < 8; attempt++) await retryFailedWebhooks();
+
+    const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { webhookId: "wh-4" } });
+    expect(event.status).toBe("FAILED");
+    expect(event.attempts).toBe(6);
+    // Still listed, so somebody is asked to look at it.
+    expect((await failedWebhookEvents()).some((f) => f.id === event.id)).toBe(true);
   });
 });

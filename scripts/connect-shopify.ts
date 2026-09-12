@@ -14,6 +14,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { normaliseShopDomain } from "../src/core/shopify-domain";
+import { sealSecret } from "../src/lib/secrets";
 
 const rawShop = process.env.SHOPIFY_SHOP ?? "";
 const token = process.env.SHOPIFY_TOKEN?.trim();
@@ -30,7 +31,7 @@ if (!shop) {
   process.exit(1);
 }
 
-const API = "2024-10";
+const API = "2026-04";
 
 async function admin<T>(path: string): Promise<T> {
   const res = await fetch(`https://${shop}/admin/api/${API}/${path}`, {
@@ -101,14 +102,16 @@ console.log(
 
 const owner = await db.user.findFirstOrThrow({ where: { role: "OWNER" } });
 
+// Stored sealed, like the connect screen does; see src/lib/secrets.ts.
+const sealed = sealSecret(token!);
 const connection = await db.integrationConnection.upsert({
   where: { provider_externalRef: { provider: "SHOPIFY", externalRef: shop } },
-  update: { accessToken: token, apiVersion: API, isActive: true, lastError: null },
+  update: { accessToken: sealed, apiVersion: API, isActive: true, lastError: null },
   create: {
     provider: "SHOPIFY",
     externalRef: shop,
     displayName: String(info.name ?? shop),
-    accessToken: token,
+    accessToken: sealed,
     apiVersion: API,
   },
 });

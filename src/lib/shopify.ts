@@ -1,10 +1,15 @@
 import "server-only";
 import crypto from "node:crypto";
-import { db } from "./db";
+import { db, inTransaction } from "./db";
 import { createSale, SalesError } from "./sales";
 import { writeAudit, type AuditContext } from "./audit";
 import { dec } from "./money";
+import { postEntry } from "./ledger";
+import { command } from "./command";
+import { outstandingOnOrder } from "./receivables";
+import { recordReturn, returnableLines, ReturnError } from "./returns";
 import { isShopDomain, isApiVersion } from "@/core/shopify-domain";
+import { openSecret } from "./secrets";
 
 /**
  * The Shopify connector.
@@ -26,7 +31,20 @@ export class ShopifyError extends Error {
   }
 }
 
-const API_VERSION = "2024-10";
+/**
+ * The Admin API version asked for.
+ *
+ * Shopify supports each dated version for about a year and quietly serves the
+ * oldest supported one to anybody asking for a version past its end — so a
+ * stale constant does not fail, it just changes what the shop answers with.
+ * 2024-10 went out of support in 2025; 2026-04 is supported into April 2027.
+ * What Shopify actually served is recorded on the connection (see
+ * `servedApiVersion`), so the next time this falls behind it shows.
+ */
+const API_VERSION = "2026-04";
+
+/** Long enough for a busy shop; short enough not to hold a request hostage. */
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export type ShopifyOrder = {
   id: number;
@@ -75,6 +93,8 @@ export function verifyWebhookSignature(
 }
 
 type ShopifyConnection = {
+  /** When known, the version Shopify answers with is recorded against it. */
+  id?: string;
   externalRef: string;
   accessToken: string | null;
   apiVersion: string | null;
@@ -97,7 +117,9 @@ async function shopifyRequest(
   path: string,
   init?: { method: "POST"; body: unknown },
 ): Promise<Response> {
-  if (!connection.accessToken) {
+  // Stored sealed; opened only here, for the request that needs it.
+  const accessToken = openSecret(connection.accessToken);
+  if (!accessToken) {
     throw new ShopifyError("This shop has no access token configured.");
   }
   if (!isShopDomain(connection.externalRef)) {
@@ -118,15 +140,37 @@ async function shopifyRequest(
     throw new ShopifyError(`Refusing to send the access token to ${url.hostname}.`);
   }
 
-  const response = await fetch(url, {
-    method: init?.method ?? "GET",
-    redirect: "manual",
-    headers: {
-      "X-Shopify-Access-Token": connection.accessToken,
-      "Content-Type": "application/json",
-    },
-    ...(init ? { body: JSON.stringify(init.body) } : {}),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: init?.method ?? "GET",
+      redirect: "manual",
+      // A shop that never answers must not hold a server worker for ever.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+      ...(init ? { body: JSON.stringify(init.body) } : {}),
+    });
+  } catch (error) {
+    if ((error as { name?: string })?.name === "TimeoutError") {
+      throw new ShopifyError(
+        `${connection.externalRef} did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds. Try again shortly.`,
+      );
+    }
+    throw error;
+  }
+
+  // What Shopify actually served. Kept only when it differs from what was
+  // asked for, which is the one case anybody needs to hear about.
+  const served = response.headers.get("x-shopify-api-version");
+  if (connection.id && served && served !== version) {
+    await db.integrationConnection.updateMany({
+      where: { id: connection.id, NOT: { servedApiVersion: served } },
+      data: { servedApiVersion: served },
+    });
+  }
 
   if (response.status >= 300 && response.status < 400) {
     throw new ShopifyError(
@@ -222,9 +266,26 @@ async function raiseException(input: {
  * would do; both are cheap and stock relieved twice is not recoverable.
  */
 export async function importOrders(
-  input: { connectionId: string; orders: ShopifyOrder[] },
+  input: {
+    connectionId: string;
+    orders: ShopifyOrder[];
+    /**
+     * Throw on a failure that is not about the order itself — the database
+     * unavailable, a conflict that ran out of retries — instead of filing it
+     * as an exception. A webhook wants that: a thrown error answers Shopify
+     * with a 500 and it delivers again, which a filed exception never gets.
+     */
+    throwUnexpected?: boolean;
+  },
   ctx: AuditContext,
-): Promise<{ created: number; duplicates: number; failed: number; exceptions: string[] }> {
+): Promise<{
+  created: number;
+  /** Already imported orders whose payment or cancellation was applied. */
+  updated: number;
+  duplicates: number;
+  failed: number;
+  exceptions: string[];
+}> {
   const connection = await db.integrationConnection.findUnique({
     where: { id: input.connectionId },
   });
@@ -251,6 +312,7 @@ export async function importOrders(
   });
 
   let created = 0;
+  let updated = 0;
   let duplicates = 0;
   let failed = 0;
   const exceptions: string[] = [];
@@ -260,13 +322,6 @@ export async function importOrders(
     const externalId = String(order.id);
 
     try {
-      if (order.cancelled_at) {
-        // Cancelled before it ever reached us: recorded, not imported, since
-        // importing then reversing would move stock that never left.
-        duplicates += 1;
-        continue;
-      }
-
       const mapped = await db.externalMapping.findUnique({
         where: {
           connectionId_objectType_externalId: {
@@ -277,6 +332,18 @@ export async function importOrders(
         },
       });
       if (mapped) {
+        // Already imported. That used to end it — so the "paid" that follows
+        // a pending order, or a cancellation, never reached the books. The
+        // order's news is applied instead; a plain repeat changes nothing.
+        const outcome = await applyOrderUpdate(connection.id, order, mapped.internalId, ctx);
+        if (outcome === "UNCHANGED") duplicates += 1;
+        else updated += 1;
+        continue;
+      }
+
+      if (order.cancelled_at) {
+        // Cancelled before it ever reached us: recorded, not imported, since
+        // importing then reversing would move stock that never left.
         duplicates += 1;
         continue;
       }
@@ -330,6 +397,22 @@ export async function importOrders(
         const gross = dec(item.price).times(item.quantity);
         const discount = dec(item.total_discount ?? "0");
         const discountPct = gross.isZero() ? dec(0) : discount.div(gross);
+
+        // Shopify can list one garment on two lines. On the same terms they are
+        // one line here: a sale line is identified by its garment, and two
+        // lines for one garment would let each claim the other's FIFO cost.
+        // On different terms they stay apart and the sale refuses them, which
+        // raises an exception rather than guessing which price was meant.
+        const same = lines.find(
+          (l) =>
+            l.variantId === variant.id &&
+            l.retailPrice === Number(item.price) &&
+            l.discountPct === Number(discountPct),
+        );
+        if (same) {
+          same.quantity += item.quantity;
+          continue;
+        }
 
         lines.push({
           variantId: variant.id,
@@ -410,11 +493,13 @@ export async function importOrders(
       });
       created += 1;
     } catch (error) {
+      const expected =
+        error instanceof SalesError ||
+        error instanceof ShopifyError ||
+        error instanceof ReturnError;
+      if (!expected && input.throwUnexpected) throw error;
       failed += 1;
-      const reason =
-        error instanceof SalesError || error instanceof ShopifyError
-          ? error.message
-          : "Unexpected error while importing.";
+      const reason = expected ? (error as Error).message : "Unexpected error while importing.";
       errors.push({ externalId, reason });
       await raiseException({
         connectionId: connection.id,
@@ -449,12 +534,255 @@ export async function importOrders(
       action: "SHOPIFY_ORDERS_IMPORTED",
       entityName: "IntegrationConnection",
       entityId: connection.id,
-      after: { processed: input.orders.length, created, duplicates, failed },
+      after: { processed: input.orders.length, created, updated, duplicates, failed },
       ctx,
     });
   });
 
-  return { created, duplicates, failed, exceptions };
+  return { created, updated, duplicates, failed, exceptions };
+}
+
+const ORDER_TOPICS = new Set(["orders/create", "orders/updated", "orders/paid", "orders/cancelled"]);
+
+/**
+ * Takes a signed delivery in: records it, then acts on it.
+ *
+ * The record comes first and is keyed by Shopify's own delivery id, so the
+ * same delivery arriving again is recognised and answered without doing
+ * anything twice. A delivery that fails is left FAILED with its reason and
+ * payload, and the error is thrown so Shopify is told to deliver again —
+ * and if its retries run out, it is still here to replay.
+ */
+export async function receiveWebhook(input: {
+  connectionId: string;
+  webhookId: string;
+  topic: string;
+  payload: unknown;
+}): Promise<{ duplicate: boolean; ignored?: boolean }> {
+  const existing = await db.shopifyWebhookEvent.findUnique({ where: { webhookId: input.webhookId } });
+  if (existing?.status === "PROCESSED") return { duplicate: true };
+
+  const event =
+    existing ??
+    (await db.shopifyWebhookEvent.create({
+      data: {
+        connectionId: input.connectionId,
+        webhookId: input.webhookId,
+        topic: input.topic,
+        payload: JSON.parse(JSON.stringify(input.payload ?? null)),
+      },
+    }));
+
+  await processWebhookEvent(event.id);
+  return { duplicate: false, ignored: !ORDER_TOPICS.has(input.topic) };
+}
+
+/** Acts on one recorded delivery, marking how it went. Throws if it failed. */
+async function processWebhookEvent(eventId: string): Promise<void> {
+  const event = await db.shopifyWebhookEvent.update({
+    where: { id: eventId },
+    data: { attempts: { increment: 1 } },
+  });
+  try {
+    if (ORDER_TOPICS.has(event.topic)) {
+      await importOrders(
+        {
+          connectionId: event.connectionId,
+          orders: [event.payload as unknown as ShopifyOrder],
+          throwUnexpected: true,
+        },
+        // No human triggered this, so the audit trail records the system.
+        { userId: null, reason: `Shopify webhook: ${event.topic}` },
+      );
+    }
+    await db.shopifyWebhookEvent.update({
+      where: { id: event.id },
+      data: { status: "PROCESSED", processedAt: new Date(), lastError: null },
+    });
+  } catch (error) {
+    await db.shopifyWebhookEvent.update({
+      where: { id: event.id },
+      data: { status: "FAILED", lastError: String((error as Error)?.message ?? error).slice(0, 1000) },
+    });
+    throw error;
+  }
+}
+
+/**
+ * How many times a delivery is retried before it waits for a person.
+ *
+ * Most failures are transient — the database was busy, the till was mid-sale.
+ * A few are not: a garment whose SKU nothing here recognises will fail every
+ * time, and retrying it for ever hides it among the noise instead of putting
+ * it in front of somebody.
+ */
+const MAX_WEBHOOK_ATTEMPTS = 6;
+
+/**
+ * Tries the failed deliveries again, unattended.
+ *
+ * Without this, an order that arrived while the database was restarting sat
+ * in the inbox until somebody happened to open the integrations screen and
+ * press replay — which is to say, until somebody noticed a sale was missing.
+ */
+export async function retryFailedWebhooks(limit = 20): Promise<{
+  tried: number;
+  recovered: number;
+}> {
+  const due = await db.shopifyWebhookEvent.findMany({
+    where: { status: "FAILED", attempts: { lt: MAX_WEBHOOK_ATTEMPTS } },
+    orderBy: { receivedAt: "asc" },
+    take: limit,
+    select: { id: true },
+  });
+
+  let recovered = 0;
+  for (const event of due) {
+    try {
+      await processWebhookEvent(event.id);
+      recovered += 1;
+    } catch {
+      // processWebhookEvent has already recorded why on the event itself.
+      // One delivery that will not go through must not stop the others.
+    }
+  }
+  return { tried: due.length, recovered };
+}
+
+/** Deliveries that could not be processed, for a person to replay. */
+export async function failedWebhookEvents(limit = 50) {
+  return db.shopifyWebhookEvent.findMany({
+    where: { status: "FAILED" },
+    orderBy: { receivedAt: "asc" },
+    take: limit,
+    select: { id: true, topic: true, attempts: true, lastError: true, receivedAt: true },
+  });
+}
+
+/** Tries a failed delivery again, exactly as it arrived. */
+export async function replayWebhookEvent(eventId: string): Promise<void> {
+  const event = await db.shopifyWebhookEvent.findUnique({ where: { id: eventId } });
+  if (!event) throw new ShopifyError("That delivery is no longer recorded.");
+  if (event.status === "PROCESSED") return;
+  await processWebhookEvent(event.id);
+}
+
+/**
+ * Applies what Shopify now says about an order already imported.
+ *
+ *   paid       the money this order was waiting on is recorded as collected:
+ *              DR bank, CR the receivable the unpaid import left behind.
+ *   cancelled  every garment still on the order comes back as a return, so
+ *              stock, revenue and cost of sales all reverse through the one
+ *              path that already knows how — refunded to the card if it was
+ *              paid for, set against the open balance if it was not.
+ *   refunded   raised for a person, not applied: Shopify says money went back
+ *              but not which garments, if any, came back, and guessing would
+ *              restock the wrong thing.
+ *
+ * Each is idempotent — an order already settled, already reversed or already
+ * raised is left alone — because Shopify delivers more than once and in any
+ * order.
+ */
+async function applyOrderUpdate(
+  connectionId: string,
+  order: ShopifyOrder,
+  salesOrderId: string,
+  ctx: AuditContext,
+): Promise<"UPDATED" | "UNCHANGED"> {
+  const externalId = String(order.id);
+
+  if (order.cancelled_at) {
+    return command<"UPDATED" | "UNCHANGED">("shopify.cancelOrder", { salesOrderId, cancelledAt: order.cancelled_at }, ctx, async () => {
+      let changed = false;
+      for (const line of (await returnableLines(salesOrderId)).lines) {
+        if (line.returnable <= 0) continue;
+        // Re-read each time: the first line's credit changes what is owed.
+        const picture = await returnableLines(salesOrderId);
+        const owed = dec(picture.order.outstanding);
+        const value = dec(line.unitPrice).times(line.returnable);
+        await recordReturn(
+          {
+            salesOrderId,
+            variantId: line.variantId,
+            quantity: line.returnable,
+            disposition: "RESTOCK",
+            refundMethod: owed.greaterThanOrEqualTo(value) ? "AGAINST_BALANCE" : "CARD",
+            reason: `Cancelled on Shopify (${order.name})`,
+            returnDate: new Date(order.cancelled_at!),
+          },
+          ctx,
+        );
+        changed = true;
+      }
+      return changed ? ("UPDATED" as const) : ("UNCHANGED" as const);
+    });
+  }
+
+  if (order.financial_status === "paid") {
+    return command("shopify.markPaid", { salesOrderId }, ctx, async (): Promise<"UPDATED" | "UNCHANGED"> => {
+      const sale = await db.salesOrder.findUniqueOrThrow({
+        where: { id: salesOrderId },
+        include: { payments: { select: { amount: true } } },
+      });
+      const owed = outstandingOnOrder(sale);
+      if (owed.lessThanOrEqualTo(0)) return "UNCHANGED";
+      if (!sale.entityId) throw new ShopifyError(`${sale.orderNumber} is not attached to a company.`);
+      const entityId = sale.entityId;
+
+      return db.$transaction(async (tx): Promise<"UPDATED"> => {
+        await tx.salesPayment.create({
+          data: {
+            salesOrderId,
+            method: "CARD",
+            amount: owed.toString(),
+            fee: "0",
+            status: "COLLECTED",
+            collectedAt: new Date(),
+            reference: `Shopify ${order.name} paid`,
+          },
+        });
+        const account = async (code: string) =>
+          (await tx.account.findUniqueOrThrow({ where: { code }, select: { id: true } })).id;
+        await postEntry(tx, {
+          entityId,
+          postingDate: new Date(),
+          sourceType: "PAYMENT",
+          sourceId: salesOrderId,
+          memo: `Shopify payment for ${sale.orderNumber} (${order.name})`,
+          ctx,
+          lines: [
+            { accountId: await account("1120"), debit: owed, entityId, customerId: sale.customerId, description: `Paid on Shopify ${order.name}` },
+            { accountId: await account("1210"), credit: owed, entityId, customerId: sale.customerId, description: `Settles ${sale.orderNumber}` },
+          ],
+        });
+        await tx.salesOrder.update({
+          where: { id: salesOrderId },
+          data: { collectedDate: new Date(), dueDate: null },
+        });
+        await writeAudit(tx, {
+          action: "SHOPIFY_ORDER_PAID",
+          entityName: "SalesOrder",
+          entityId: salesOrderId,
+          after: { externalId, amount: owed.toString() },
+          ctx,
+        });
+        return "UPDATED";
+      });
+    });
+  }
+
+  if (order.financial_status === "refunded" || order.financial_status === "partially_refunded") {
+    const reason = `Refunded on Shopify (${order.financial_status.replace("_", " ")}). Record the return here so stock and money follow it.`;
+    const raised = await db.integrationException.findFirst({
+      where: { connectionId, objectType: "order", externalId, reason },
+    });
+    if (raised) return "UNCHANGED";
+    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
+    return "UPDATED";
+  }
+
+  return "UNCHANGED";
 }
 
 /**
@@ -517,12 +845,45 @@ export async function pullOrders(
   });
 
   const since = new Date(Date.now() - (input.sinceDays ?? 7) * 86_400_000);
-  const data = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+  // Every page, not the first 250: a recovery pull after an outage is exactly
+  // when there are more than 250, and the rest used to be silently left out.
+  const orders = await shopifyFetchAll<ShopifyOrder>(
     connection,
     `orders.json?status=any&updated_at_min=${since.toISOString()}&limit=250`,
+    "orders",
   );
 
-  return importOrders({ connectionId: connection.id, orders: data.orders }, ctx);
+  return importOrders({ connectionId: connection.id, orders }, ctx);
+}
+
+/**
+ * Every page of a list, following Shopify's cursor links.
+ *
+ * The next page's address comes back in the Link header. Only its path is
+ * used; the host is always the connection's own, so a link cannot send the
+ * token anywhere else.
+ */
+async function shopifyFetchAll<T>(
+  connection: ShopifyConnection,
+  firstPath: string,
+  key: string,
+  maxPages = 200,
+): Promise<T[]> {
+  const all: T[] = [];
+  let path: string | null = firstPath;
+  for (let page = 0; path && page < maxPages; page++) {
+    const res = await shopifyRequest(connection, path);
+    const body = (await res.json()) as Record<string, T[] | undefined>;
+    all.push(...(body[key] ?? []));
+    const next = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get("link") ?? "");
+    path = next ? next[1].split("/admin/api/")[1].split("/").slice(1).join("/") : null;
+  }
+  if (path) {
+    throw new ShopifyError(
+      `Stopped after ${maxPages} pages of ${key}. Pull a shorter period so nothing is left out unnoticed.`,
+    );
+  }
+  return all;
 }
 
 export type ShopifyCheckout = {
@@ -571,13 +932,14 @@ export async function pullAbandonedCheckouts(
   });
 
   const since = new Date(Date.now() - (input.sinceDays ?? 30) * 86_400_000);
-  const data = await shopifyFetch<{ checkouts: ShopifyCheckout[] }>(
+  const checkouts = await shopifyFetchAll<ShopifyCheckout>(
     connection,
     `checkouts.json?created_at_min=${since.toISOString()}&limit=250`,
+    "checkouts",
   );
 
   return saveAbandonedCheckouts(
-    { connectionId: connection.id, checkouts: data.checkouts ?? [] },
+    { connectionId: connection.id, checkouts },
     ctx,
   );
 }
@@ -1009,31 +1371,35 @@ export async function publishInventory(
     }
   }
 
-  await db.syncLog.update({
-    where: { id: log.id },
-    data: {
-      created: pushed,
-      duplicates: unchanged,
-      failed,
-      status: failed === 0 ? "SUCCESS" : pushed > 0 ? "PARTIAL" : "FAILED",
-      errors: errors.length > 0 ? JSON.parse(JSON.stringify(errors)) : undefined,
-      finishedAt: new Date(),
-    },
-  });
+  // What the run did is recorded with the audit of it, in one transaction: the
+  // pushing itself happened over the network above and cannot be in one.
+  await inTransaction(async () => {
+    await db.syncLog.update({
+      where: { id: log.id },
+      data: {
+        created: pushed,
+        duplicates: unchanged,
+        failed,
+        status: failed === 0 ? "SUCCESS" : pushed > 0 ? "PARTIAL" : "FAILED",
+        errors: errors.length > 0 ? JSON.parse(JSON.stringify(errors)) : undefined,
+        finishedAt: new Date(),
+      },
+    });
 
-  await writeAudit(db, {
-    action: "SHOPIFY_INVENTORY_PUBLISHED",
-    entityName: "IntegrationConnection",
-    entityId: connection.id,
-    ctx,
-    after: {
-      checked: targets.length,
-      pushed,
-      unchanged,
-      unlinked,
-      failed,
-      dryRun: Boolean(input.dryRun),
-    },
+    await writeAudit(db, {
+      action: "SHOPIFY_INVENTORY_PUBLISHED",
+      entityName: "IntegrationConnection",
+      entityId: connection.id,
+      ctx,
+      after: {
+        checked: targets.length,
+        pushed,
+        unchanged,
+        unlinked,
+        failed,
+        dryRun: Boolean(input.dryRun),
+      },
+    });
   });
 
   return { checked: targets.length, pushed, unchanged, unlinked, failed, changes };
@@ -1084,52 +1450,56 @@ export async function syncVariantMappings(
   let noMatch = 0;
   let noSku = 0;
 
-  for (const variant of variants) {
-    const sku = (variant.sku ?? "").trim().toUpperCase();
-    if (!sku) {
-      noSku += 1;
-      continue;
-    }
+  // The mappings and the audit of them commit together, after the fetching:
+  // a half-written mapping table points some garments at the wrong variant.
+  await inTransaction(async () => {
+    for (const variant of variants) {
+      const sku = (variant.sku ?? "").trim().toUpperCase();
+      if (!sku) {
+        noSku += 1;
+        continue;
+      }
 
-    const local = await db.variant.findUnique({ where: { sku } });
-    if (!local) {
-      noMatch += 1;
-      continue;
-    }
+      const local = await db.variant.findUnique({ where: { sku } });
+      if (!local) {
+        noMatch += 1;
+        continue;
+      }
 
-    const existing = await db.externalMapping.findUnique({
-      where: {
-        connectionId_objectType_externalId: {
+      const existing = await db.externalMapping.findUnique({
+        where: {
+          connectionId_objectType_externalId: {
+            connectionId: connection.id,
+            objectType: "variant",
+            externalId: String(variant.id),
+          },
+        },
+      });
+
+      if (existing) {
+        alreadyMapped += 1;
+        continue;
+      }
+
+      await db.externalMapping.create({
+        data: {
           connectionId: connection.id,
           objectType: "variant",
           externalId: String(variant.id),
+          internalId: local.id,
+          externalRef: sku,
         },
-      },
-    });
-
-    if (existing) {
-      alreadyMapped += 1;
-      continue;
+      });
+      mapped += 1;
     }
 
-    await db.externalMapping.create({
-      data: {
-        connectionId: connection.id,
-        objectType: "variant",
-        externalId: String(variant.id),
-        internalId: local.id,
-        externalRef: sku,
-      },
+    await writeAudit(db, {
+      action: "SHOPIFY_VARIANTS_MAPPED",
+      entityName: "IntegrationConnection",
+      entityId: connection.id,
+      ctx,
+      after: { mapped, alreadyMapped, noMatch, noSku },
     });
-    mapped += 1;
-  }
-
-  await writeAudit(db, {
-    action: "SHOPIFY_VARIANTS_MAPPED",
-    entityName: "IntegrationConnection",
-    entityId: connection.id,
-    ctx,
-    after: { mapped, alreadyMapped, noMatch, noSku },
   });
 
   return { mapped, alreadyMapped, noMatch, noSku };

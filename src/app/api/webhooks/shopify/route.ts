@@ -1,20 +1,23 @@
+import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { verifyWebhookSignature, importOrders, type ShopifyOrder } from "@/lib/shopify";
+import { verifyWebhookSignature, receiveWebhook } from "@/lib/shopify";
+import { openSecret } from "@/lib/secrets";
 
 /**
  * Shopify webhook receiver.
  *
- * Two rules govern this endpoint. Nothing unsigned is ever processed — a
- * forged payload would inject orders straight into the ledger. And Shopify
- * retries anything it does not get a 200 for within five seconds, so a
- * duplicate delivery must be harmless; it is, because the import is
- * idempotent on the external order id.
+ * Nothing unsigned is ever processed — a forged payload would inject orders
+ * straight into the ledger. Every signed delivery is recorded under its own
+ * delivery id before anything is done with it (see `receiveWebhook`), so a
+ * repeat is answered without effect, an order's later news — paid, cancelled
+ * — is applied rather than skipped, and a delivery that fails is kept to be
+ * replayed instead of being lost when the request ends.
  */
 export async function POST(request: NextRequest) {
   const shopDomain = request.headers.get("x-shopify-shop-domain");
   const hmac = request.headers.get("x-shopify-hmac-sha256");
-  const topic = request.headers.get("x-shopify-topic");
+  const topic = request.headers.get("x-shopify-topic") ?? "unknown";
 
   if (!shopDomain || !hmac) {
     return NextResponse.json({ error: "Missing Shopify headers." }, { status: 401 });
@@ -32,33 +35,31 @@ export async function POST(request: NextRequest) {
   // The raw body, byte for byte — re-serialising parsed JSON changes the
   // bytes and the signature would never match.
   const rawBody = await request.text();
-  if (!verifyWebhookSignature(rawBody, hmac, connection.webhookSecret)) {
+  if (!verifyWebhookSignature(rawBody, hmac, openSecret(connection.webhookSecret) ?? "")) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
 
-  let payload: ShopifyOrder;
+  let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Malformed payload." }, { status: 400 });
   }
 
-  try {
-    if (topic === "orders/create" || topic === "orders/updated" || topic === "orders/paid") {
-      const result = await importOrders(
-        { connectionId: connection.id, orders: [payload] },
-        // No human triggered this, so the audit trail records the system.
-        { userId: null, reason: `Shopify webhook: ${topic}` },
-      );
-      return NextResponse.json({ ok: true, ...result });
-    }
+  // Shopify's id for this delivery, the same on every retry of it. A signed
+  // body without one is keyed by its own contents, which is what makes a
+  // repeat recognisable.
+  const webhookId =
+    request.headers.get("x-shopify-webhook-id") ??
+    `sha256:${crypto.createHash("sha256").update(`${topic}\n${rawBody}`).digest("hex")}`;
 
-    // An unhandled topic is acknowledged rather than retried forever.
-    return NextResponse.json({ ok: true, ignored: topic });
+  try {
+    const result = await receiveWebhook({ connectionId: connection.id, webhookId, topic, payload });
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     console.error("Shopify webhook failed:", error);
-    // A 500 tells Shopify to retry, which is what we want for a transient
-    // failure — the import is idempotent, so a repeat is safe.
+    // A 500 tells Shopify to deliver again. The delivery is recorded as
+    // failed either way, so it can be replayed if the retries run out.
     return NextResponse.json({ error: "Processing failed." }, { status: 500 });
   }
 }

@@ -3,13 +3,20 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { pullOrders, publishInventory, verifyShopConnection, ShopifyError } from "@/lib/shopify";
+import {
+  pullOrders,
+  publishInventory,
+  verifyShopConnection,
+  replayWebhookEvent,
+  ShopifyError,
+} from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
 import { normaliseShopDomain } from "@/core/shopify-domain";
+import { sealSecret, SecretKeyError } from "@/lib/secrets";
 import type { FormState } from "@/components/entity-form";
 
 function toMessage(error: unknown): string {
-  if (error instanceof ShopifyError) return error.message;
+  if (error instanceof ShopifyError || error instanceof SecretKeyError) return error.message;
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   console.error("Unhandled integration error:", error);
   return "Something went wrong.";
@@ -68,33 +75,40 @@ export async function connectShopifyAction(
       return { error: toMessage(error) };
     }
 
-    const connection = await db.integrationConnection.upsert({
-      where: { provider_externalRef: { provider: "SHOPIFY", externalRef: shopDomain } },
-      update: {
-        displayName: String(formData.get("displayName") ?? shopDomain),
-        // Blank means "leave the stored one alone", so re-saving the form does
-        // not wipe a working token.
-        ...(accessToken ? { accessToken } : {}),
-        ...(webhookSecret ? { webhookSecret } : {}),
-        isActive: true,
-      },
-      create: {
-        provider: "SHOPIFY",
-        externalRef: shopDomain,
-        displayName: String(formData.get("displayName") ?? shopDomain),
-        accessToken: accessToken || null,
-        webhookSecret: webhookSecret || null,
-      },
-    });
+    // Sealed before they are stored: the database and its backups hold
+    // ciphertext, and the key lives only in the server's environment.
+    const sealedToken = accessToken ? sealSecret(accessToken) : null;
+    const sealedSecret = webhookSecret ? sealSecret(webhookSecret) : null;
 
+    // The connection and its audit entry commit together, so a connection
+    // cannot exist without the record of who made it.
     await db.$transaction(async (tx) => {
+      const saved = await tx.integrationConnection.upsert({
+        where: { provider_externalRef: { provider: "SHOPIFY", externalRef: shopDomain } },
+        update: {
+          displayName: String(formData.get("displayName") ?? shopDomain),
+          // Blank means "leave the stored one alone", so re-saving the form
+          // does not wipe a working token.
+          ...(sealedToken ? { accessToken: sealedToken } : {}),
+          ...(sealedSecret ? { webhookSecret: sealedSecret } : {}),
+          isActive: true,
+        },
+        create: {
+          provider: "SHOPIFY",
+          externalRef: shopDomain,
+          displayName: String(formData.get("displayName") ?? shopDomain),
+          accessToken: sealedToken,
+          webhookSecret: sealedSecret,
+        },
+      });
+
       await writeAudit(tx, {
         action: "SHOPIFY_CONNECTED",
         entityName: "IntegrationConnection",
-        entityId: connection.id,
+        entityId: saved.id,
         // The token itself is never audited — the trail records that one was
         // set, not what it is.
-        after: { shopDomain, hasToken: Boolean(connection.accessToken) },
+        after: { shopDomain, hasToken: Boolean(saved.accessToken) },
         ctx: { userId: session.userId },
       });
     });
@@ -179,6 +193,22 @@ export async function publishInventoryAction(
   } catch (error) {
     return { error: toMessage(error) };
   }
+}
+
+/**
+ * Tries a failed Shopify delivery again, exactly as it arrived. Closing an
+ * exception only records that a person dealt with it; this is what actually
+ * applies a delivery that never got through.
+ */
+export async function replayWebhookAction(formData: FormData): Promise<void> {
+  await authorize("settings:manage");
+  try {
+    await replayWebhookEvent(String(formData.get("eventId") ?? ""));
+  } catch (error) {
+    // Recorded on the delivery itself; the page shows it.
+    console.error("Replaying a Shopify delivery failed:", error);
+  }
+  revalidatePath("/integrations");
 }
 
 export async function resolveExceptionAction(formData: FormData): Promise<void> {
