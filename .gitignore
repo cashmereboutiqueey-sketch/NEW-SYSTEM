@@ -31,3 +31,8 @@ shopify-sku-rollback.json
 # Production settings live on the server, never here.
 .env.production
 Caddyfile.local
+
+# The security audit. It names the weaknesses that are not fixed yet and the
+# server they are on, and this remote is public — so it is kept out of the
+# repository entirely rather than trusted to nobody pushing it.
+CASHMERE_ERP_FULL_AUDIT.md
