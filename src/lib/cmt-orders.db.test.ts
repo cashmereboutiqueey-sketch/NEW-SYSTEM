@@ -3,8 +3,10 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import {
-  confirmOrder, completeOrder, cancelOrder, cmtOrders, confirmableQuotes, CMTOrderError,
+  confirmOrder, completeOrder, cancelOrder, cmtOrders, confirmableQuotes,
+  recordDeposit, recordPayment, CMTOrderError,
 } from "./cmt-orders";
+import { dec } from "./money";
 
 /**
  * An accepted quote becomes an order.
@@ -69,20 +71,43 @@ beforeAll(async () => {
   ).id;
 });
 
-beforeEach(async () => {
+async function wipe() {
   await db.capacityBooking.deleteMany({ where: { source: "CMT_ORDER" } });
+  await db.cMTPayment.deleteMany({});
   await db.cMTOrder.deleteMany({});
   await db.cMTQuote.deleteMany({});
   await db.documentSequence.deleteMany({});
-});
+  // Invoicing posts entries, and a posted entry is immutable by trigger —
+  // which is the point of the trigger, and the reason it comes off here.
+  await db.$executeRawUnsafe('ALTER TABLE "journal_lines" DISABLE TRIGGER USER');
+  await db.$executeRawUnsafe('ALTER TABLE "journal_entries" DISABLE TRIGGER USER');
+  try {
+    await db.journalLine.deleteMany({});
+    await db.journalEntry.deleteMany({});
+  } finally {
+    await db.$executeRawUnsafe('ALTER TABLE "journal_entries" ENABLE TRIGGER USER');
+    await db.$executeRawUnsafe('ALTER TABLE "journal_lines" ENABLE TRIGGER USER');
+  }
+}
+
+beforeEach(wipe);
 
 afterAll(async () => {
-  await db.capacityBooking.deleteMany({ where: { source: "CMT_ORDER" } });
-  await db.cMTOrder.deleteMany({});
-  await db.cMTQuote.deleteMany({});
+  await wipe();
   await db.cMTClient.deleteMany({ where: { code: "CMT-TEST" } });
   await db.$disconnect();
 });
+
+const UNIT_PRICE = SMV * QUOTED_RATE; // 88 a garment
+
+/** What an account holds on the factory's books. */
+async function balance(code: string): Promise<number> {
+  const rows = await db.journalLine.findMany({
+    where: { account: { code }, journalEntry: { status: "POSTED" } },
+    select: { debit: true, credit: true },
+  });
+  return rows.reduce((sum, l) => sum + Number(l.debit) - Number(l.credit), 0);
+}
 
 async function quote(status: "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" = "ACCEPTED") {
   return db.cMTQuote.create({
@@ -168,7 +193,7 @@ describe("closing the run out", () => {
 
     // Ran over: 22,000 minutes against the 20,000 it was sold on.
     const result = await completeOrder(
-      { cmtOrderId: order.cmtOrderId, actualMinutes: 22_000, completedAt: day },
+      { cmtOrderId: order.cmtOrderId, actualMinutes: 22_000, deliveredQty: QUANTITY, completedAt: day },
       { userId: ownerId, reason: null },
     );
 
@@ -183,7 +208,7 @@ describe("closing the run out", () => {
     const order = await confirm(q.id);
 
     const result = await completeOrder(
-      { cmtOrderId: order.cmtOrderId, actualMinutes: 18_000, completedAt: day },
+      { cmtOrderId: order.cmtOrderId, actualMinutes: 18_000, deliveredQty: QUANTITY, completedAt: day },
       { userId: ownerId, reason: null },
     );
 
@@ -197,7 +222,7 @@ describe("closing the run out", () => {
 
     await expect(
       completeOrder(
-        { cmtOrderId: order.cmtOrderId, actualMinutes: 0, completedAt: day },
+        { cmtOrderId: order.cmtOrderId, actualMinutes: 0, deliveredQty: QUANTITY, completedAt: day },
         { userId: ownerId, reason: null },
       ),
     ).rejects.toThrow(CMTOrderError);
@@ -207,16 +232,175 @@ describe("closing the run out", () => {
     const q = await quote();
     const order = await confirm(q.id);
     await completeOrder(
-      { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, completedAt: day },
+      { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, deliveredQty: QUANTITY, completedAt: day },
       { userId: ownerId, reason: null },
     );
 
     await expect(
       completeOrder(
-        { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, completedAt: day },
+        { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, deliveredQty: QUANTITY, completedAt: day },
         { userId: ownerId, reason: null },
       ),
     ).rejects.toThrow(/already closed/i);
+  });
+});
+
+describe("billing the client", () => {
+  const deposit = (cmtOrderId: string, amount: number) =>
+    recordDeposit(
+      { cmtOrderId, amount, method: "BANK_TRANSFER", paidOn: day, reference: "TT-1" },
+      { userId: ownerId, reason: null },
+    );
+
+  const closeOut = (cmtOrderId: string, deliveredQty = QUANTITY) =>
+    completeOrder(
+      { cmtOrderId, actualMinutes: 20_000, deliveredQty, completedAt: day },
+      { userId: ownerId, reason: null },
+    );
+
+  it("invoices the pieces handed over, at the price per piece the quote was accepted at", async () => {
+    const order = await confirm((await quote()).id);
+
+    const result = await closeOut(order.cmtOrderId);
+
+    expect(Number(result.invoiced)).toBe(QUANTITY * UNIT_PRICE); // 44,000
+    expect(result.invoiceNumber).toMatch(/^CMTI-/);
+    // Owed by the client, earned by the factory.
+    expect(await balance("1210")).toBeCloseTo(QUANTITY * UNIT_PRICE, 2);
+    expect(await balance("4300")).toBeCloseTo(-QUANTITY * UNIT_PRICE, 2);
+  });
+
+  it("bills a short delivery short", async () => {
+    const order = await confirm((await quote()).id);
+
+    // Ordered 500, handed over 460: the client pays for 460.
+    const result = await closeOut(order.cmtOrderId, 460);
+
+    expect(Number(result.invoiced)).toBe(460 * UNIT_PRICE); // 40,480
+    // The margin is measured against what was billed, not against the whole
+    // contract: garments never delivered were never sold.
+    expect(Number(result.realisedMargin)).toBe(460 * UNIT_PRICE - 20_000 * MINUTE_RATE);
+  });
+
+  it("refuses to bill more garments than the order is for", async () => {
+    const order = await confirm((await quote()).id);
+
+    await expect(closeOut(order.cmtOrderId, QUANTITY + 1)).rejects.toThrow(/more than the 500/i);
+  });
+
+  it("holds a deposit as a debt until the goods are handed over", async () => {
+    const order = await confirm((await quote()).id);
+
+    await deposit(order.cmtOrderId, 10_000);
+
+    // Money in, and a liability — not revenue, because nothing has been made.
+    expect(await balance("1120")).toBeCloseTo(10_000, 2);
+    expect(await balance("2410")).toBeCloseTo(-10_000, 2);
+    expect(await balance("4300")).toBe(0);
+  });
+
+  it("settles the deposit against the invoice, and leaves the rest owed", async () => {
+    const order = await confirm((await quote()).id);
+    await deposit(order.cmtOrderId, 10_000);
+
+    const result = await closeOut(order.cmtOrderId);
+
+    expect(Number(result.depositApplied)).toBe(10_000);
+    expect(Number(result.outstanding)).toBe(QUANTITY * UNIT_PRICE - 10_000); // 34,000
+    // The deposit is no longer a debt to the client, and the receivable is
+    // what is genuinely still to come.
+    expect(await balance("2410")).toBeCloseTo(0, 2);
+    expect(await balance("1210")).toBeCloseTo(QUANTITY * UNIT_PRICE - 10_000, 2);
+  });
+
+  it("gives the client thirty days for what is left", async () => {
+    const order = await confirm((await quote()).id);
+
+    const result = await closeOut(order.cmtOrderId);
+
+    const expected = new Date(day);
+    expected.setUTCDate(expected.getUTCDate() + 30);
+    expect(result.dueDate.toISOString().slice(0, 10)).toBe(expected.toISOString().slice(0, 10));
+  });
+
+  it("collects against the invoice until nothing is owed", async () => {
+    const order = await confirm((await quote()).id);
+    await deposit(order.cmtOrderId, 10_000);
+    await closeOut(order.cmtOrderId);
+
+    const part = await recordPayment(
+      { cmtOrderId: order.cmtOrderId, amount: 20_000, method: "INSTAPAY", paidOn: day },
+      { userId: ownerId, reason: null },
+    );
+    expect(Number(part.outstanding)).toBe(14_000);
+
+    const rest = await recordPayment(
+      { cmtOrderId: order.cmtOrderId, amount: 14_000, method: "CASH", paidOn: day },
+      { userId: ownerId, reason: null },
+    );
+    expect(Number(rest.outstanding)).toBe(0);
+    // Nothing left owed, and the whole invoice has been received.
+    expect(await balance("1210")).toBeCloseTo(0, 2);
+  });
+
+  it("refuses more money than the invoice is short", async () => {
+    const order = await confirm((await quote()).id);
+    await closeOut(order.cmtOrderId);
+
+    await expect(
+      recordPayment(
+        { cmtOrderId: order.cmtOrderId, amount: QUANTITY * UNIT_PRICE + 1, method: "CASH", paidOn: day },
+        { userId: ownerId, reason: null },
+      ),
+    ).rejects.toThrow(/is still owed/i);
+  });
+
+  it("refuses a deposit worth more than the whole contract", async () => {
+    const order = await confirm((await quote()).id);
+
+    await expect(deposit(order.cmtOrderId, CONTRACT + 1)).rejects.toThrow(/more than the/i);
+  });
+
+  it("refuses to collect against an order that has not been invoiced", async () => {
+    const order = await confirm((await quote()).id);
+
+    await expect(
+      recordPayment(
+        { cmtOrderId: order.cmtOrderId, amount: 1_000, method: "CASH", paidOn: day },
+        { userId: ownerId, reason: null },
+      ),
+    ).rejects.toThrow(/has not been invoiced/i);
+  });
+
+  it("keeps the books balanced through the whole thing", async () => {
+    const order = await confirm((await quote()).id);
+    await deposit(order.cmtOrderId, 10_000);
+    await closeOut(order.cmtOrderId);
+    await recordPayment(
+      { cmtOrderId: order.cmtOrderId, amount: 34_000, method: "BANK_TRANSFER", paidOn: day },
+      { userId: ownerId, reason: null },
+    );
+
+    const rows = await db.journalLine.findMany({
+      where: { journalEntry: { status: "POSTED" } },
+      select: { debit: true, credit: true },
+    });
+    const debits = rows.reduce((sum, l) => sum.plus(dec(l.debit)), dec(0));
+    const credits = rows.reduce((sum, l) => sum.plus(dec(l.credit)), dec(0));
+    expect(debits.toString()).toBe(credits.toString());
+  });
+
+  it("shows what is still owed on the list", async () => {
+    const order = await confirm((await quote()).id);
+    await deposit(order.cmtOrderId, 10_000);
+    await closeOut(order.cmtOrderId);
+
+    const row = (await cmtOrders()).find((o) => o.orderNumber === order.orderNumber)!;
+    expect(row.invoiceNumber).toMatch(/^CMTI-/);
+    expect(Number(row.invoicedAmount)).toBe(QUANTITY * UNIT_PRICE);
+    expect(Number(row.depositHeld)).toBe(10_000);
+    expect(Number(row.outstanding)).toBe(34_000);
+    expect(row.deliveredQty).toBe(QUANTITY);
   });
 });
 
@@ -248,7 +432,7 @@ describe("cancelling", () => {
     const q = await quote();
     const order = await confirm(q.id);
     await completeOrder(
-      { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, completedAt: day },
+      { cmtOrderId: order.cmtOrderId, actualMinutes: 20_000, deliveredQty: QUANTITY, completedAt: day },
       { userId: ownerId, reason: null },
     );
 
@@ -263,7 +447,7 @@ describe("the list", () => {
     const q = await quote();
     const order = await confirm(q.id);
     await completeOrder(
-      { cmtOrderId: order.cmtOrderId, actualMinutes: 25_000, completedAt: day },
+      { cmtOrderId: order.cmtOrderId, actualMinutes: 25_000, deliveredQty: QUANTITY, completedAt: day },
       { userId: ownerId, reason: null },
     );
 

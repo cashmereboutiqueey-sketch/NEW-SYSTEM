@@ -91,6 +91,11 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
 
   { code: "2400", nameEn: "Customer deposits and unearned revenue", nameAr: "دفعات مقدمة من العملاء", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "UNEARNED" },
 
+  // The factory's own version of the same thing. A deposit on an external
+  // manufacturing order is money held before a garment is cut: a debt until
+  // the goods are handed over, not revenue the month it arrived.
+  { code: "2410", nameEn: "CMT client deposits", nameAr: "دفعات مقدمة من عملاء التصنيع", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "FACTORY", reportingCategory: "UNEARNED" },
+
   // ---------------------------------------------------------------------
   // 3 — EQUITY
   //

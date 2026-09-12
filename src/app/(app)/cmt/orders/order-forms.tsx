@@ -1,7 +1,11 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { confirmOrderAction, completeOrderAction, cancelOrderAction } from "./actions";
+import {
+  confirmOrderAction, completeOrderAction, cancelOrderAction,
+  recordDepositAction, recordPaymentAction,
+} from "./actions";
+import { RequestIdField } from "@/components/request-id";
 import type { FormState } from "@/components/entity-form";
 
 const empty: FormState = {};
@@ -103,19 +107,31 @@ export function CompleteForm({
   ar,
   cmtOrderId,
   quotedMinutes,
+  orderedQty,
+  unitPrice,
+  depositHeld,
 }: {
   ar: boolean;
   cmtOrderId: string;
   quotedMinutes: string;
+  orderedQty: number;
+  unitPrice: string;
+  depositHeld: string;
 }) {
   const [state, action, pending] = useActionState(completeOrderAction, empty);
   const [open, setOpen] = useState(false);
   const [minutes, setMinutes] = useState("");
+  const [delivered, setDelivered] = useState(String(orderedQty));
 
   const today = new Date().toISOString().slice(0, 10);
   const quoted = Number(quotedMinutes);
   const actual = minutes === "" ? 0 : Number(minutes);
   const overrun = actual > 0 ? actual - quoted : null;
+  // What the client will be billed, worked out in front of whoever is closing
+  // the run: the invoice is pieces handed over, not pieces ordered.
+  const pieces = delivered === "" ? 0 : Number(delivered);
+  const invoice = pieces * Number(unitPrice);
+  const afterDeposit = Math.max(0, invoice - Number(depositHeld));
 
   if (!open) {
     return (
@@ -133,6 +149,27 @@ export function CompleteForm({
     <form action={action} className="min-w-[14rem] space-y-2">
       <input type="hidden" name="cmtOrderId" value={cmtOrderId} />
       <input type="hidden" name="completedAt" value={today} />
+
+      <label className={label} htmlFor={`q-${cmtOrderId}`}>
+        {ar ? "القطع السليمة اللي اتسلّمت" : "Good garments handed over"}
+      </label>
+      <input
+        id={`q-${cmtOrderId}`} name="deliveredQty" type="number" min="1" step="1"
+        max={orderedQty} required
+        dir="ltr" className={`${small} num`} value={delivered}
+        onChange={(e) => setDelivered(e.target.value)}
+      />
+      {pieces > 0 && (
+        <p className="text-xs text-ink-500">
+          {ar
+            ? `الفاتورة ${invoice.toLocaleString()} (${pieces} × ${Number(unitPrice).toLocaleString()})`
+            : `Invoice ${invoice.toLocaleString()} (${pieces} × ${Number(unitPrice).toLocaleString()})`}
+          {Number(depositHeld) > 0 &&
+            (ar
+              ? ` — بعد خصم المقدّم ${Number(depositHeld).toLocaleString()} يتبقى ${afterDeposit.toLocaleString()}`
+              : ` — ${afterDeposit.toLocaleString()} after the ${Number(depositHeld).toLocaleString()} deposit`)}
+        </p>
+      )}
 
       <label className={label} htmlFor={`m-${cmtOrderId}`}>
         {ar ? "الدقايق الفعلية" : "Minutes it actually took"}
@@ -227,6 +264,102 @@ export function CancelForm({ ar, cmtOrderId }: { ar: boolean; cmtOrderId: string
           className="rounded-lg border border-ink-200 px-3 py-1.5 text-xs text-ink-600"
         >
           {ar ? "رجوع" : "Back"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Money against an order: the deposit before the work, the settlement after.
+ *
+ * One form for both, because from the person taking the money it is the same
+ * act — what differs is only which side of the invoice it falls on, and the
+ * screen already knows that.
+ */
+export function MoneyForm({
+  ar,
+  cmtOrderId,
+  kind,
+  outstanding,
+}: {
+  ar: boolean;
+  cmtOrderId: string;
+  kind: "DEPOSIT" | "SETTLEMENT";
+  /** Only for a settlement: what is still owed on the invoice. */
+  outstanding?: string;
+}) {
+  const [state, action, pending] = useActionState(
+    kind === "DEPOSIT" ? recordDepositAction : recordPaymentAction,
+    empty,
+  );
+  const [open, setOpen] = useState(false);
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-lg border border-ink-300 px-2.5 py-1 text-xs font-medium text-ink-700"
+      >
+        {kind === "DEPOSIT" ? (ar ? "سجّل مقدّم" : "Deposit") : ar ? "حصّل" : "Collect"}
+      </button>
+    );
+  }
+
+  return (
+    <form action={action} className="min-w-[14rem] space-y-2">
+      <RequestIdField state={state} />
+      <input type="hidden" name="cmtOrderId" value={cmtOrderId} />
+      <input type="hidden" name="paidOn" value={today} />
+
+      <label className={label} htmlFor={`a-${kind}-${cmtOrderId}`}>
+        {ar ? "المبلغ" : "Amount"}
+      </label>
+      <input
+        id={`a-${kind}-${cmtOrderId}`} name="amount" type="number" min="0.01" step="0.01"
+        required dir="ltr" className={`${small} num`}
+        defaultValue={kind === "SETTLEMENT" ? outstanding : undefined}
+      />
+      {kind === "SETTLEMENT" && outstanding && (
+        <p className="text-xs text-ink-500">
+          {ar ? `المستحق ${Number(outstanding).toLocaleString()}` : `${Number(outstanding).toLocaleString()} owed`}
+        </p>
+      )}
+
+      <label className={label} htmlFor={`me-${kind}-${cmtOrderId}`}>
+        {ar ? "جت إزاي" : "How it arrived"}
+      </label>
+      <select id={`me-${kind}-${cmtOrderId}`} name="method" className={small} defaultValue="BANK_TRANSFER">
+        <option value="BANK_TRANSFER">{ar ? "تحويل بنكي" : "Bank transfer"}</option>
+        <option value="INSTAPAY">{ar ? "إنستاباي" : "InstaPay"}</option>
+        <option value="CASH">{ar ? "كاش" : "Cash"}</option>
+        <option value="CARD">{ar ? "فيزا" : "Card"}</option>
+      </select>
+
+      <input
+        name="reference" placeholder={ar ? "مرجع (اختياري)" : "Reference (optional)"}
+        className={small}
+      />
+
+      {state.error && <p className="text-xs text-bad">{state.error}</p>}
+      {state.success && <p className="text-xs text-good">{state.success}</p>}
+
+      <div className="flex gap-1.5">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-ink-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+        >
+          {pending ? (ar ? "بيتسجل…" : "Saving…") : ar ? "سجّل" : "Record"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-lg border border-ink-200 px-2.5 py-1 text-xs text-ink-600"
+        >
+          {ar ? "إلغاء" : "Cancel"}
         </button>
       </div>
     </form>

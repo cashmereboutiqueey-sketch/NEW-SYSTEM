@@ -387,6 +387,8 @@ enum JournalSourceType {
   TRANSFER_INVOICE
   SALES_ORDER
   SALES_RETURN
+  /// Invoicing an external manufacturing run to the client who ordered it.
+  CMT_INVOICE
   PAYMENT
   PAYROLL
   DEPRECIATION
@@ -2159,9 +2161,18 @@ model ShopifyWebhookEvent {
   lastError    String?
   receivedAt   DateTime           @default(now())
   processedAt  DateTime?
+  leaseUntil   DateTime?
 
   @@index([status])
   @@map("shopify_webhook_events")
+}
+
+model ShopifyOrderState {
+  connectionId String
+  externalId   String
+  cancelledAt  DateTime
+  @@id([connectionId, externalId])
+  @@map("shopify_order_states")
 }
 
 // ===========================================================================
@@ -2732,6 +2743,8 @@ model Return {
   disposition  ReturnDisposition @default(RESTOCK)
   handlingCost Decimal           @default(0) @db.Decimal(18, 4)
   refundAmount Decimal           @db.Decimal(18, 4)
+  costAmount   Decimal?          @db.Decimal(18, 4)
+  creditAmount Decimal           @default(0) @db.Decimal(18, 4)
   returnDate   DateTime          @db.Date
   createdAt    DateTime          @default(now())
 
@@ -3058,9 +3071,23 @@ model CMTOrder {
   agreedMinuteRate Decimal @db.Decimal(18, 8)
   contractValue   Decimal @db.Decimal(18, 4)
 
+  /// What one good garment is billed at, frozen from the quote. The client is
+  /// invoiced on pieces delivered, so this — not the minute rate — is the
+  /// number that decides what they pay.
+  agreedUnitPrice Decimal @default(0) @db.Decimal(18, 4)
+
   actualMinutes  Decimal? @db.Decimal(18, 4)
   actualCost     Decimal? @db.Decimal(18, 4)
   realisedMargin Decimal? @db.Decimal(18, 4)
+
+  /// Good garments handed over. Short deliveries are billed short: the client
+  /// pays for what they received, not for what was ordered.
+  deliveredQty   Int?
+  invoiceNumber  String?   @unique
+  invoicedAmount Decimal?  @db.Decimal(18, 4)
+  invoicedAt     DateTime? @db.Date
+  /// Everything received against this order, deposit included.
+  paidAmount     Decimal   @default(0) @db.Decimal(18, 4)
 
   orderDate    DateTime  @db.Date
   dueDate      DateTime? @db.Date
@@ -3068,9 +3095,41 @@ model CMTOrder {
   createdAt    DateTime  @default(now())
 
   capacityBookings CapacityBooking[]
+  payments         CMTPayment[]
 
   @@index([clientId, orderDate])
   @@map("cmt_orders")
+}
+
+/// Money received against an external manufacturing order.
+///
+/// A deposit arrives before the work starts and is a debt until the goods are
+/// handed over; everything after the invoice settles what the client owes.
+/// Both are recorded here so the order's balance is a fact rather than a sum
+/// somebody does by hand.
+model CMTPayment {
+  id         String     @id @default(cuid())
+  cmtOrderId String
+  cmtOrder   CMTOrder   @relation(fields: [cmtOrderId], references: [id], onDelete: Restrict)
+  kind       CMTPaymentKind
+  method     PaymentMethod
+  amount     Decimal    @db.Decimal(18, 4)
+  paidOn     DateTime   @db.Date
+  reference  String?
+  /// The entry this payment posted, for tracing a figure back to the books.
+  /// Deliberately not a relation: nothing reads payments from the entry side.
+  journalEntryId String?
+  createdAt  DateTime   @default(now())
+
+  @@index([cmtOrderId])
+  @@map("cmt_payments")
+}
+
+enum CMTPaymentKind {
+  /// Taken on contracting, before a garment is cut.
+  DEPOSIT
+  /// Against the invoice: on handover, or later within the agreed days.
+  SETTLEMENT
 }
 
 // ===========================================================================

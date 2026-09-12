@@ -4,7 +4,7 @@ import { can } from "@/core/permissions";
 import { cmtOrders, confirmableQuotes } from "@/lib/cmt-orders";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, formatMinutes, dec } from "@/lib/money";
-import { ConfirmForm, CompleteForm, CancelForm } from "./order-forms";
+import { ConfirmForm, CompleteForm, CancelForm, MoneyForm } from "./order-forms";
 
 /**
  * أوامر التصنيع للغير — accepted quotes that became commitments.
@@ -129,6 +129,8 @@ export default async function CMTOrdersPage() {
               ar ? "دقايق فعلية" : "Actual",
               ar ? "الزيادة" : "Overrun",
               ar ? "قيمة التعاقد" : "Contract",
+              ar ? "الفاتورة" : "Invoiced",
+              ar ? "المستحق" : "Owed",
               ar ? "التكلفة" : "Cost",
               ar ? "الربح" : "Margin",
               ar ? "الحالة" : "Status",
@@ -152,6 +154,33 @@ export default async function CMTOrdersPage() {
                 <span key="ov" className="text-ink-300">—</span>
               ),
               <span key="cv" className="num">{formatMoney(o.contractValue)}</span>,
+              o.invoicedAmount ? (
+                <span key="iv" className="num">
+                  {formatMoney(o.invoicedAmount)}
+                  <span className="ms-1 text-xs text-ink-400" dir="ltr">
+                    {o.deliveredQty}×{formatMoney(o.unitPrice)}
+                  </span>
+                </span>
+              ) : Number(o.depositHeld) > 0 ? (
+                <span key="iv" className="num text-xs text-ink-500">
+                  {ar ? "مقدّم " : "deposit "}
+                  {formatMoney(o.depositHeld)}
+                </span>
+              ) : (
+                <span key="iv" className="text-ink-300">—</span>
+              ),
+              o.outstanding && Number(o.outstanding) > 0 ? (
+                <span key="ow" className={o.overdue ? "num font-medium text-bad" : "num"}>
+                  {formatMoney(o.outstanding)}
+                  {o.overdue && (
+                    <span className="ms-1 text-xs">{ar ? "متأخر" : "late"}</span>
+                  )}
+                </span>
+              ) : o.invoicedAmount ? (
+                <Badge key="ow" tone="good">{ar ? "اتحصّل" : "settled"}</Badge>
+              ) : (
+                <span key="ow" className="text-ink-300">—</span>
+              ),
               <span key="ac" className="num text-ink-500">
                 {o.actualCost ? formatMoney(o.actualCost) : "—"}
               </span>,
@@ -180,9 +209,25 @@ export default async function CMTOrdersPage() {
               </Badge>,
               mayManage && (o.status === "CONFIRMED" || o.status === "IN_PRODUCTION") ? (
                 <div key="a" className="flex flex-wrap items-start gap-1.5">
-                  <CompleteForm ar={ar} cmtOrderId={o.id} quotedMinutes={o.totalMinutes} />
+                  <CompleteForm
+                    ar={ar}
+                    cmtOrderId={o.id}
+                    quotedMinutes={o.totalMinutes}
+                    orderedQty={o.quantity}
+                    unitPrice={o.unitPrice}
+                    depositHeld={o.depositHeld}
+                  />
+                  <MoneyForm ar={ar} cmtOrderId={o.id} kind="DEPOSIT" />
                   <CancelForm ar={ar} cmtOrderId={o.id} />
                 </div>
+              ) : mayManage && o.outstanding && Number(o.outstanding) > 0 ? (
+                <MoneyForm
+                  key="a"
+                  ar={ar}
+                  cmtOrderId={o.id}
+                  kind="SETTLEMENT"
+                  outstanding={o.outstanding}
+                />
               ) : (
                 <span key="a" className="num text-xs text-ink-400" dir="ltr">
                   {day(o.completedAt)}
