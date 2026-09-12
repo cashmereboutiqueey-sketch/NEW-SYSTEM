@@ -26,6 +26,15 @@ export default async function CustomersPage() {
     customerProfiles(),
     duplicateCandidates(),
   ]);
+  // Only the records actually flagged as possible duplicates. The form exists
+  // to resolve those, and sending every customer to the browser to choose
+  // between is a payload that grows with the customer base — and an invitation
+  // to merge two people who were never flagged as the same.
+  const flagged = new Set(duplicates.flatMap((d) => [d.aId, d.bId]));
+  const mergeCandidates = profiles
+    .filter((p) => flagged.has(p.id))
+    .map((p) => ({ id: p.id, name: p.name, phone: p.phone ?? null, orders: p.orders }));
+
   const mayAdd = can(session.role, "sales_order:create");
   // Merging rewrites who owns an order history, so it sits with the elevated
   // export capability rather than with everyday order entry.
@@ -104,15 +113,7 @@ export default async function CustomersPage() {
           }
           actions={
             mayMerge ? (
-              <MergeForm
-                ar={ar}
-                customers={profiles.map((p) => ({
-                  id: p.id,
-                  name: p.name,
-                  phone: p.phone ?? null,
-                  orders: p.orders,
-                }))}
-              />
+              <MergeForm ar={ar} customers={mergeCandidates} />
             ) : undefined
           }
         >

@@ -31,14 +31,12 @@ const db = new PrismaClient({
 });
 
 let locationId: string;
-let brandId: string;
 let consignorId: string;
 let day: Date;
 
 const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
-  brandId = (await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } })).id;
   locationId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
 
   const period = await db.fiscalPeriod.findFirstOrThrow({

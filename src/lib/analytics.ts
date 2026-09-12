@@ -365,16 +365,10 @@ export async function deadStock(entityId: string, asOf: Date = new Date()) {
  * into the sale price, which is what makes this answerable at all.
  */
 export async function markdownAnalysis(entityId: string) {
-  const lines = await db.salesOrderLine.findMany({
-    where: { salesOrder: { entityId } },
-    include: {
-      salesOrder: true,
-      variant: { include: { style: { include: { collection: true } } } },
-    },
-  });
-
-  const byStyle = new Map<
-    string,
+  // Grouped by the database. This used to read every order line the brand has
+  // ever sold, with its variant, style and collection attached, and add them
+  // up here — a page whose cost grows with every sale ever made.
+  const rows = await db.$queryRaw<
     {
       id: string;
       code: string;
@@ -382,57 +376,57 @@ export async function markdownAnalysis(entityId: string) {
       nameAr: string;
       units: number;
       discountedUnits: number;
-      grossRevenue: Decimal;
-      netRevenue: Decimal;
-      cost: Decimal;
-      deepestDiscount: Decimal;
-    }
-  >();
+      grossRevenue: string;
+      netRevenue: string;
+      cost: string;
+      deepestDiscount: string;
+    }[]
+  >`
+    SELECT st."id", st."code", st."nameEn", st."nameAr",
+           SUM(l."quantity")::int AS "units",
+           SUM(CASE WHEN l."discountPct" > 0 THEN l."quantity" ELSE 0 END)::int AS "discountedUnits",
+           SUM(l."retailPrice" * l."quantity")::text AS "grossRevenue",
+           SUM(l."lineTotal")::text AS "netRevenue",
+           SUM(l."lineCost")::text AS "cost",
+           MAX(l."discountPct")::text AS "deepestDiscount"
+    FROM "sales_order_lines" l
+    JOIN "sales_orders" o ON o."id" = l."salesOrderId"
+    JOIN "variants" v ON v."id" = l."variantId"
+    JOIN "styles" st ON st."id" = v."styleId"
+    WHERE o."entityId" = ${entityId}
+    GROUP BY st."id", st."code", st."nameEn", st."nameAr"
+    HAVING SUM(l."quantity") > 0
+  `;
 
-  for (const line of lines) {
-    const style = line.variant.style;
-    const entry = byStyle.get(style.id) ?? {
-      id: style.id,
-      code: style.code,
-      nameEn: style.nameEn,
-      nameAr: style.nameAr,
-      units: 0,
-      discountedUnits: 0,
-      grossRevenue: dec(0),
-      netRevenue: dec(0),
-      cost: dec(0),
-      deepestDiscount: dec(0),
-    };
-
-    const discount = dec(line.discountPct);
-    entry.units += line.quantity;
-    if (discount.greaterThan(0)) entry.discountedUnits += line.quantity;
-    entry.grossRevenue = entry.grossRevenue.plus(dec(line.retailPrice).times(line.quantity));
-    entry.netRevenue = entry.netRevenue.plus(dec(line.lineTotal));
-    entry.cost = entry.cost.plus(dec(line.lineCost));
-    if (discount.greaterThan(entry.deepestDiscount)) entry.deepestDiscount = discount;
-
-    byStyle.set(style.id, entry);
-  }
-
-  return [...byStyle.values()]
-    .map((s) => {
-      const givenAway = s.grossRevenue.minus(s.netRevenue);
-      const marginAfter = s.netRevenue.minus(s.cost);
-      const marginBefore = s.grossRevenue.minus(s.cost);
+  return rows
+    .map((r) => {
+      const grossRevenue = dec(r.grossRevenue);
+      const netRevenue = dec(r.netRevenue);
+      const cost = dec(r.cost);
+      const givenAway = grossRevenue.minus(netRevenue);
+      const marginAfter = netRevenue.minus(cost);
+      const marginBefore = grossRevenue.minus(cost);
       return {
-        ...s,
+        id: r.id,
+        code: r.code,
+        nameEn: r.nameEn,
+        nameAr: r.nameAr,
+        units: r.units,
+        discountedUnits: r.discountedUnits,
+        grossRevenue,
+        netRevenue,
+        cost,
+        deepestDiscount: dec(r.deepestDiscount),
         givenAway,
         marginAfter,
         marginBefore,
-        marginPctAfter: safeDiv(marginAfter, s.netRevenue),
+        marginPctAfter: safeDiv(marginAfter, netRevenue),
         // What share of the margin the discount consumed. Above 1 means the
         // discount cost more than the style earned.
         marginEaten: safeDiv(givenAway, marginBefore),
-        discountedShare: s.units > 0 ? dec(s.discountedUnits).div(s.units) : dec(0),
+        discountedShare: r.units > 0 ? dec(r.discountedUnits).div(r.units) : dec(0),
       };
     })
-    .filter((s) => s.units > 0)
     .sort((a, b) => Number(b.givenAway.minus(a.givenAway)));
 }
 

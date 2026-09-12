@@ -3,6 +3,9 @@ import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { dec, roundMoney, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
+import { recordTillCash } from "./till";
+import { canonicalCustomerId } from "./crm";
 
 /**
  * Selling somebody else's goods for a share of the price.
@@ -135,68 +138,70 @@ export async function receiveConsignment(
   },
   ctx: AuditContext,
 ): Promise<{ id: string; itemCode: string }> {
-  if (input.quantity <= 0) throw new ConsignmentError("How many garments arrived?");
-  if (!input.description.trim()) throw new ConsignmentError("Say what the garment is.");
+  return command("consignment.receiveConsignment", input, ctx, async () => {
+    if (input.quantity <= 0) throw new ConsignmentError("How many garments arrived?");
+    if (!input.description.trim()) throw new ConsignmentError("Say what the garment is.");
 
-  const price = roundMoney(dec(input.retailPrice));
-  if (price.lessThanOrEqualTo(0)) throw new ConsignmentError("The garment needs a price.");
+    const price = roundMoney(dec(input.retailPrice));
+    if (price.lessThanOrEqualTo(0)) throw new ConsignmentError("The garment needs a price.");
 
-  const consignor = await db.consignor.findUnique({ where: { id: input.consignorId } });
-  if (!consignor) throw new ConsignmentError("Consignor not found.");
-  if (!consignor.isActive) throw new ConsignmentError(`${consignor.name} is no longer active.`);
+    const consignor = await db.consignor.findUnique({ where: { id: input.consignorId } });
+    if (!consignor) throw new ConsignmentError("Consignor not found.");
+    if (!consignor.isActive) throw new ConsignmentError(`${consignor.name} is no longer active.`);
 
-  if (input.commissionRate != null && input.commissionRate !== "") {
-    const rate = dec(input.commissionRate);
-    if (rate.lessThan(0) || rate.greaterThan(1)) {
-      throw new ConsignmentError("A commission has to be a fraction — 0.25 for a quarter.");
+    if (input.commissionRate != null && input.commissionRate !== "") {
+      const rate = dec(input.commissionRate);
+      if (rate.lessThan(0) || rate.greaterThan(1)) {
+        throw new ConsignmentError("A commission has to be a fraction — 0.25 for a quarter.");
+      }
     }
-  }
 
-  const receivedDate = asDay(input.receivedDate);
-  if (input.expiresAt && asDay(input.expiresAt) < receivedDate) {
-    throw new ConsignmentError("The return-by date is before the goods arrived.");
-  }
+    const receivedDate = asDay(input.receivedDate);
+    if (input.expiresAt && asDay(input.expiresAt) < receivedDate) {
+      throw new ConsignmentError("The return-by date is before the goods arrived.");
+    }
 
-  return db.$transaction(async (tx) => {
-    const itemCode = await nextDocumentNumber(tx, "CNS", receivedDate);
+    return db.$transaction(async (tx) => {
+      const itemCode = await nextDocumentNumber(tx, "CNS", receivedDate);
 
-    const item = await tx.consignmentItem.create({
-      data: {
-        itemCode,
-        consignorId: input.consignorId,
-        description: input.description.trim(),
-        size: input.size?.trim() || null,
-        colour: input.colour?.trim() || null,
-        retailPrice: price.toString(),
-        commissionRate:
-          input.commissionRate != null && input.commissionRate !== ""
-            ? dec(input.commissionRate).toString()
-            : null,
-        quantityReceived: input.quantity,
-        locationId: input.locationId,
-        receivedDate,
-        expiresAt: input.expiresAt ? asDay(input.expiresAt) : null,
-        notes: input.notes ?? null,
-      },
+      const item = await tx.consignmentItem.create({
+        data: {
+          itemCode,
+          consignorId: input.consignorId,
+          description: input.description.trim(),
+          size: input.size?.trim() || null,
+          colour: input.colour?.trim() || null,
+          retailPrice: price.toString(),
+          commissionRate:
+            input.commissionRate != null && input.commissionRate !== ""
+              ? dec(input.commissionRate).toString()
+              : null,
+          quantityReceived: input.quantity,
+          locationId: input.locationId,
+          receivedDate,
+          expiresAt: input.expiresAt ? asDay(input.expiresAt) : null,
+          notes: input.notes ?? null,
+        },
+      });
+
+      // Deliberately no journal. Nothing was bought and nothing became an asset
+      // of this business: the garments are somebody else's, sitting on a rail.
+      await writeAudit(tx, {
+        action: "CONSIGNMENT_RECEIVED",
+        entityName: "ConsignmentItem",
+        entityId: item.id,
+        after: {
+          itemCode,
+          consignor: consignor.name,
+          description: item.description,
+          quantity: input.quantity,
+          retailPrice: price.toString(),
+        },
+        ctx,
+      });
+
+      return { id: item.id, itemCode };
     });
-
-    // Deliberately no journal. Nothing was bought and nothing became an asset
-    // of this business: the garments are somebody else's, sitting on a rail.
-    await writeAudit(tx, {
-      action: "CONSIGNMENT_RECEIVED",
-      entityName: "ConsignmentItem",
-      entityId: item.id,
-      after: {
-        itemCode,
-        consignor: consignor.name,
-        description: item.description,
-        quantity: input.quantity,
-        retailPrice: price.toString(),
-      },
-      ctx,
-    });
-
-    return { id: item.id, itemCode };
   });
 }
 
@@ -225,139 +230,155 @@ export async function sellConsignedItem(
   owedToOwner: string;
   total: string;
 }> {
-  if (input.quantity <= 0) throw new ConsignmentError("Sell at least one.");
+  return command("consignment.sellConsignedItem", input, ctx, async () => {
+    if (input.quantity <= 0) throw new ConsignmentError("Sell at least one.");
 
-  const item = await db.consignmentItem.findUnique({
-    where: { id: input.itemId },
-    include: { consignor: true, location: true },
-  });
-  if (!item) throw new ConsignmentError("That item is not here.");
-
-  const available = item.quantityReceived - item.quantitySold - item.quantityReturned;
-  if (input.quantity > available) {
-    throw new ConsignmentError(
-      available <= 0
-        ? `${item.description} has none left.`
-        : `Only ${available} of ${item.description} left.`,
-    );
-  }
-
-  const unitPrice =
-    input.soldPrice != null && input.soldPrice !== ""
-      ? roundMoney(dec(input.soldPrice))
-      : dec(item.retailPrice);
-  if (unitPrice.lessThan(0)) throw new ConsignmentError("A price cannot be negative.");
-
-  const rate = rateFor(item, item.consignor);
-  const total = roundMoney(unitPrice.times(input.quantity));
-  // Rounded to the piastre, and the owner gets the remainder. The split has
-  // to add up exactly or the shop is holding money neither side accounts for
-  // — the database refuses the row otherwise.
-  const commission = roundMoney(total.times(rate));
-  const owner = total.minus(commission);
-
-  const entity = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
-
-  if (input.posSessionId) {
-    const session = await db.posSession.findUnique({ where: { id: input.posSessionId } });
-    if (!session) throw new ConsignmentError("Till session not found.");
-    if (session.closedAt) throw new ConsignmentError("That till session is already closed.");
-  }
-
-  const saleDate = asDay(input.saleDate);
-  const fundsCode = FUNDS_ACCOUNT[input.paymentMethod];
-  if (!fundsCode) throw new ConsignmentError(`Cannot take ${input.paymentMethod} here.`);
-
-  return db.$transaction(async (tx) => {
-    const saleNumber = await nextDocumentNumber(tx, "CSL", saleDate);
-
-    const accountId = async (code: string) => {
-      const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
-      if (!a) throw new ConsignmentError(`Account ${code} is missing from the chart.`);
-      return a.id;
-    };
-
-    const entry = await postEntry(tx, {
-      entityId: entity.id,
-      postingDate: saleDate,
-      sourceType: "SALES_ORDER",
-      sourceId: item.id,
-      memo: `Consignment sale ${saleNumber} — ${item.description} (${item.consignor.name})`,
-      ctx,
-      lines: [
-        {
-          accountId: await accountId(fundsCode),
-          debit: total,
-          entityId: entity.id,
-          customerId: input.customerId ?? null,
-          description: `Taken for ${saleNumber}`,
-        },
-        {
-          // The only part that is income.
-          accountId: await accountId(ACC.COMMISSION),
-          credit: commission,
-          entityId: entity.id,
-          description: `Commission at ${rate.times(100).toFixed(2)}% on ${saleNumber}`,
-        },
-        {
-          // Owed from the moment the garment leaves, not when it is remitted.
-          accountId: await accountId(ACC.OWED_TO_CONSIGNORS),
-          credit: owner,
-          entityId: entity.id,
-          description: `Owed to ${item.consignor.name} for ${saleNumber}`,
-        },
-      ],
+    const item = await db.consignmentItem.findUnique({
+      where: { id: input.itemId },
+      include: { consignor: true, location: true },
     });
+    if (!item) throw new ConsignmentError("That item is not here.");
 
-    const sale = await tx.consignmentSale.create({
-      data: {
-        saleNumber,
-        itemId: item.id,
-        quantity: input.quantity,
-        soldPrice: unitPrice.toString(),
-        // Frozen: changing the consignor's rate later must not rewrite what
-        // was owed on a sale that already happened.
-        commissionRate: rate.toString(),
-        commissionAmount: commission.toString(),
-        ownerAmount: owner.toString(),
-        customerId: input.customerId ?? null,
+    const available = item.quantityReceived - item.quantitySold - item.quantityReturned;
+    if (input.quantity > available) {
+      throw new ConsignmentError(
+        available <= 0
+          ? `${item.description} has none left.`
+          : `Only ${available} of ${item.description} left.`,
+      );
+    }
+
+    const unitPrice =
+      input.soldPrice != null && input.soldPrice !== ""
+        ? roundMoney(dec(input.soldPrice))
+        : dec(item.retailPrice);
+    if (unitPrice.lessThan(0)) throw new ConsignmentError("A price cannot be negative.");
+
+    const rate = rateFor(item, item.consignor);
+    const total = roundMoney(unitPrice.times(input.quantity));
+    // Rounded to the piastre, and the owner gets the remainder. The split has
+    // to add up exactly or the shop is holding money neither side accounts for
+    // — the database refuses the row otherwise.
+    const commission = roundMoney(total.times(rate));
+    const owner = total.minus(commission);
+
+    const entity = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+
+    if (input.posSessionId) {
+      const session = await db.posSession.findUnique({ where: { id: input.posSessionId } });
+      if (!session) throw new ConsignmentError("Till session not found.");
+      if (session.closedAt) throw new ConsignmentError("That till session is already closed.");
+    }
+
+    const saleDate = asDay(input.saleDate);
+    // A merged record's id means the one it was merged into.
+    const customerId = await canonicalCustomerId(db, input.customerId);
+    const fundsCode = FUNDS_ACCOUNT[input.paymentMethod];
+    if (!fundsCode) throw new ConsignmentError(`Cannot take ${input.paymentMethod} here.`);
+
+    return db.$transaction(async (tx) => {
+      const saleNumber = await nextDocumentNumber(tx, "CSL", saleDate);
+
+      const accountId = async (code: string) => {
+        const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
+        if (!a) throw new ConsignmentError(`Account ${code} is missing from the chart.`);
+        return a.id;
+      };
+
+      const entry = await postEntry(tx, {
         entityId: entity.id,
-        locationId: item.locationId,
-        posSessionId: input.posSessionId ?? null,
-        paymentMethod: input.paymentMethod,
-        saleDate,
-        soldByUserId: ctx.userId,
-      },
-    });
+        postingDate: saleDate,
+        sourceType: "SALES_ORDER",
+        sourceId: item.id,
+        memo: `Consignment sale ${saleNumber} — ${item.description} (${item.consignor.name})`,
+        ctx,
+        lines: [
+          {
+            accountId: await accountId(fundsCode),
+            debit: total,
+            entityId: entity.id,
+            customerId,
+            description: `Taken for ${saleNumber}`,
+          },
+          {
+            // The only part that is income.
+            accountId: await accountId(ACC.COMMISSION),
+            credit: commission,
+            entityId: entity.id,
+            description: `Commission at ${rate.times(100).toFixed(2)}% on ${saleNumber}`,
+          },
+          {
+            // Owed from the moment the garment leaves, not when it is remitted.
+            accountId: await accountId(ACC.OWED_TO_CONSIGNORS),
+            credit: owner,
+            entityId: entity.id,
+            description: `Owed to ${item.consignor.name} for ${saleNumber}`,
+          },
+        ],
+      });
 
-    await tx.consignmentItem.update({
-      where: { id: item.id },
-      data: { quantitySold: { increment: input.quantity } },
-    });
+      const sale = await tx.consignmentSale.create({
+        data: {
+          saleNumber,
+          itemId: item.id,
+          quantity: input.quantity,
+          soldPrice: unitPrice.toString(),
+          // Frozen: changing the consignor's rate later must not rewrite what
+          // was owed on a sale that already happened.
+          commissionRate: rate.toString(),
+          commissionAmount: commission.toString(),
+          ownerAmount: owner.toString(),
+          customerId,
+          entityId: entity.id,
+          locationId: item.locationId,
+          posSessionId: input.posSessionId ?? null,
+          paymentMethod: input.paymentMethod,
+          saleDate,
+          soldByUserId: ctx.userId,
+        },
+      });
 
-    await writeAudit(tx, {
-      action: "CONSIGNMENT_SOLD",
-      entityName: "ConsignmentSale",
-      entityId: sale.id,
-      after: {
+      await tx.consignmentItem.update({
+        where: { id: item.id },
+        data: { quantitySold: { increment: input.quantity } },
+      });
+
+      // A consignor's garment sold for cash puts cash in the same drawer as
+      // the shop's own; the till count used to leave it out.
+      if (input.paymentMethod === "CASH") {
+        await recordTillCash(tx, {
+          posSessionId: input.posSessionId ?? null,
+          locationId: item.locationId,
+          kind: "CONSIGNMENT_SALE",
+          amount: total,
+          reference: saleNumber,
+        });
+      }
+
+      await writeAudit(tx, {
+        action: "CONSIGNMENT_SOLD",
+        entityName: "ConsignmentSale",
+        entityId: sale.id,
+        after: {
+          saleNumber,
+          item: item.description,
+          consignor: item.consignor.name,
+          quantity: input.quantity,
+          total: total.toString(),
+          commission: commission.toString(),
+          owedToOwner: owner.toString(),
+          journal: entry.id,
+        },
+        ctx,
+      });
+
+      return {
         saleNumber,
-        item: item.description,
-        consignor: item.consignor.name,
-        quantity: input.quantity,
-        total: total.toString(),
         commission: commission.toString(),
         owedToOwner: owner.toString(),
-        journal: entry.id,
-      },
-      ctx,
+        total: total.toString(),
+      };
     });
-
-    return {
-      saleNumber,
-      commission: commission.toString(),
-      owedToOwner: owner.toString(),
-      total: total.toString(),
-    };
   });
 }
 
@@ -366,46 +387,48 @@ export async function returnToConsignor(
   input: { itemId: string; quantity: number; reason?: string | null },
   ctx: AuditContext,
 ): Promise<{ returned: number; left: number }> {
-  if (input.quantity <= 0) throw new ConsignmentError("How many are going back?");
+  return command("consignment.returnToConsignor", input, ctx, async () => {
+    if (input.quantity <= 0) throw new ConsignmentError("How many are going back?");
 
-  const item = await db.consignmentItem.findUnique({
-    where: { id: input.itemId },
-    include: { consignor: true },
-  });
-  if (!item) throw new ConsignmentError("That item is not here.");
-
-  const available = item.quantityReceived - item.quantitySold - item.quantityReturned;
-  if (input.quantity > available) {
-    throw new ConsignmentError(
-      `Only ${available} of ${item.description} are still here; ${item.quantitySold} were sold.`,
-    );
-  }
-
-  return db.$transaction(async (tx) => {
-    const updated = await tx.consignmentItem.update({
-      where: { id: item.id },
-      data: { quantityReturned: { increment: input.quantity } },
+    const item = await db.consignmentItem.findUnique({
+      where: { id: input.itemId },
+      include: { consignor: true },
     });
+    if (!item) throw new ConsignmentError("That item is not here.");
 
-    // Again no journal: the garments were never the shop's, so handing them
-    // back changes nothing about what the shop owns or owes.
-    await writeAudit(tx, {
-      action: "CONSIGNMENT_RETURNED",
-      entityName: "ConsignmentItem",
-      entityId: item.id,
-      after: {
-        itemCode: item.itemCode,
-        consignor: item.consignor.name,
+    const available = item.quantityReceived - item.quantitySold - item.quantityReturned;
+    if (input.quantity > available) {
+      throw new ConsignmentError(
+        `Only ${available} of ${item.description} are still here; ${item.quantitySold} were sold.`,
+      );
+    }
+
+    return db.$transaction(async (tx) => {
+      const updated = await tx.consignmentItem.update({
+        where: { id: item.id },
+        data: { quantityReturned: { increment: input.quantity } },
+      });
+
+      // Again no journal: the garments were never the shop's, so handing them
+      // back changes nothing about what the shop owns or owes.
+      await writeAudit(tx, {
+        action: "CONSIGNMENT_RETURNED",
+        entityName: "ConsignmentItem",
+        entityId: item.id,
+        after: {
+          itemCode: item.itemCode,
+          consignor: item.consignor.name,
+          returned: input.quantity,
+          reason: input.reason ?? null,
+        },
+        ctx,
+      });
+
+      return {
         returned: input.quantity,
-        reason: input.reason ?? null,
-      },
-      ctx,
+        left: updated.quantityReceived - updated.quantitySold - updated.quantityReturned,
+      };
     });
-
-    return {
-      returned: input.quantity,
-      left: updated.quantityReceived - updated.quantitySold - updated.quantityReturned,
-    };
   });
 }
 
@@ -432,118 +455,131 @@ export async function settleConsignor(
   },
   ctx: AuditContext,
 ): Promise<{ settlementNumber: string; amount: string; salesCovered: number }> {
-  const consignor = await db.consignor.findUnique({ where: { id: input.consignorId } });
-  if (!consignor) throw new ConsignmentError("Consignor not found.");
+  return command("consignment.settleConsignor", input, ctx, async () => {
+    const consignor = await db.consignor.findUnique({ where: { id: input.consignorId } });
+    if (!consignor) throw new ConsignmentError("Consignor not found.");
 
-  const unsettled = await db.consignmentSale.findMany({
-    where: { item: { consignorId: input.consignorId }, settlementId: null },
-    orderBy: { saleDate: "asc" },
-  });
-  if (unsettled.length === 0) {
-    throw new ConsignmentError(`Nothing is owed to ${consignor.name}.`);
-  }
-
-  const outstanding = unsettled.reduce((s, x) => s.plus(dec(x.ownerAmount)), dec(0));
-
-  // Settling covers whole sales: paying an arbitrary part would leave a sale
-  // half-settled with no way to say which half.
-  const covered: typeof unsettled = [];
-  let amount = dec(0);
-
-  if (input.amount != null && input.amount !== "") {
-    const wanted = roundMoney(dec(input.amount));
-    if (wanted.lessThanOrEqualTo(0)) throw new ConsignmentError("Pay more than zero.");
-    if (wanted.greaterThan(outstanding)) {
-      throw new ConsignmentError(
-        `${consignor.name} is owed ${outstanding.toFixed(2)}; ${wanted.toFixed(2)} is more than that.`,
-      );
-    }
-    for (const sale of unsettled) {
-      if (amount.plus(dec(sale.ownerAmount)).greaterThan(wanted)) break;
-      covered.push(sale);
-      amount = amount.plus(dec(sale.ownerAmount));
-    }
-    if (covered.length === 0) {
-      throw new ConsignmentError(
-        `The oldest unpaid sale is ${dec(unsettled[0].ownerAmount).toFixed(2)}; pay at least that.`,
-      );
-    }
-  } else {
-    covered.push(...unsettled);
-    amount = outstanding;
-  }
-
-  const entity = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
-  const paidOn = asDay(input.paidOn);
-  const fundsCode = input.method === "CASH" ? ACC.POS_DRAWER : ACC.BANK;
-
-  return db.$transaction(async (tx) => {
-    const settlementNumber = await nextDocumentNumber(tx, "CST", paidOn);
-
-    const accountId = async (code: string) => {
-      const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
-      if (!a) throw new ConsignmentError(`Account ${code} is missing from the chart.`);
-      return a.id;
-    };
-
-    await postEntry(tx, {
-      entityId: entity.id,
-      postingDate: paidOn,
-      sourceType: "PAYMENT",
-      sourceId: consignor.id,
-      memo: `Paid ${consignor.name} for consigned sales — ${settlementNumber}`,
-      ctx,
-      lines: [
-        {
-          // Discharging the debt the sale created.
-          accountId: await accountId(ACC.OWED_TO_CONSIGNORS),
-          debit: amount,
-          entityId: entity.id,
-          description: `Settled ${covered.length} sale(s) for ${consignor.name}`,
-        },
-        {
-          accountId: await accountId(fundsCode),
-          credit: amount,
-          entityId: entity.id,
-          description: `Paid to ${consignor.name} — ${settlementNumber}`,
-        },
-      ],
+    const unsettled = await db.consignmentSale.findMany({
+      where: { item: { consignorId: input.consignorId }, settlementId: null },
+      orderBy: { saleDate: "asc" },
     });
+    if (unsettled.length === 0) {
+      throw new ConsignmentError(`Nothing is owed to ${consignor.name}.`);
+    }
 
-    const settlement = await tx.consignorSettlement.create({
-      data: {
-        settlementNumber,
-        consignorId: consignor.id,
-        amount: amount.toString(),
-        method: input.method,
-        paidOn,
-        reference: input.reference ?? null,
-        notes: input.notes ?? null,
+    const outstanding = unsettled.reduce((s, x) => s.plus(dec(x.ownerAmount)), dec(0));
+
+    // Settling covers whole sales: paying an arbitrary part would leave a sale
+    // half-settled with no way to say which half.
+    const covered: typeof unsettled = [];
+    let amount = dec(0);
+
+    if (input.amount != null && input.amount !== "") {
+      const wanted = roundMoney(dec(input.amount));
+      if (wanted.lessThanOrEqualTo(0)) throw new ConsignmentError("Pay more than zero.");
+      if (wanted.greaterThan(outstanding)) {
+        throw new ConsignmentError(
+          `${consignor.name} is owed ${outstanding.toFixed(2)}; ${wanted.toFixed(2)} is more than that.`,
+        );
+      }
+      for (const sale of unsettled) {
+        if (amount.plus(dec(sale.ownerAmount)).greaterThan(wanted)) break;
+        covered.push(sale);
+        amount = amount.plus(dec(sale.ownerAmount));
+      }
+      if (covered.length === 0) {
+        throw new ConsignmentError(
+          `The oldest unpaid sale is ${dec(unsettled[0].ownerAmount).toFixed(2)}; pay at least that.`,
+        );
+      }
+    } else {
+      covered.push(...unsettled);
+      amount = outstanding;
+    }
+
+    const entity = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+    const paidOn = asDay(input.paidOn);
+    const fundsCode = input.method === "CASH" ? ACC.POS_DRAWER : ACC.BANK;
+
+    return db.$transaction(async (tx) => {
+      const settlementNumber = await nextDocumentNumber(tx, "CST", paidOn);
+
+      const accountId = async (code: string) => {
+        const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
+        if (!a) throw new ConsignmentError(`Account ${code} is missing from the chart.`);
+        return a.id;
+      };
+
+      await postEntry(tx, {
         entityId: entity.id,
-        paidByUserId: ctx.userId,
-      },
-    });
+        postingDate: paidOn,
+        sourceType: "PAYMENT",
+        sourceId: consignor.id,
+        memo: `Paid ${consignor.name} for consigned sales — ${settlementNumber}`,
+        ctx,
+        lines: [
+          {
+            // Discharging the debt the sale created.
+            accountId: await accountId(ACC.OWED_TO_CONSIGNORS),
+            debit: amount,
+            entityId: entity.id,
+            description: `Settled ${covered.length} sale(s) for ${consignor.name}`,
+          },
+          {
+            accountId: await accountId(fundsCode),
+            credit: amount,
+            entityId: entity.id,
+            description: `Paid to ${consignor.name} — ${settlementNumber}`,
+          },
+        ],
+      });
 
-    await tx.consignmentSale.updateMany({
-      where: { id: { in: covered.map((s) => s.id) } },
-      data: { settlementId: settlement.id },
-    });
+      // Paid in cash comes out of a drawer — the one open where the goods
+      // were sold.
+      if (input.method === "CASH") {
+        await recordTillCash(tx, {
+          locationId: covered[0].locationId,
+          kind: "PAYOUT",
+          amount: amount.negated(),
+          reference: settlementNumber,
+        });
+      }
 
-    await writeAudit(tx, {
-      action: "CONSIGNOR_SETTLED",
-      entityName: "ConsignorSettlement",
-      entityId: settlement.id,
-      after: {
-        settlementNumber,
-        consignor: consignor.name,
-        amount: amount.toString(),
-        sales: covered.length,
-        method: input.method,
-      },
-      ctx,
-    });
+      const settlement = await tx.consignorSettlement.create({
+        data: {
+          settlementNumber,
+          consignorId: consignor.id,
+          amount: amount.toString(),
+          method: input.method,
+          paidOn,
+          reference: input.reference ?? null,
+          notes: input.notes ?? null,
+          entityId: entity.id,
+          paidByUserId: ctx.userId,
+        },
+      });
 
-    return { settlementNumber, amount: amount.toString(), salesCovered: covered.length };
+      await tx.consignmentSale.updateMany({
+        where: { id: { in: covered.map((s) => s.id) } },
+        data: { settlementId: settlement.id },
+      });
+
+      await writeAudit(tx, {
+        action: "CONSIGNOR_SETTLED",
+        entityName: "ConsignorSettlement",
+        entityId: settlement.id,
+        after: {
+          settlementNumber,
+          consignor: consignor.name,
+          amount: amount.toString(),
+          sales: covered.length,
+          method: input.method,
+        },
+        ctx,
+      });
+
+      return { settlementNumber, amount: amount.toString(), salesCovered: covered.length };
+    });
   });
 }
 
@@ -591,43 +627,57 @@ export async function consignedStock(locationId?: string | null) {
 
 /** Every consignor, what they have here and what they are owed. */
 export async function consignorPositions() {
-  const consignors = await db.consignor.findMany({ orderBy: { name: "asc" } });
+  // Three queries for the whole rail rather than three per consignor: what is
+  // on the rail, what it sold for, and what has not been paid over yet.
+  const [consignors, rail, sold] = await Promise.all([
+    db.consignor.findMany({ orderBy: { name: "asc" } }),
+    db.$queryRaw<{ consignorId: string; onRail: number }[]>`
+      SELECT "consignorId",
+             SUM("quantityReceived" - "quantitySold" - "quantityReturned")::int AS "onRail"
+      FROM "consignment_items"
+      GROUP BY 1
+    `,
+    db.$queryRaw<
+      {
+        consignorId: string;
+        sales: number;
+        takings: string;
+        commission: string;
+        owed: string;
+      }[]
+    >`
+      SELECT i."consignorId",
+             COUNT(*)::int AS "sales",
+             SUM(s."soldPrice" * s."quantity")::text AS "takings",
+             SUM(s."commissionAmount")::text AS "commission",
+             SUM(CASE WHEN s."settlementId" IS NULL THEN s."ownerAmount" ELSE 0 END)::text AS "owed"
+      FROM "consignment_sales" s
+      JOIN "consignment_items" i ON i."id" = s."itemId"
+      GROUP BY 1
+    `,
+  ]);
 
-  return Promise.all(
-    consignors.map(async (c) => {
-      const [items, sales, owed] = await Promise.all([
-        db.consignmentItem.findMany({ where: { consignorId: c.id } }),
-        db.consignmentSale.findMany({ where: { item: { consignorId: c.id } } }),
-        owedTo(c.id),
-      ]);
+  const onRailBy = new Map(rail.map((r) => [r.consignorId, r.onRail]));
+  const soldBy = new Map(sold.map((r) => [r.consignorId, r]));
 
-      const onRail = items.reduce(
-        (s, i) => s + (i.quantityReceived - i.quantitySold - i.quantityReturned),
-        0,
-      );
-      const commission = sales.reduce((s, x) => s.plus(dec(x.commissionAmount)), dec(0));
-      const takings = sales.reduce(
-        (s, x) => s.plus(dec(x.soldPrice).times(x.quantity)),
-        dec(0),
-      );
-
-      return {
-        id: c.id,
-        code: c.code,
-        name: c.name,
-        phone: c.phone,
-        commissionPct: dec(c.commissionRate).times(100).toFixed(1),
-        settlementDays: c.settlementDays,
-        isActive: c.isActive,
-        itemsOnRail: onRail,
-        salesCount: sales.length,
-        takings: takings.toString(),
-        /** What the shop earned from selling their goods. */
-        commissionEarned: commission.toString(),
-        owed: owed.toString(),
-      };
-    }),
-  );
+  return consignors.map((c) => {
+    const s = soldBy.get(c.id);
+    return {
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      phone: c.phone,
+      commissionPct: dec(c.commissionRate).times(100).toFixed(1),
+      settlementDays: c.settlementDays,
+      isActive: c.isActive,
+      itemsOnRail: onRailBy.get(c.id) ?? 0,
+      salesCount: s?.sales ?? 0,
+      takings: dec(s?.takings ?? 0).toString(),
+      /** What the shop earned from selling their goods. */
+      commissionEarned: dec(s?.commission ?? 0).toString(),
+      owed: dec(s?.owed ?? 0).toString(),
+    };
+  });
 }
 
 export async function recentConsignmentSales(limit = 50) {

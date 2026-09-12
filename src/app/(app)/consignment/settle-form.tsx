@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { RequestIdField } from "@/components/request-id";
 import { settleConsignorAction, type ConsignmentState } from "./actions";
 
 const empty: ConsignmentState = {};
@@ -43,6 +44,7 @@ export function SettleForm({
 
   return (
     <form action={action} className="min-w-[14rem] space-y-2">
+      <RequestIdField state={state} />
       <input type="hidden" name="consignorId" value={consignorId} />
       <input type="hidden" name="paidOn" value={today} />
 

@@ -7,6 +7,7 @@ import { calculatePay, deriveDay } from "@/core/payroll";
 import type { DraftLine } from "@/core/ledger";
 import { violatesSeparationOfDuties } from "@/core/permissions";
 import { dec } from "./money";
+import { command } from "./command";
 
 /**
  * Payroll.
@@ -189,52 +190,54 @@ export async function adjustAttendance(
   },
   ctx: AuditContext,
 ): Promise<void> {
-  if (!input.reason.trim()) {
-    throw new PayrollError("An attendance correction needs a reason.");
-  }
+  return command("payroll.adjustAttendance", input, ctx, async () => {
+    if (!input.reason.trim()) {
+      throw new PayrollError("An attendance correction needs a reason.");
+    }
 
-  await db.$transaction(async (tx) => {
-    const before = await tx.attendanceDay.findUnique({
-      where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
-    });
+    await db.$transaction(async (tx) => {
+      const before = await tx.attendanceDay.findUnique({
+        where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
+      });
 
-    const data = {
-      employeeId: input.employeeId,
-      workDate: input.workDate,
-      workedMinutes: input.workedMinutes ?? before?.workedMinutes.toString() ?? "0",
-      overtimeMinutes: input.overtimeMinutes ?? before?.overtimeMinutes.toString() ?? "0",
-      isAbsent: input.isAbsent ?? before?.isAbsent ?? false,
-      isLeave: input.isLeave ?? before?.isLeave ?? false,
-      leaveType: input.leaveType ?? before?.leaveType ?? null,
-      source: "MANUAL" as const,
-      adjustmentReason: input.reason,
-      approvedByUserId: ctx.userId,
-    };
+      const data = {
+        employeeId: input.employeeId,
+        workDate: input.workDate,
+        workedMinutes: input.workedMinutes ?? before?.workedMinutes.toString() ?? "0",
+        overtimeMinutes: input.overtimeMinutes ?? before?.overtimeMinutes.toString() ?? "0",
+        isAbsent: input.isAbsent ?? before?.isAbsent ?? false,
+        isLeave: input.isLeave ?? before?.isLeave ?? false,
+        leaveType: input.leaveType ?? before?.leaveType ?? null,
+        source: "MANUAL" as const,
+        adjustmentReason: input.reason,
+        approvedByUserId: ctx.userId,
+      };
 
-    await tx.attendanceDay.upsert({
-      where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
-      create: data,
-      update: data,
-    });
+      await tx.attendanceDay.upsert({
+        where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
+        create: data,
+        update: data,
+      });
 
-    await writeAudit(tx, {
-      action: "ATTENDANCE_ADJUSTED",
-      entityName: "AttendanceDay",
-      entityId: `${input.employeeId}:${input.workDate.toISOString().slice(0, 10)}`,
-      before: before
-        ? {
-            workedMinutes: before.workedMinutes.toString(),
-            isAbsent: before.isAbsent,
-            source: before.source,
-          }
-        : undefined,
-      after: {
-        workedMinutes: data.workedMinutes,
-        overtimeMinutes: data.overtimeMinutes,
-        isAbsent: data.isAbsent,
-        isLeave: data.isLeave,
-      },
-      ctx: { ...ctx, reason: input.reason },
+      await writeAudit(tx, {
+        action: "ATTENDANCE_ADJUSTED",
+        entityName: "AttendanceDay",
+        entityId: `${input.employeeId}:${input.workDate.toISOString().slice(0, 10)}`,
+        before: before
+          ? {
+              workedMinutes: before.workedMinutes.toString(),
+              isAbsent: before.isAbsent,
+              source: before.source,
+            }
+          : undefined,
+        after: {
+          workedMinutes: data.workedMinutes,
+          overtimeMinutes: data.overtimeMinutes,
+          isAbsent: data.isAbsent,
+          isLeave: data.isLeave,
+        },
+        ctx: { ...ctx, reason: input.reason },
+      });
     });
   });
 }
@@ -249,134 +252,155 @@ export async function preparePayrollRun(
   input: { entityId: string; fiscalPeriodId: string },
   ctx: AuditContext,
 ): Promise<{ payrollRunId: string; runNumber: string; employees: number; grossPay: string }> {
-  const period = await db.fiscalPeriod.findUnique({ where: { id: input.fiscalPeriodId } });
-  if (!period) throw new PayrollError("Fiscal period not found.");
-  if (period.status === "CLOSED") {
-    throw new PayrollError("That period is closed; payroll must be prepared in an open period.");
-  }
-
-  const existing = await db.payrollRun.findUnique({
-    where: { entityId_fiscalPeriodId: { entityId: input.entityId, fiscalPeriodId: input.fiscalPeriodId } },
-  });
-  if (existing && existing.status !== "DRAFT") {
-    throw new PayrollError(
-      `Payroll for this period is already ${existing.status.toLowerCase()} and cannot be prepared again.`,
-    );
-  }
-
-  const employees = await db.employee.findMany({
-    where: { entityId: input.entityId, status: { not: "TERMINATED" } },
-    include: { costCenter: true },
-  });
-  if (employees.length === 0) throw new PayrollError("No active employees for this entity.");
-
-  const standardDays = await settingNumber("capacity.defaultWorkingDays", "26");
-  const hoursPerDay = await settingNumber("capacity.defaultHoursPerDay", "8");
-  const overtimeMultiplier = await settingNumber("payroll.overtimeMultiplier", "1.5");
-  const employerCostPct = await settingNumber("payroll.employerCostPct", "0.1875");
-  const standardDayMinutes = dec(hoursPerDay).times(60);
-
-  return db.$transaction(async (tx) => {
-    const runNumber = existing?.runNumber ?? (await nextDocumentNumber(tx, "PAY", period.startDate));
-
-    if (existing) {
-      await tx.payrollLine.deleteMany({ where: { payrollRunId: existing.id } });
+  return command("payroll.preparePayrollRun", input, ctx, async () => {
+    const period = await db.fiscalPeriod.findUnique({ where: { id: input.fiscalPeriodId } });
+    if (!period) throw new PayrollError("Fiscal period not found.");
+    if (period.status === "CLOSED") {
+      throw new PayrollError("That period is closed; payroll must be prepared in an open period.");
     }
 
-    const run = existing
-      ? existing
-      : await tx.payrollRun.create({
-          data: {
-            runNumber,
-            entityId: input.entityId,
-            fiscalPeriodId: input.fiscalPeriodId,
-            status: "DRAFT",
-            preparedByUserId: ctx.userId,
-          },
-        });
+    const existing = await db.payrollRun.findUnique({
+      where: { entityId_fiscalPeriodId: { entityId: input.entityId, fiscalPeriodId: input.fiscalPeriodId } },
+    });
+    if (existing && existing.status !== "DRAFT") {
+      throw new PayrollError(
+        `Payroll for this period is already ${existing.status.toLowerCase()} and cannot be prepared again.`,
+      );
+    }
 
-    let gross = dec(0);
-    let deductions = dec(0);
-    let net = dec(0);
-    let employerTotal = dec(0);
+    const employees = await db.employee.findMany({
+      where: { entityId: input.entityId, status: { not: "TERMINATED" } },
+      include: { costCenter: true },
+    });
+    if (employees.length === 0) throw new PayrollError("No active employees for this entity.");
 
-    for (const e of employees) {
-      const days = await tx.attendanceDay.findMany({
+    const standardDays = await settingNumber("capacity.defaultWorkingDays", "26");
+    const hoursPerDay = await settingNumber("capacity.defaultHoursPerDay", "8");
+    const overtimeMultiplier = await settingNumber("payroll.overtimeMultiplier", "1.5");
+    const employerCostPct = await settingNumber("payroll.employerCostPct", "0.1875");
+    const standardDayMinutes = dec(hoursPerDay).times(60);
+
+    return db.$transaction(async (tx) => {
+      const runNumber = existing?.runNumber ?? (await nextDocumentNumber(tx, "PAY", period.startDate));
+
+      if (existing) {
+        await tx.payrollLine.deleteMany({ where: { payrollRunId: existing.id } });
+      }
+
+      const run = existing
+        ? existing
+        : await tx.payrollRun.create({
+            data: {
+              runNumber,
+              entityId: input.entityId,
+              fiscalPeriodId: input.fiscalPeriodId,
+              status: "DRAFT",
+              preparedByUserId: ctx.userId,
+            },
+          });
+
+      let gross = dec(0);
+      let deductions = dec(0);
+      let net = dec(0);
+      let employerTotal = dec(0);
+
+      // Everybody's attendance for the month in one query rather than one per
+      // person, and each cost centre's account looked up once: a payroll run
+      // holds a transaction open, and the queries inside it hold it longer.
+      const attendance = await tx.attendanceDay.findMany({
         where: {
-          employeeId: e.id,
+          employeeId: { in: employees.map((e) => e.id) },
           workDate: { gte: period.startDate, lte: period.endDate },
         },
       });
+      const daysByEmployee = new Map<string, typeof attendance>();
+      for (const day of attendance) {
+        const list = daysByEmployee.get(day.employeeId);
+        if (list) list.push(day);
+        else daysByEmployee.set(day.employeeId, [day]);
+      }
+      const accountIds = new Map<string, string>();
+      const accountFor = async (code: string) => {
+        const known = accountIds.get(code);
+        if (known) return known;
+        const id = await accountIdByCode(tx, code);
+        accountIds.set(code, id);
+        return id;
+      };
 
-      const absentDays = days.filter((d) => d.isAbsent && !d.isLeave).length;
-      const approvedOvertime = days.reduce(
-        (s, d) => s.plus(dec(d.overtimeMinutes)), dec(0),
-      );
-      const workedMinutes = days.reduce((s, d) => s.plus(dec(d.workedMinutes)), dec(0));
+      for (const e of employees) {
+        const days = daysByEmployee.get(e.id) ?? [];
 
-      const pay = calculatePay({
-        baseSalary: e.baseSalary.toString(),
-        standardDays,
-        standardDayMinutes,
-        daysAbsentUnpaid: absentDays,
-        approvedOvertimeMinutes: approvedOvertime,
-        overtimeMultiplier,
-        employerCostPct,
-      });
+        const absentDays = days.filter((d) => d.isAbsent && !d.isLeave).length;
+        const approvedOvertime = days.reduce(
+          (s, d) => s.plus(dec(d.overtimeMinutes)), dec(0),
+        );
+        const workedMinutes = days.reduce((s, d) => s.plus(dec(d.workedMinutes)), dec(0));
 
-      const accountCode = e.costCenter
-        ? COST_CENTRE_ACCOUNT[e.costCenter.code] ?? ACC.GENERAL_ADMIN
-        : ACC.GENERAL_ADMIN;
+        const pay = calculatePay({
+          baseSalary: e.baseSalary.toString(),
+          standardDays,
+          standardDayMinutes,
+          daysAbsentUnpaid: absentDays,
+          approvedOvertimeMinutes: approvedOvertime,
+          overtimeMultiplier,
+          employerCostPct,
+        });
 
-      await tx.payrollLine.create({
+        const accountCode = e.costCenter
+          ? COST_CENTRE_ACCOUNT[e.costCenter.code] ?? ACC.GENERAL_ADMIN
+          : ACC.GENERAL_ADMIN;
+
+        await tx.payrollLine.create({
+          data: {
+            payrollRunId: run.id,
+            employeeId: e.id,
+            baseSalary: e.baseSalary,
+            overtimePay: pay.overtimePay.toString(),
+            absenceDeduction: pay.absenceDeduction.toString(),
+            otherDeductions: "0",
+            grossPay: pay.grossPay.toString(),
+            netPay: pay.netPay.toString(),
+            employerCost: pay.employerCost.toString(),
+            workedMinutes: workedMinutes.toString(),
+            overtimeMinutes: approvedOvertime.toString(),
+            absentDays,
+            accountId: await accountFor(accountCode),
+          },
+        });
+
+        gross = gross.plus(pay.grossPay);
+        deductions = deductions.plus(pay.absenceDeduction).plus(pay.otherDeductions);
+        net = net.plus(pay.netPay);
+        employerTotal = employerTotal.plus(pay.employerCost);
+      }
+
+      await tx.payrollRun.update({
+        where: { id: run.id },
         data: {
-          payrollRunId: run.id,
-          employeeId: e.id,
-          baseSalary: e.baseSalary,
-          overtimePay: pay.overtimePay.toString(),
-          absenceDeduction: pay.absenceDeduction.toString(),
-          otherDeductions: "0",
-          grossPay: pay.grossPay.toString(),
-          netPay: pay.netPay.toString(),
-          employerCost: pay.employerCost.toString(),
-          workedMinutes: workedMinutes.toString(),
-          overtimeMinutes: approvedOvertime.toString(),
-          absentDays,
-          accountId: await accountIdByCode(tx, accountCode),
+          grossPay: gross.toString(),
+          deductions: deductions.toString(),
+          netPay: net.toString(),
+          employerCost: employerTotal.toString(),
+          preparedByUserId: ctx.userId,
         },
       });
 
-      gross = gross.plus(pay.grossPay);
-      deductions = deductions.plus(pay.absenceDeduction).plus(pay.otherDeductions);
-      net = net.plus(pay.netPay);
-      employerTotal = employerTotal.plus(pay.employerCost);
-    }
+      await writeAudit(tx, {
+        action: "PAYROLL_PREPARED",
+        entityName: "PayrollRun",
+        entityId: run.id,
+        after: { runNumber, employees: employees.length, grossPay: gross.toString() },
+        ctx,
+      });
 
-    await tx.payrollRun.update({
-      where: { id: run.id },
-      data: {
+      return {
+        payrollRunId: run.id,
+        runNumber,
+        employees: employees.length,
         grossPay: gross.toString(),
-        deductions: deductions.toString(),
-        netPay: net.toString(),
-        employerCost: employerTotal.toString(),
-        preparedByUserId: ctx.userId,
-      },
+      };
     });
-
-    await writeAudit(tx, {
-      action: "PAYROLL_PREPARED",
-      entityName: "PayrollRun",
-      entityId: run.id,
-      after: { runNumber, employees: employees.length, grossPay: gross.toString() },
-      ctx,
-    });
-
-    return {
-      payrollRunId: run.id,
-      runNumber,
-      employees: employees.length,
-      grossPay: gross.toString(),
-    };
   });
 }
 
@@ -392,91 +416,93 @@ export async function approveAndPostPayroll(
   input: { payrollRunId: string; postingDate?: Date },
   ctx: AuditContext,
 ): Promise<{ journalEntryNumber: string; totalCharged: string }> {
-  const run = await db.payrollRun.findUnique({
-    where: { id: input.payrollRunId },
-    include: { lines: { include: { account: true, employee: true } }, fiscalPeriod: true },
-  });
-  if (!run) throw new PayrollError("Payroll run not found.");
-  if (run.status === "POSTED") throw new PayrollError("That payroll run is already posted.");
-  if (run.lines.length === 0) throw new PayrollError("The run has no lines to post.");
+  return command("payroll.approveAndPostPayroll", input, ctx, async () => {
+    const run = await db.payrollRun.findUnique({
+      where: { id: input.payrollRunId },
+      include: { lines: { include: { account: true, employee: true } }, fiscalPeriod: true },
+    });
+    if (!run) throw new PayrollError("Payroll run not found.");
+    if (run.status === "POSTED") throw new PayrollError("That payroll run is already posted.");
+    if (run.lines.length === 0) throw new PayrollError("The run has no lines to post.");
 
-  if (
-    ctx.userId &&
-    violatesSeparationOfDuties({
-      creatorUserId: run.preparedByUserId,
-      approverUserId: ctx.userId,
-      createPermission: "payroll:prepare",
-      approvePermission: "payroll:approve",
-    })
-  ) {
-    throw new PayrollError(
-      "Payroll must be approved by someone other than the person who prepared it.",
-    );
-  }
-
-  const postingDate = input.postingDate ?? run.fiscalPeriod.endDate;
-
-  return db.$transaction(async (tx) => {
-    // One line per wage account, so the ledger mirrors the cost centres
-    // rather than listing every employee by name in the journal.
-    const byAccount = new Map<string, ReturnType<typeof dec>>();
-    for (const l of run.lines) {
-      const accountId = l.accountId!;
-      const charge = dec(l.grossPay).plus(dec(l.employerCost));
-      byAccount.set(accountId, (byAccount.get(accountId) ?? dec(0)).plus(charge));
+    if (
+      ctx.userId &&
+      violatesSeparationOfDuties({
+        creatorUserId: run.preparedByUserId,
+        approverUserId: ctx.userId,
+        createPermission: "payroll:prepare",
+        approvePermission: "payroll:approve",
+      })
+    ) {
+      throw new PayrollError(
+        "Payroll must be approved by someone other than the person who prepared it.",
+      );
     }
 
-    const totalCharged = [...byAccount.values()].reduce((s, v) => s.plus(v), dec(0));
+    const postingDate = input.postingDate ?? run.fiscalPeriod.endDate;
 
-    const lines: DraftLine[] = [...byAccount.entries()].map(([accountId, amount]) => ({
-      accountId,
-      debit: amount,
-      entityId: run.entityId,
-      description: `Payroll ${run.runNumber}`,
-    }));
+    return db.$transaction(async (tx) => {
+      // One line per wage account, so the ledger mirrors the cost centres
+      // rather than listing every employee by name in the journal.
+      const byAccount = new Map<string, ReturnType<typeof dec>>();
+      for (const l of run.lines) {
+        const accountId = l.accountId!;
+        const charge = dec(l.grossPay).plus(dec(l.employerCost));
+        byAccount.set(accountId, (byAccount.get(accountId) ?? dec(0)).plus(charge));
+      }
 
-    lines.push({
-      accountId: await accountIdByCode(tx, ACC.ACCRUED_PAYROLL),
-      credit: totalCharged,
-      entityId: run.entityId,
-      description: `Payroll accrued ${run.runNumber}`,
+      const totalCharged = [...byAccount.values()].reduce((s, v) => s.plus(v), dec(0));
+
+      const lines: DraftLine[] = [...byAccount.entries()].map(([accountId, amount]) => ({
+        accountId,
+        debit: amount,
+        entityId: run.entityId,
+        description: `Payroll ${run.runNumber}`,
+      }));
+
+      lines.push({
+        accountId: await accountIdByCode(tx, ACC.ACCRUED_PAYROLL),
+        credit: totalCharged,
+        entityId: run.entityId,
+        description: `Payroll accrued ${run.runNumber}`,
+      });
+
+      const journal = await postEntry(tx, {
+        entityId: run.entityId,
+        postingDate,
+        sourceType: "PAYROLL",
+        sourceId: run.id,
+        memo: `Payroll ${run.runNumber}`,
+        ctx,
+        lines,
+      });
+
+      await tx.payrollRun.update({
+        where: { id: run.id },
+        data: {
+          status: "POSTED",
+          approvedByUserId: ctx.userId,
+          approvedAt: new Date(),
+          postedAt: new Date(),
+          journalEntryId: journal.id,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "PAYROLL_POSTED",
+        entityName: "PayrollRun",
+        entityId: run.id,
+        before: { status: run.status },
+        after: {
+          status: "POSTED",
+          totalCharged: totalCharged.toString(),
+          journalEntry: journal.entryNumber,
+          accounts: byAccount.size,
+        },
+        ctx,
+      });
+
+      return { journalEntryNumber: journal.entryNumber, totalCharged: totalCharged.toString() };
     });
-
-    const journal = await postEntry(tx, {
-      entityId: run.entityId,
-      postingDate,
-      sourceType: "PAYROLL",
-      sourceId: run.id,
-      memo: `Payroll ${run.runNumber}`,
-      ctx,
-      lines,
-    });
-
-    await tx.payrollRun.update({
-      where: { id: run.id },
-      data: {
-        status: "POSTED",
-        approvedByUserId: ctx.userId,
-        approvedAt: new Date(),
-        postedAt: new Date(),
-        journalEntryId: journal.id,
-      },
-    });
-
-    await writeAudit(tx, {
-      action: "PAYROLL_POSTED",
-      entityName: "PayrollRun",
-      entityId: run.id,
-      before: { status: run.status },
-      after: {
-        status: "POSTED",
-        totalCharged: totalCharged.toString(),
-        journalEntry: journal.entryNumber,
-        accounts: byAccount.size,
-      },
-      ctx,
-    });
-
-    return { journalEntryNumber: journal.entryNumber, totalCharged: totalCharged.toString() };
   });
 }

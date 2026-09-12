@@ -232,6 +232,18 @@ describe("merging", () => {
     expect(merged.units).toBe(3);
   });
 
+  it("puts a later sale against the merged id on the record kept", async () => {
+    // An old screen, a bookmarked link or a stale import mapping still holding
+    // the merged id used to start a second history on the record merged away.
+    const keep = await makeCustomer({ name: "نور" });
+    const dupe = await makeCustomer({ name: "نور" });
+    await mergeCustomers({ keepId: keep.id, mergeId: dupe.id, reason: "same person" }, ctx);
+
+    const sale = await sell(dupe.id);
+    const order = await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } });
+    expect(order.customerId).toBe(keep.id);
+  });
+
   it("records who merged and why", async () => {
     const keep = await makeCustomer();
     const dupe = await makeCustomer();

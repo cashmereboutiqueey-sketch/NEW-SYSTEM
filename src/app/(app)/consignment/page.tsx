@@ -60,9 +60,6 @@ export default async function ConsignmentPage() {
   const earned = positions.reduce((s, p) => s.plus(dec(p.commissionEarned)), dec(0));
   const overdue = rail.filter((i) => i.overdue);
 
-  const dateText = (d: Date | null) =>
-    d ? new Date(d).toISOString().slice(0, 10) : "—";
-
   return (
     <>
       <PageHeader

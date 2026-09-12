@@ -58,32 +58,63 @@ function bandDescending(value: Numeric, bands: number[]): number {
   return 1;
 }
 
-export function rfm(orders: CustomerOrder[], asOf: Date): RfmScore {
-  if (orders.length === 0) {
+/**
+ * One customer's history as totals.
+ *
+ * Every figure below is a sum, a count or a maximum, so a screen about the
+ * whole customer base can ask the database for these directly instead of
+ * reading every order of every customer to add them up in memory.
+ */
+export type CustomerTotals = {
+  orders: number;
+  lastOrderDate: Date | null;
+  revenue: Numeric;
+  cogs: Numeric;
+  units: number;
+  returnedUnits: number;
+};
+
+/** The totals of a list of orders, for callers that hold the orders. */
+export function totalsOf(orders: CustomerOrder[]): CustomerTotals {
+  return {
+    orders: orders.length,
+    lastOrderDate: orders.reduce<Date | null>(
+      (max, o) => (max === null || o.orderDate > max ? o.orderDate : max),
+      null,
+    ),
+    revenue: orders.reduce((s, o) => s.plus(dec(o.netAmount)), dec(0)),
+    cogs: orders.reduce((s, o) => s.plus(dec(o.cogsAmount)), dec(0)),
+    units: orders.reduce((s, o) => s + o.quantity, 0),
+    returnedUnits: orders.reduce((s, o) => s + (o.returnedQty ?? 0), 0),
+  };
+}
+
+export function rfmFromTotals(totals: CustomerTotals, asOf: Date): RfmScore {
+  if (totals.orders === 0 || !totals.lastOrderDate) {
     return {
       recencyDays: null, frequency: 0, monetary: dec(0),
       recencyScore: null, frequencyScore: null, monetaryScore: null,
     };
   }
 
-  const latest = orders.reduce(
-    (max, o) => (o.orderDate > max ? o.orderDate : max),
-    orders[0].orderDate,
-  );
   const recencyDays = Math.max(
     0,
-    Math.floor((asOf.getTime() - latest.getTime()) / 86_400_000),
+    Math.floor((asOf.getTime() - totals.lastOrderDate.getTime()) / 86_400_000),
   );
-  const monetary = orders.reduce((s, o) => s.plus(dec(o.netAmount)), dec(0));
+  const monetary = dec(totals.revenue);
 
   return {
     recencyDays,
-    frequency: orders.length,
+    frequency: totals.orders,
     monetary,
     recencyScore: bandAscending(recencyDays, RECENCY_BANDS),
-    frequencyScore: bandDescending(orders.length, FREQUENCY_BANDS),
+    frequencyScore: bandDescending(totals.orders, FREQUENCY_BANDS),
     monetaryScore: bandDescending(monetary, MONETARY_BANDS),
   };
+}
+
+export function rfm(orders: CustomerOrder[], asOf: Date): RfmScore {
+  return rfmFromTotals(totalsOf(orders), asOf);
 }
 
 export type CustomerValue = {
@@ -99,23 +130,25 @@ export type CustomerValue = {
   lifetimeValue: Decimal;
 };
 
-export function customerValue(orders: CustomerOrder[]): CustomerValue {
-  const revenue = orders.reduce((s, o) => s.plus(dec(o.netAmount)), dec(0));
-  const cogs = orders.reduce((s, o) => s.plus(dec(o.cogsAmount)), dec(0));
-  const units = orders.reduce((s, o) => s + o.quantity, 0);
-  const returned = orders.reduce((s, o) => s + (o.returnedQty ?? 0), 0);
+export function customerValueFromTotals(totals: CustomerTotals): CustomerValue {
+  const revenue = dec(totals.revenue);
+  const cogs = dec(totals.cogs);
   const grossProfit = revenue.minus(cogs);
 
   return {
-    orders: orders.length,
-    units,
+    orders: totals.orders,
+    units: totals.units,
     revenue,
     cogs,
     grossProfit,
-    averageOrderValue: safeDiv(revenue, orders.length),
-    returnRate: safeDiv(returned, units),
+    averageOrderValue: safeDiv(revenue, totals.orders),
+    returnRate: safeDiv(totals.returnedUnits, totals.units),
     lifetimeValue: grossProfit,
   };
+}
+
+export function customerValue(orders: CustomerOrder[]): CustomerValue {
+  return customerValueFromTotals(totalsOf(orders));
 }
 
 export type Segment =

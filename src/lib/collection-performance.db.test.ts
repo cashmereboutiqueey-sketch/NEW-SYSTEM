@@ -4,9 +4,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
 import { transferToBrand } from "./intercompany";
-import { collectionPerformance } from "./analytics";
+import { collectionPerformance, markdownAnalysis } from "./analytics";
 import { createSale } from "./sales";
-import { dec } from "./money";
 
 /**
  * The same collection through each side's eyes.
@@ -391,5 +390,51 @@ describe("what the report leaves out", () => {
     // The factory is holding all hundred of them at its own cost.
     expect(Number(factory.onHandValue)).toBe(MADE * FACTORY_COST);
     expect(Number(factory.revenue)).toBe(0);
+  });
+});
+
+describe("what the discounts cost", () => {
+  /** Sell at a discount, the way the till records one. */
+  async function sellAtDiscount(quantity: number, discountPct: number) {
+    const net = RETAIL_PRICE * (1 - discountPct);
+    await createSale(
+      {
+        source: "MANUAL",
+        entityId: brandId,
+        channelId,
+        locationId: showroomId,
+        orderDate: day,
+        lines: [{ variantId, quantity, retailPrice: RETAIL_PRICE, discountPct }],
+        payments: [{ method: "CASH", amount: net * quantity }],
+      },
+      ctx,
+    );
+  }
+
+  it("counts what was given away, and how deep the deepest cut went", async () => {
+    const run = await produce();
+    await transfer(run);
+    await sell(4); // four at full price
+    await sellAtDiscount(2, 0.2);
+    await sellAtDiscount(1, 0.35);
+
+    const style = (await markdownAnalysis(brandId)).find((r) => r.id === styleId)!;
+
+    expect(style.units).toBe(7);
+    expect(style.discountedUnits).toBe(3);
+    expect(Number(style.grossRevenue)).toBe(7 * RETAIL_PRICE);
+    // Given away: 2 × 20% and 1 × 35% of the retail price.
+    expect(Number(style.givenAway)).toBeCloseTo(
+      2 * RETAIL_PRICE * 0.2 + RETAIL_PRICE * 0.35, 2,
+    );
+    expect(Number(style.deepestDiscount)).toBeCloseTo(0.35, 6);
+    expect(Number(style.discountedShare)).toBeCloseTo(3 / 7, 6);
+  });
+
+  it("says nothing about a style that was never sold", async () => {
+    const run = await produce();
+    await transfer(run);
+
+    expect((await markdownAnalysis(brandId)).some((r) => r.id === styleId)).toBe(false);
   });
 });

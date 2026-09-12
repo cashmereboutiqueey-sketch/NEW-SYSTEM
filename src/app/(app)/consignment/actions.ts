@@ -11,11 +11,21 @@ import {
   settleConsignor,
   ConsignmentError,
 } from "@/lib/consignment";
+import { can } from "@/core/permissions";
+import { formCommand, CommandError } from "@/lib/command";
+import { checkConsignedPrices, SalePriceError } from "@/lib/sale-prices";
 
 export type ConsignmentState = { error?: string; success?: string };
 
 function toMessage(error: unknown): string {
-  if (error instanceof ConsignmentError || error instanceof LedgerError) return error.message;
+  if (
+    error instanceof ConsignmentError ||
+    error instanceof LedgerError ||
+    error instanceof SalePriceError ||
+    error instanceof CommandError
+  ) {
+    return error.message;
+  }
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   console.error("Unhandled consignment error:", error);
   return "Something went wrong. Nothing was saved.";
@@ -102,19 +112,32 @@ export async function sellConsignedAction(
   try {
     const session = await authorize("sales_order:create");
 
+    const itemId = String(formData.get("itemId") ?? "");
+    const quantity = Number(formData.get("quantity") ?? 1);
     const price = String(formData.get("soldPrice") ?? "").trim();
-    const result = await sellConsignedItem(
-      {
-        itemId: String(formData.get("itemId") ?? ""),
-        quantity: Number(formData.get("quantity") ?? 1),
-        soldPrice: price || null,
-        paymentMethod: String(formData.get("paymentMethod") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD",
-        customerId: String(formData.get("customerId") ?? "") || null,
-        saleDate: day(formData.get("saleDate")),
-      },
-      { userId: session.userId, reason: null },
-    );
+
+    const result = await formCommand("consignment.sell", formData, { userId: session.userId }, async () => {
+      // Under the ticket is a discount, whoever's garment it is — and a
+      // consignor's more than most, since their share shrinks with it.
+      if (price) {
+        await checkConsignedPrices(
+          [{ itemId, quantity, retailPrice: Number(price) }],
+          can(session.role, "sales_order:discount"),
+        );
+      }
+      return sellConsignedItem(
+        {
+          itemId,
+          quantity,
+          soldPrice: price || null,
+          paymentMethod: String(formData.get("paymentMethod") ?? "CASH") as
+            | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD",
+          customerId: String(formData.get("customerId") ?? "") || null,
+          saleDate: day(formData.get("saleDate")),
+        },
+        { userId: session.userId, reason: null },
+      );
+    });
 
     refresh();
     return {
@@ -158,16 +181,20 @@ export async function settleConsignorAction(
     const session = await authorize("payment:create");
 
     const amount = String(formData.get("amount") ?? "").trim();
-    const result = await settleConsignor(
-      {
-        consignorId: String(formData.get("consignorId") ?? ""),
-        method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "BANK_TRANSFER" | "INSTAPAY",
-        paidOn: day(formData.get("paidOn")),
-        amount: amount || null,
-        reference: String(formData.get("reference") ?? "") || null,
-      },
-      { userId: session.userId, reason: null },
+    // A second press after a lost response returns this settlement rather
+    // than paying the consignor twice.
+    const result = await formCommand("consignment.settle", formData, { userId: session.userId }, () =>
+      settleConsignor(
+        {
+          consignorId: String(formData.get("consignorId") ?? ""),
+          method: String(formData.get("method") ?? "CASH") as
+            | "CASH" | "BANK_TRANSFER" | "INSTAPAY",
+          paidOn: day(formData.get("paidOn")),
+          amount: amount || null,
+          reference: String(formData.get("reference") ?? "") || null,
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     refresh();

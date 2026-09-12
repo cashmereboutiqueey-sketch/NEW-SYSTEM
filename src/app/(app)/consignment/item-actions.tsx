@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { RequestIdField } from "@/components/request-id";
 import {
   sellConsignedAction,
   returnConsignmentAction,
@@ -50,6 +51,7 @@ export function ItemActions({
   if (panel === "sell") {
     return (
       <form action={sell} className="min-w-[15rem] space-y-2">
+        <RequestIdField state={sellState} />
         <input type="hidden" name="itemId" value={item.id} />
         <input type="hidden" name="saleDate" value={today} />
 
