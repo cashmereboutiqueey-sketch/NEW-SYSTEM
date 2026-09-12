@@ -12,6 +12,11 @@ import {
   rejectPurchaseOrder,
   ApprovalError,
 } from "@/lib/approvals";
+import {
+  approveStockAdjustment,
+  rejectStockAdjustment,
+  StocktakeError,
+} from "@/lib/stocktake";
 
 export type ApprovalState = { error?: string; success?: string };
 
@@ -19,7 +24,8 @@ function toMessage(error: unknown): string {
   if (
     error instanceof ApprovalError ||
     error instanceof PayrollError ||
-    error instanceof LedgerError
+    error instanceof LedgerError ||
+    error instanceof StocktakeError
   ) {
     return error.message;
   }
@@ -33,6 +39,47 @@ function refresh() {
   revalidatePath("/expenses");
   revalidatePath("/purchasing");
   revalidatePath("/hr");
+  revalidatePath("/inventory");
+}
+
+export async function approveStockAdjustmentAction(
+  _prev: ApprovalState,
+  formData: FormData,
+): Promise<ApprovalState> {
+  try {
+    // Checked against the person approving, who is whoever is signed in.
+    const session = await authorize("inventory:approve_adjustment");
+    const result = await approveStockAdjustment(
+      { requestId: String(formData.get("requestId") ?? "") },
+      { userId: session.userId, reason: null },
+    );
+    refresh();
+    return result.outcome === "STALE"
+      ? { error: "The stock has moved since it was counted, so this difference is out of date. It has been closed; count the shelf again." }
+      : { success: `اتعتمد واتقيّد (${result.journalEntryNumber}).` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function rejectStockAdjustmentAction(
+  _prev: ApprovalState,
+  formData: FormData,
+): Promise<ApprovalState> {
+  try {
+    const session = await authorize("inventory:approve_adjustment");
+    await rejectStockAdjustment(
+      {
+        requestId: String(formData.get("requestId") ?? ""),
+        reason: String(formData.get("reason") ?? ""),
+      },
+      { userId: session.userId, reason: null },
+    );
+    refresh();
+    return { success: "اترجّع للي عدّه." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
 }
 
 export async function approveExpenseAction(

@@ -29,13 +29,11 @@ type Row = {
 export function CloseForm({
   exhibitionId,
   rows,
-  approvers,
   threshold,
   ar,
 }: {
   exhibitionId: string;
   rows: Row[];
-  approvers: { id: string; name: string }[];
   threshold: string;
   ar: boolean;
 }) {
@@ -164,25 +162,13 @@ export function CloseForm({
       )}
 
       {needsApproval && (
-        <label className="mt-3 block text-sm">
-          <span className="mb-1 block text-ink-600">
-            {ar
-              ? `النقص أكبر من حد الـ ${Number(threshold).toFixed(0)} جنيه، فمحتاج حد تاني يوافق`
-              : `The shortfall is over the ${Number(threshold).toFixed(0)} limit and needs a second approver`}
-          </span>
-          <select
-            name="approvedByUserId"
-            required
-            className="rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm outline-none focus:border-rose-deep"
-          >
-            <option value="">{ar ? "اختار حد" : "Choose"}</option>
-            {approvers.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        // The approver is whoever is signed in, so there is nobody to choose
+        // here: a name picked from a list was a name anybody could pick.
+        <p className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
+          {ar
+            ? `النقص أكبر من حد الـ ${Number(threshold).toFixed(0)} جنيه. اللي بيقفل المعرض هو اللي بيعتمد شطب النقص، فلازم يكون داخل بحساب له صلاحية اعتماد فروق المخزون.`
+            : `The shortfall is over the ${Number(threshold).toFixed(0)} limit. Closing the bazaar writes it off, so whoever is signed in has to be somebody who may approve stock adjustments.`}
+        </p>
       )}
 
       <label className="mt-3 block text-sm">

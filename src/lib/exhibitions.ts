@@ -6,6 +6,8 @@ import { consumeFifo } from "@/core/fifo";
 import { dec, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { approvalThreshold } from "./stocktake";
+import { command } from "./command";
+import { can } from "@/core/permissions";
 
 /**
  * Bazaars: stock goes out for a few days and has to come back.
@@ -72,68 +74,70 @@ export async function openExhibition(
   },
   ctx: AuditContext,
 ): Promise<{ id: string; code: string }> {
-  const opens = asDay(input.opensAt);
-  const closes = asDay(input.closesAt);
+  return command("exhibitions.openExhibition", input, ctx, async () => {
+    const opens = asDay(input.opensAt);
+    const closes = asDay(input.closesAt);
 
-  if (closes < opens) {
-    throw new ExhibitionError("A bazaar cannot close before it opens.");
-  }
-  if (!input.nameAr.trim()) {
-    throw new ExhibitionError("The bazaar needs a name.");
-  }
+    if (closes < opens) {
+      throw new ExhibitionError("A bazaar cannot close before it opens.");
+    }
+    if (!input.nameAr.trim()) {
+      throw new ExhibitionError("The bazaar needs a name.");
+    }
 
-  const parent = await db.location.findUnique({
-    where: { id: input.parentLocationId },
-  });
-  if (!parent) throw new ExhibitionError("The source location does not exist.");
-  if (!parent.isActive) {
-    throw new ExhibitionError(`${parent.nameEn} is closed and cannot supply a bazaar.`);
-  }
-  if (parent.kind === "EXHIBITION") {
-    // Otherwise the return path becomes a chain, and closing the first bazaar
-    // would be blocked by the second one still holding its stock.
-    throw new ExhibitionError("A bazaar cannot be stocked from another bazaar.");
-  }
-  if (parent.kind === "TRANSIT") {
-    throw new ExhibitionError("Goods still in transit have not been counted in yet.");
-  }
-
-  return db.$transaction(async (tx) => {
-    const code = await nextDocumentNumber(tx, "EXH", opens);
-
-    const location = await tx.location.create({
-      data: {
-        code,
-        nameAr: input.nameAr.trim(),
-        nameEn: input.nameEn.trim() || input.nameAr.trim(),
-        kind: "EXHIBITION",
-        entityId: parent.entityId,
-        city: input.city?.trim() || parent.city,
-        isActive: true,
-        opensAt: opens,
-        closesAt: closes,
-        parentLocationId: parent.id,
-        // Below the permanent locations in every picker: a bazaar is the
-        // exception, and should not sit above the showroom people use daily.
-        sortOrder: 900,
-      },
+    const parent = await db.location.findUnique({
+      where: { id: input.parentLocationId },
     });
+    if (!parent) throw new ExhibitionError("The source location does not exist.");
+    if (!parent.isActive) {
+      throw new ExhibitionError(`${parent.nameEn} is closed and cannot supply a bazaar.`);
+    }
+    if (parent.kind === "EXHIBITION") {
+      // Otherwise the return path becomes a chain, and closing the first bazaar
+      // would be blocked by the second one still holding its stock.
+      throw new ExhibitionError("A bazaar cannot be stocked from another bazaar.");
+    }
+    if (parent.kind === "TRANSIT") {
+      throw new ExhibitionError("Goods still in transit have not been counted in yet.");
+    }
 
-    await writeAudit(tx, {
-      action: "EXHIBITION_OPENED",
-      entityName: "Location",
-      entityId: location.id,
-      after: {
-        code,
-        name: location.nameAr,
-        from: parent.code,
-        opensAt: opens.toISOString().slice(0, 10),
-        closesAt: closes.toISOString().slice(0, 10),
-      },
-      ctx,
+    return db.$transaction(async (tx) => {
+      const code = await nextDocumentNumber(tx, "EXH", opens);
+
+      const location = await tx.location.create({
+        data: {
+          code,
+          nameAr: input.nameAr.trim(),
+          nameEn: input.nameEn.trim() || input.nameAr.trim(),
+          kind: "EXHIBITION",
+          entityId: parent.entityId,
+          city: input.city?.trim() || parent.city,
+          isActive: true,
+          opensAt: opens,
+          closesAt: closes,
+          parentLocationId: parent.id,
+          // Below the permanent locations in every picker: a bazaar is the
+          // exception, and should not sit above the showroom people use daily.
+          sortOrder: 900,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "EXHIBITION_OPENED",
+        entityName: "Location",
+        entityId: location.id,
+        after: {
+          code,
+          name: location.nameAr,
+          from: parent.code,
+          opensAt: opens.toISOString().slice(0, 10),
+          closesAt: closes.toISOString().slice(0, 10),
+        },
+        ctx,
+      });
+
+      return { id: location.id, code };
     });
-
-    return { id: location.id, code };
   });
 }
 
@@ -215,105 +219,107 @@ export async function sendToExhibition(
   },
   ctx: AuditContext,
 ): Promise<{ despatchNumber: string; totalQty: string; totalCost: string }> {
-  const exhibition = await db.location.findUnique({
-    where: { id: input.exhibitionId },
-    include: { parent: true },
-  });
-  if (!exhibition) throw new ExhibitionError("Bazaar not found.");
-  if (exhibition.kind !== "EXHIBITION") {
-    throw new ExhibitionError(`${exhibition.nameEn} is not a bazaar.`);
-  }
-  if (!exhibition.isActive) {
-    throw new ExhibitionError("This bazaar has been closed and reconciled; nothing more can go to it.");
-  }
-  if (!exhibition.parent) {
-    throw new ExhibitionError("This bazaar has no source location, so nothing can be sent or returned.");
-  }
+  return command("exhibitions.sendToExhibition", input, ctx, async () => {
+    const exhibition = await db.location.findUnique({
+      where: { id: input.exhibitionId },
+      include: { parent: true },
+    });
+    if (!exhibition) throw new ExhibitionError("Bazaar not found.");
+    if (exhibition.kind !== "EXHIBITION") {
+      throw new ExhibitionError(`${exhibition.nameEn} is not a bazaar.`);
+    }
+    if (!exhibition.isActive) {
+      throw new ExhibitionError("This bazaar has been closed and reconciled; nothing more can go to it.");
+    }
+    if (!exhibition.parent) {
+      throw new ExhibitionError("This bazaar has no source location, so nothing can be sent or returned.");
+    }
 
-  const lines = input.lines.filter((l) => dec(l.quantity).greaterThan(0));
-  if (lines.length === 0) throw new ExhibitionError("Nothing was selected to send.");
+    const lines = input.lines.filter((l) => dec(l.quantity).greaterThan(0));
+    if (lines.length === 0) throw new ExhibitionError("Nothing was selected to send.");
 
-  const sendDate = asDay(input.sendDate);
-  const parentId = exhibition.parent.id;
+    const sendDate = asDay(input.sendDate);
+    const parentId = exhibition.parent.id;
 
-  return db.$transaction(async (tx) => {
-    const despatchNumber = await nextDocumentNumber(tx, "EXS", sendDate);
-    let totalQty = dec(0);
-    let totalCost = dec(0);
+    return db.$transaction(async (tx) => {
+      const despatchNumber = await nextDocumentNumber(tx, "EXS", sendDate);
+      let totalQty = dec(0);
+      let totalCost = dec(0);
 
-    for (const line of lines) {
-      const quantity = dec(line.quantity);
+      for (const line of lines) {
+        const quantity = dec(line.quantity);
 
-      const lots = await tx.inventoryLot.findMany({
-        where: {
-          variantId: line.variantId,
-          locationId: parentId,
-          state: "FINISHED_GOODS",
-          remainingQty: { gt: 0 },
-          // The tagging rule, enforced rather than advertised.
-          labelsPrintedAt: { not: null },
-        },
-        orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-      });
-
-      const consumed = consumeFifo(
-        lots.map((l) => ({
-          id: l.id,
-          receivedDate: l.receivedDate,
-          sequence: l.sequence,
-          // Reserved stock is spoken for by an order already placed; sending
-          // it to a bazaar would sell the same garment twice.
-          remainingQty: dec(l.remainingQty).minus(dec(l.reservedQty)).toString(),
-          unitCost: l.unitCost.toString(),
-        })),
-        quantity,
-      );
-
-      if (!consumed.ok) {
-        const variant = await tx.variant.findUnique({
-          where: { id: line.variantId },
-          select: { sku: true },
-        });
-        throw new ExhibitionError(
-          `${exhibition.parent!.nameAr} does not hold enough tagged ${variant?.sku ?? "stock"}: ` +
-            `${consumed.requested.toString()} asked for, ${consumed.available.toString()} available.`,
-        );
-      }
-
-      for (const a of consumed.allocations) {
-        const source = lots.find((l) => l.id === a.lotId)!;
-
-        await tx.inventoryLot.update({
-          where: { id: a.lotId },
-          data: { remainingQty: { decrement: a.quantity.toString() } },
-        });
-
-        // One bazaar lot per source lot, so each keeps its own cost and FIFO
-        // still means something when the goods come back.
-        const lotNumber = await nextDocumentNumber(tx, "LOT", sendDate);
-        const bazaarLot = await tx.inventoryLot.create({
-          data: {
-            lotNumber,
-            state: "FINISHED_GOODS",
+        const lots = await tx.inventoryLot.findMany({
+          where: {
             variantId: line.variantId,
-            locationId: exhibition.id,
-            entityId: source.entityId,
-            productionOrderId: source.productionOrderId,
-            originalQty: a.quantity.toString(),
-            remainingQty: a.quantity.toString(),
-            unitCost: a.unitCost.toString(),
-            receivedDate: source.receivedDate,
-            // The goods were tagged before they left; they are still tagged.
-            labelsPrintedAt: source.labelsPrintedAt,
-            transferMarginPerUnit: source.transferMarginPerUnit,
-            sourceCostSnapshotId: source.sourceCostSnapshotId,
+            locationId: parentId,
+            state: "FINISHED_GOODS",
+            remainingQty: { gt: 0 },
+            // The tagging rule, enforced rather than advertised.
+            labelsPrintedAt: { not: null },
           },
+          orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
         });
 
-        await tx.inventoryMovement.create({
-          data: {
-            lotId: bazaarLot.id,
-            type: "TRANSFER",
+        const consumed = consumeFifo(
+          lots.map((l) => ({
+            id: l.id,
+            receivedDate: l.receivedDate,
+            sequence: l.sequence,
+            // Reserved stock is spoken for by an order already placed; sending
+            // it to a bazaar would sell the same garment twice.
+            remainingQty: dec(l.remainingQty).minus(dec(l.reservedQty)).toString(),
+            unitCost: l.unitCost.toString(),
+          })),
+          quantity,
+        );
+
+        if (!consumed.ok) {
+          const variant = await tx.variant.findUnique({
+            where: { id: line.variantId },
+            select: { sku: true },
+          });
+          throw new ExhibitionError(
+            `${exhibition.parent!.nameAr} does not hold enough tagged ${variant?.sku ?? "stock"}: ` +
+              `${consumed.requested.toString()} asked for, ${consumed.available.toString()} available.`,
+          );
+        }
+
+        for (const a of consumed.allocations) {
+          const source = lots.find((l) => l.id === a.lotId)!;
+
+          await tx.inventoryLot.update({
+            where: { id: a.lotId },
+            data: { remainingQty: { decrement: a.quantity.toString() } },
+          });
+
+          // One bazaar lot per source lot, so each keeps its own cost and FIFO
+          // still means something when the goods come back.
+          const lotNumber = await nextDocumentNumber(tx, "LOT", sendDate);
+          const bazaarLot = await tx.inventoryLot.create({
+            data: {
+              lotNumber,
+              state: "FINISHED_GOODS",
+              variantId: line.variantId,
+              locationId: exhibition.id,
+              entityId: source.entityId,
+              productionOrderId: source.productionOrderId,
+              originalQty: a.quantity.toString(),
+              remainingQty: a.quantity.toString(),
+              unitCost: a.unitCost.toString(),
+              receivedDate: source.receivedDate,
+              // The goods were tagged before they left; they are still tagged.
+              labelsPrintedAt: source.labelsPrintedAt,
+              transferMarginPerUnit: source.transferMarginPerUnit,
+              sourceCostSnapshotId: source.sourceCostSnapshotId,
+            },
+          });
+
+          // Both legs: out of the shop's lot, into the bazaar's. No journal:
+          // same company, same stock account, same value. What changed is
+          // where the goods are, not what they are worth.
+          const leg = {
+            type: "TRANSFER" as const,
             quantity: a.quantity.toString(),
             unitCost: a.unitCost.toString(),
             totalCost: a.cost.toString(),
@@ -323,43 +329,43 @@ export async function sendToExhibition(
             referenceType: SEND_REF,
             referenceId: exhibition.id,
             notes: input.notes ?? null,
-            // No journal: same company, same stock account, same value. What
-            // changed is where the goods are, not what they are worth.
-          },
-        });
+          };
+          await tx.inventoryMovement.create({ data: { ...leg, lotId: a.lotId, direction: "OUT" } });
+          await tx.inventoryMovement.create({ data: { ...leg, lotId: bazaarLot.id, direction: "IN" } });
 
-        await moveUnits(tx, {
-          variantId: line.variantId,
-          quantity: Number(a.quantity),
-          fromLocationId: parentId,
-          toLocationId: exhibition.id,
-          toLotId: bazaarLot.id,
-        });
+          await moveUnits(tx, {
+            variantId: line.variantId,
+            quantity: Number(a.quantity),
+            fromLocationId: parentId,
+            toLocationId: exhibition.id,
+            toLotId: bazaarLot.id,
+          });
 
-        totalQty = totalQty.plus(a.quantity);
-        totalCost = totalCost.plus(a.cost);
+          totalQty = totalQty.plus(a.quantity);
+          totalCost = totalCost.plus(a.cost);
+        }
       }
-    }
 
-    await writeAudit(tx, {
-      action: "EXHIBITION_STOCK_SENT",
-      entityName: "Location",
-      entityId: exhibition.id,
-      after: {
+      await writeAudit(tx, {
+        action: "EXHIBITION_STOCK_SENT",
+        entityName: "Location",
+        entityId: exhibition.id,
+        after: {
+          despatchNumber,
+          bazaar: exhibition.code,
+          from: exhibition.parent!.code,
+          quantity: totalQty.toString(),
+          cost: totalCost.toString(),
+        },
+        ctx,
+      });
+
+      return {
         despatchNumber,
-        bazaar: exhibition.code,
-        from: exhibition.parent!.code,
-        quantity: totalQty.toString(),
-        cost: totalCost.toString(),
-      },
-      ctx,
+        totalQty: totalQty.toString(),
+        totalCost: totalCost.toString(),
+      };
     });
-
-    return {
-      despatchNumber,
-      totalQty: totalQty.toString(),
-      totalCost: totalCost.toString(),
-    };
   });
 }
 
@@ -415,7 +421,9 @@ export async function exhibitionPosition(exhibitionId: string) {
 
   const [sent, lots, soldLines] = await Promise.all([
     db.inventoryMovement.findMany({
-      where: { referenceType: SEND_REF, referenceId: exhibitionId },
+      // The arriving leg only: a send is two movements, out of the shop's lot
+      // and into the bazaar's, and counting both would send everything twice.
+      where: { referenceType: SEND_REF, referenceId: exhibitionId, direction: "IN" },
       include: {
         lot: {
           include: {
@@ -617,7 +625,6 @@ export async function closeExhibition(
     exhibitionId: string;
     closeDate: Date;
     counts: { variantId: string; countedQty: string }[];
-    approvedByUserId?: string | null;
     notes?: string | null;
   },
   ctx: AuditContext,
@@ -628,113 +635,113 @@ export async function closeExhibition(
   shortfallValue: string;
   journalEntryId: string | null;
 }> {
-  const exhibition = await db.location.findUnique({
-    where: { id: input.exhibitionId },
-    include: { parent: true },
-  });
-  if (!exhibition) throw new ExhibitionError("Bazaar not found.");
-  if (exhibition.kind !== "EXHIBITION") {
-    throw new ExhibitionError(`${exhibition.nameEn} is not a bazaar.`);
-  }
-  if (!exhibition.isActive) {
-    throw new ExhibitionError("This bazaar has already been closed and reconciled.");
-  }
-  if (!exhibition.parent) {
-    throw new ExhibitionError("This bazaar has no source location to return stock to.");
-  }
-
-  const openTill = await db.posSession.findFirst({
-    where: { locationId: exhibition.id, closedAt: null },
-  });
-  if (openTill) {
-    // Closing with a till still open would count stock that a sale in progress
-    // is about to remove.
-    throw new ExhibitionError(
-      "There is still a till session open at this bazaar. Close the till first.",
-    );
-  }
-
-  const closeDate = asDay(input.closeDate);
-  const position = await exhibitionPosition(input.exhibitionId);
-  const threshold = await approvalThreshold();
-
-  const counted = new Map(
-    input.counts.map((c) => [c.variantId, dec(c.countedQty)]),
-  );
-
-  // Anything on the stand that nobody counted is counted as zero — that is
-  // what "it is not here" means. Silently skipping it would hide the loss.
-  for (const line of position.lines) {
-    if (dec(line.expected).greaterThan(0) && !counted.has(line.variantId)) {
-      counted.set(line.variantId, dec(0));
+  return command("exhibitions.closeExhibition", input, ctx, async () => {
+    const exhibition = await db.location.findUnique({
+      where: { id: input.exhibitionId },
+      include: { parent: true },
+    });
+    if (!exhibition) throw new ExhibitionError("Bazaar not found.");
+    if (exhibition.kind !== "EXHIBITION") {
+      throw new ExhibitionError(`${exhibition.nameEn} is not a bazaar.`);
     }
-  }
+    if (!exhibition.isActive) {
+      throw new ExhibitionError("This bazaar has already been closed and reconciled.");
+    }
+    if (!exhibition.parent) {
+      throw new ExhibitionError("This bazaar has no source location to return stock to.");
+    }
 
-  for (const [, qty] of counted) {
-    if (qty.lessThan(0)) throw new ExhibitionError("A count cannot be negative.");
-  }
+    const openTill = await db.posSession.findFirst({
+      where: { locationId: exhibition.id, closedAt: null },
+    });
+    if (openTill) {
+      // Closing with a till still open would count stock that a sale in progress
+      // is about to remove.
+      throw new ExhibitionError(
+        "There is still a till session open at this bazaar. Close the till first.",
+      );
+    }
 
-  return db.$transaction(async (tx) => {
-    const returnNumber = await nextDocumentNumber(tx, "EXR", closeDate);
-    const parentId = exhibition.parent!.id;
+    const closeDate = asDay(input.closeDate);
+    const position = await exhibitionPosition(input.exhibitionId);
+    const threshold = await approvalThreshold();
 
-    let returnedQty = dec(0);
-    let missingQty = dec(0);
-    let overageQty = dec(0);
-    let shortfallValue = dec(0);
-    let overageValue = dec(0);
+    const counted = new Map(
+      input.counts.map((c) => [c.variantId, dec(c.countedQty)]),
+    );
 
-    for (const [variantId, countedQty] of counted) {
-      const lots = await tx.inventoryLot.findMany({
-        where: {
-          variantId,
-          locationId: exhibition.id,
-          remainingQty: { gt: 0 },
-        },
-        orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-      });
+    // Anything on the stand that nobody counted is counted as zero — that is
+    // what "it is not here" means. Silently skipping it would hide the loss.
+    for (const line of position.lines) {
+      if (dec(line.expected).greaterThan(0) && !counted.has(line.variantId)) {
+        counted.set(line.variantId, dec(0));
+      }
+    }
 
-      const expected = lots.reduce((s, l) => s.plus(dec(l.remainingQty)), dec(0));
+    for (const [, qty] of counted) {
+      if (qty.lessThan(0)) throw new ExhibitionError("A count cannot be negative.");
+    }
 
-      // Return what is actually there, oldest first, so the aging clock the
-      // showroom sees is the real one rather than restarted by the trip.
-      let toReturn = countedQty.greaterThan(expected) ? expected : countedQty;
-      const shortage = expected.minus(toReturn);
+    return db.$transaction(async (tx) => {
+      const returnNumber = await nextDocumentNumber(tx, "EXR", closeDate);
+      const parentId = exhibition.parent!.id;
 
-      for (const lot of lots) {
-        if (toReturn.lessThanOrEqualTo(0)) break;
-        const take = dec(lot.remainingQty).greaterThan(toReturn)
-          ? toReturn
-          : dec(lot.remainingQty);
+      let returnedQty = dec(0);
+      let missingQty = dec(0);
+      let overageQty = dec(0);
+      let shortfallValue = dec(0);
+      let overageValue = dec(0);
 
-        await tx.inventoryLot.update({
-          where: { id: lot.id },
-          data: { remainingQty: { decrement: take.toString() } },
-        });
-
-        const lotNumber = await nextDocumentNumber(tx, "LOT", closeDate);
-        const homeLot = await tx.inventoryLot.create({
-          data: {
-            lotNumber,
-            state: "FINISHED_GOODS",
+      for (const [variantId, countedQty] of counted) {
+        const lots = await tx.inventoryLot.findMany({
+          where: {
             variantId,
-            locationId: parentId,
-            entityId: lot.entityId,
-            productionOrderId: lot.productionOrderId,
-            originalQty: take.toString(),
-            remainingQty: take.toString(),
-            unitCost: lot.unitCost.toString(),
-            receivedDate: lot.receivedDate,
-            labelsPrintedAt: lot.labelsPrintedAt,
-            transferMarginPerUnit: lot.transferMarginPerUnit,
-            sourceCostSnapshotId: lot.sourceCostSnapshotId,
+            locationId: exhibition.id,
+            remainingQty: { gt: 0 },
           },
+          orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
         });
 
-        await tx.inventoryMovement.create({
-          data: {
-            lotId: homeLot.id,
-            type: "TRANSFER",
+        const expected = lots.reduce((s, l) => s.plus(dec(l.remainingQty)), dec(0));
+
+        // Return what is actually there, oldest first, so the aging clock the
+        // showroom sees is the real one rather than restarted by the trip.
+        let toReturn = countedQty.greaterThan(expected) ? expected : countedQty;
+        const shortage = expected.minus(toReturn);
+
+        for (const lot of lots) {
+          if (toReturn.lessThanOrEqualTo(0)) break;
+          const take = dec(lot.remainingQty).greaterThan(toReturn)
+            ? toReturn
+            : dec(lot.remainingQty);
+
+          await tx.inventoryLot.update({
+            where: { id: lot.id },
+            data: { remainingQty: { decrement: take.toString() } },
+          });
+
+          const lotNumber = await nextDocumentNumber(tx, "LOT", closeDate);
+          const homeLot = await tx.inventoryLot.create({
+            data: {
+              lotNumber,
+              state: "FINISHED_GOODS",
+              variantId,
+              locationId: parentId,
+              entityId: lot.entityId,
+              productionOrderId: lot.productionOrderId,
+              originalQty: take.toString(),
+              remainingQty: take.toString(),
+              unitCost: lot.unitCost.toString(),
+              receivedDate: lot.receivedDate,
+              labelsPrintedAt: lot.labelsPrintedAt,
+              transferMarginPerUnit: lot.transferMarginPerUnit,
+              sourceCostSnapshotId: lot.sourceCostSnapshotId,
+            },
+          });
+
+          // Out of the bazaar's lot, into the one back home.
+          const leg = {
+            type: "TRANSFER" as const,
             quantity: take.toString(),
             unitCost: lot.unitCost.toString(),
             totalCost: take.times(dec(lot.unitCost)).toString(),
@@ -744,157 +751,167 @@ export async function closeExhibition(
             referenceType: RETURN_REF,
             referenceId: exhibition.id,
             notes: input.notes ?? null,
-          },
-        });
+          };
+          await tx.inventoryMovement.create({ data: { ...leg, lotId: lot.id, direction: "OUT" } });
+          await tx.inventoryMovement.create({ data: { ...leg, lotId: homeLot.id, direction: "IN" } });
 
-        await moveUnits(tx, {
-          variantId,
-          quantity: Number(take),
-          fromLocationId: exhibition.id,
-          toLocationId: parentId,
-          toLotId: homeLot.id,
-        });
-
-        returnedQty = returnedQty.plus(take);
-        toReturn = toReturn.minus(take);
-      }
-
-      // Whatever is still on the books at the bazaar and was not counted is
-      // gone. Write it off against the lots it belonged to, so the loss
-      // carries the cost those particular garments actually had.
-      if (shortage.greaterThan(0)) {
-        let left = shortage;
-        const stranded = await tx.inventoryLot.findMany({
-          where: { variantId, locationId: exhibition.id, remainingQty: { gt: 0 } },
-          orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-        });
-
-        for (const lot of stranded) {
-          if (left.lessThanOrEqualTo(0)) break;
-          const take = dec(lot.remainingQty).greaterThan(left) ? left : dec(lot.remainingQty);
-
-          await tx.inventoryLot.update({
-            where: { id: lot.id },
-            data: { remainingQty: { decrement: take.toString() } },
+          await moveUnits(tx, {
+            variantId,
+            quantity: Number(take),
+            fromLocationId: exhibition.id,
+            toLocationId: parentId,
+            toLotId: homeLot.id,
           });
 
-          await tx.inventoryMovement.create({
-            data: {
-              lotId: lot.id,
-              type: "ADJUSTMENT",
-              quantity: take.toString(),
-              unitCost: lot.unitCost.toString(),
-              totalCost: take.times(dec(lot.unitCost)).toString(),
-              movementDate: closeDate,
-              fromLocationId: exhibition.id,
-              referenceType: LOSS_REF,
-              referenceId: exhibition.id,
-              notes: input.notes ?? null,
-            },
-          });
-
-          shortfallValue = shortfallValue.plus(take.times(dec(lot.unitCost)));
-          missingQty = missingQty.plus(take);
-          left = left.minus(take);
+          returnedQty = returnedQty.plus(take);
+          toReturn = toReturn.minus(take);
         }
 
-        // The garments that did not come back are named, not just counted.
-        const lostUnits = await tx.garmentUnit.findMany({
-          where: { locationId: exhibition.id, variantId, status: "IN_STOCK" },
-          orderBy: { createdAt: "asc" },
-          take: Number(shortage),
-          select: { id: true },
-        });
-        if (lostUnits.length > 0) {
-          await tx.garmentUnit.updateMany({
-            where: { id: { in: lostUnits.map((u) => u.id) } },
-            data: {
-              status: "LOST",
-              lotId: null,
-              writeOffNote: `Did not come back from ${exhibition.code}`,
-            },
+        // Whatever is still on the books at the bazaar and was not counted is
+        // gone. Write it off against the lots it belonged to, so the loss
+        // carries the cost those particular garments actually had.
+        if (shortage.greaterThan(0)) {
+          let left = shortage;
+          const stranded = await tx.inventoryLot.findMany({
+            where: { variantId, locationId: exhibition.id, remainingQty: { gt: 0 } },
+            orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
           });
+
+          for (const lot of stranded) {
+            if (left.lessThanOrEqualTo(0)) break;
+            const take = dec(lot.remainingQty).greaterThan(left) ? left : dec(lot.remainingQty);
+
+            await tx.inventoryLot.update({
+              where: { id: lot.id },
+              data: { remainingQty: { decrement: take.toString() } },
+            });
+
+            await tx.inventoryMovement.create({
+              data: {
+                lotId: lot.id,
+                type: "ADJUSTMENT",
+                direction: "OUT",
+                quantity: take.toString(),
+                unitCost: lot.unitCost.toString(),
+                totalCost: take.times(dec(lot.unitCost)).toString(),
+                movementDate: closeDate,
+                fromLocationId: exhibition.id,
+                referenceType: LOSS_REF,
+                referenceId: exhibition.id,
+                notes: input.notes ?? null,
+              },
+            });
+
+            shortfallValue = shortfallValue.plus(take.times(dec(lot.unitCost)));
+            missingQty = missingQty.plus(take);
+            left = left.minus(take);
+          }
+
+          // The garments that did not come back are named, not just counted.
+          const lostUnits = await tx.garmentUnit.findMany({
+            where: { locationId: exhibition.id, variantId, status: "IN_STOCK" },
+            orderBy: { createdAt: "asc" },
+            take: Number(shortage),
+            select: { id: true },
+          });
+          if (lostUnits.length > 0) {
+            await tx.garmentUnit.updateMany({
+              where: { id: { in: lostUnits.map((u) => u.id) } },
+              data: {
+                status: "LOST",
+                lotId: null,
+                writeOffNote: `Did not come back from ${exhibition.code}`,
+              },
+            });
+          }
+        }
+
+        if (countedQty.greaterThan(expected)) {
+          // More on the stand than the books expect. Almost always a sale that
+          // was not rung up, or an earlier count that was wrong. It is recorded
+          // rather than quietly absorbed, but it does not create stock out of
+          // nothing: it needs a stocktake to bring in properly.
+          overageQty = overageQty.plus(countedQty.minus(expected));
+          overageValue = overageValue.plus(
+            countedQty.minus(expected).times(dec(position.lines.find((l) => l.variantId === variantId)?.unitCost ?? 0)),
+          );
         }
       }
 
-      if (countedQty.greaterThan(expected)) {
-        // More on the stand than the books expect. Almost always a sale that
-        // was not rung up, or an earlier count that was wrong. It is recorded
-        // rather than quietly absorbed, but it does not create stock out of
-        // nothing: it needs a stocktake to bring in properly.
-        overageQty = overageQty.plus(countedQty.minus(expected));
-        overageValue = overageValue.plus(
-          countedQty.minus(expected).times(dec(position.lines.find((l) => l.variantId === variantId)?.unitCost ?? 0)),
-        );
+      // A large shortfall is written off, and writing off stock is an approval
+      // — on the same rule as any other stock adjustment.
+      //
+      // Who approved it used to be a name the form sent, which anybody
+      // submitting the form could choose: a person who never saw the bazaar
+      // could be recorded as having approved its loss. It is now whoever is
+      // signed in, and they must actually hold the authority to write stock
+      // off. Somebody who does not has to fetch somebody who does.
+      if (shortfallValue.greaterThan(threshold)) {
+        const closer = ctx.userId
+          ? await tx.user.findUnique({ where: { id: ctx.userId }, select: { role: true, name: true } })
+          : null;
+        if (!closer || !can(closer.role, "inventory:approve_adjustment")) {
+          throw new ExhibitionError(
+            `Missing stock is worth ${shortfallValue.toFixed(2)}, over the ${threshold.toFixed(2)} limit. ` +
+              `Writing that off is an approval, so the bazaar has to be closed by somebody who can approve stock adjustments.`,
+          );
+        }
       }
-    }
 
-    // A large shortfall needs a second pair of eyes, on the same rule as any
-    // other stock adjustment — and not the eyes of whoever ran the bazaar.
-    if (shortfallValue.greaterThan(threshold)) {
-      if (!input.approvedByUserId) {
-        throw new ExhibitionError(
-          `Missing stock is worth ${shortfallValue.toFixed(2)}, over the ${threshold.toFixed(2)} limit. ` +
-            `Closing this bazaar needs an approver.`,
-        );
+      let journalEntryId: string | null = null;
+      if (shortfallValue.greaterThan(0)) {
+        const [loss, stock] = await Promise.all([
+          accountId(tx, ACC.LOSS_BRAND),
+          accountId(tx, ACC.FG_BRAND),
+        ]);
+
+        const entry = await postEntry(tx, {
+          entityId: exhibition.entityId!,
+          postingDate: closeDate,
+          sourceType: "ADJUSTMENT",
+          sourceId: exhibition.id,
+          memo: `Stock that did not come back from ${exhibition.nameAr} (${exhibition.code})`,
+          lines: [
+            { accountId: loss, entityId: exhibition.entityId!, debit: shortfallValue.toString(), credit: "0" },
+            { accountId: stock, entityId: exhibition.entityId!, debit: "0", credit: shortfallValue.toString() },
+          ],
+          ctx,
+        });
+        journalEntryId = entry.id;
       }
-      if (input.approvedByUserId === ctx.userId) {
-        throw new ExhibitionError("The person closing the bazaar cannot approve their own shortfall.");
-      }
-    }
 
-    let journalEntryId: string | null = null;
-    if (shortfallValue.greaterThan(0)) {
-      const [loss, stock] = await Promise.all([
-        accountId(tx, ACC.LOSS_BRAND),
-        accountId(tx, ACC.FG_BRAND),
-      ]);
+      await tx.location.update({
+        where: { id: exhibition.id },
+        data: { isActive: false, closesAt: closeDate },
+      });
 
-      const entry = await postEntry(tx, {
-        entityId: exhibition.entityId!,
-        postingDate: closeDate,
-        sourceType: "ADJUSTMENT",
-        sourceId: exhibition.id,
-        memo: `Stock that did not come back from ${exhibition.nameAr} (${exhibition.code})`,
-        lines: [
-          { accountId: loss, entityId: exhibition.entityId!, debit: shortfallValue.toString(), credit: "0" },
-          { accountId: stock, entityId: exhibition.entityId!, debit: "0", credit: shortfallValue.toString() },
-        ],
+      await writeAudit(tx, {
+        action: "EXHIBITION_CLOSED",
+        entityName: "Location",
+        entityId: exhibition.id,
+        after: {
+          returnNumber,
+          bazaar: exhibition.code,
+          returnedTo: exhibition.parent!.code,
+          sent: position.totals.sent,
+          sold: position.totals.sold,
+          returned: returnedQty.toString(),
+          missing: missingQty.toString(),
+          overage: overageQty.toString(),
+          shortfallValue: shortfallValue.toString(),
+          // The person signed in, not a name a form chose.
+          approvedBy: shortfallValue.greaterThan(threshold) ? ctx.userId : null,
+        },
         ctx,
       });
-      journalEntryId = entry.id;
-    }
 
-    await tx.location.update({
-      where: { id: exhibition.id },
-      data: { isActive: false, closesAt: closeDate },
-    });
-
-    await writeAudit(tx, {
-      action: "EXHIBITION_CLOSED",
-      entityName: "Location",
-      entityId: exhibition.id,
-      after: {
-        returnNumber,
-        bazaar: exhibition.code,
-        returnedTo: exhibition.parent!.code,
-        sent: position.totals.sent,
-        sold: position.totals.sold,
+      return {
         returned: returnedQty.toString(),
         missing: missingQty.toString(),
         overage: overageQty.toString(),
         shortfallValue: shortfallValue.toString(),
-        approvedBy: input.approvedByUserId ?? null,
-      },
-      ctx,
+        journalEntryId,
+      };
     });
-
-    return {
-      returned: returnedQty.toString(),
-      missing: missingQty.toString(),
-      overage: overageQty.toString(),
-      shortfallValue: shortfallValue.toString(),
-      journalEntryId,
-    };
   });
 }

@@ -14,9 +14,7 @@ import {
   pendingApprovals,
   approvalThreshold,
   APPROVAL_THRESHOLD_KEY,
-  ApprovalError,
-} from "./approvals";
-import { dec } from "./money";
+  } from "./approvals";
 
 /**
  * Somebody other than the person who raised it has to say yes.

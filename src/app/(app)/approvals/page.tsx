@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getPrefs } from "@/lib/session";
 import { can } from "@/core/permissions";
 import { pendingApprovals, recentDecisions } from "@/lib/approvals";
+import { pendingStockAdjustments } from "@/lib/stocktake";
 import { PageHeader, Card, DataTable, StatTile, Badge } from "@/components/ui";
 import { formatMoney, formatNumber, dec } from "@/lib/money";
 import { DecisionButtons } from "./decision-buttons";
@@ -27,11 +28,13 @@ export default async function ApprovalsPage() {
   const mayExpense = can(session.role, "expense:approve");
   const mayPurchase = can(session.role, "purchase_order:approve");
   const mayPayroll = can(session.role, "payroll:approve");
-  if (!mayExpense && !mayPurchase && !mayPayroll) redirect("/");
+  const mayStock = can(session.role, "inventory:approve_adjustment");
+  if (!mayExpense && !mayPurchase && !mayPayroll && !mayStock) redirect("/");
 
-  const [inbox, decisions] = await Promise.all([
+  const [inbox, decisions, stockAdjustments] = await Promise.all([
     pendingApprovals(session.userId),
     recentDecisions(),
+    mayStock ? pendingStockAdjustments(session.userId) : Promise.resolve([]),
   ]);
 
   const expenseValue = inbox.expenses.reduce((s, e) => s.plus(dec(e.amount)), dec(0));
@@ -39,7 +42,10 @@ export default async function ApprovalsPage() {
   const payrollValue = inbox.payrollRuns.reduce((s, r) => s.plus(dec(r.total)), dec(0));
 
   const waiting =
-    inbox.expenses.length + inbox.purchaseOrders.length + inbox.payrollRuns.length;
+    inbox.expenses.length +
+    inbox.purchaseOrders.length +
+    inbox.payrollRuns.length +
+    stockAdjustments.length;
 
   const dateText = (d: Date | null) =>
     d ? new Date(d).toISOString().slice(0, 10) : "—";
@@ -210,6 +216,51 @@ export default async function ApprovalsPage() {
                   id={r.id}
                   isOwn={r.isOwn}
                   approveOnly
+                />,
+              ])}
+            />
+          </Card>
+        </div>
+      )}
+
+      {mayStock && (
+        <div className="mb-5">
+          <Card
+            title={ar ? "فروق جرد مستنية" : "Stock count differences"}
+            description={
+              ar
+                ? "الفرق مابيتقيّدش لحد ما حد غير اللي عدّ يعتمده. لو المخزون اتحرك من ساعة الجرد، الطلب بيتقفل ولازم يتعدّ تاني."
+                : "Nothing posts until someone other than the counter approves it. If the stock has moved since the count, the request is closed and the shelf is counted again."
+            }
+          >
+            <DataTable
+              headers={[
+                ar ? "اللوت" : "Lot",
+                ar ? "الصنف" : "Item",
+                ar ? "المكان" : "Where",
+                ar ? "الدفاتر ← المعدود" : "Books → counted",
+                ar ? "القيمة" : "Value",
+                ar ? "السبب" : "Reason",
+                ar ? "عدّه" : "Counted by",
+                "",
+              ]}
+              empty={ar ? "مفيش فرق مستني" : "Nothing waiting"}
+              rows={stockAdjustments.map((s) => [
+                <span key="n" className="num text-xs" dir="ltr">{s.lotNumber}</span>,
+                <span key="c" className="text-xs" dir="ltr">{s.code}</span>,
+                <span key="l" className="text-xs text-ink-500">{s.location}</span>,
+                <span key="q" className={Number(s.difference) < 0 ? "num text-bad" : "num text-warn"} dir="ltr">
+                  {formatNumber(s.onBooks)} → {formatNumber(s.counted)}
+                </span>,
+                <span key="v" className="num font-medium">{formatMoney(s.value)}</span>,
+                <span key="r" className="text-xs">{s.reason}</span>,
+                <span key="b" className="text-xs">{s.countedBy ?? "—"}</span>,
+                <DecisionButtons
+                  key="d"
+                  ar={ar}
+                  kind="stockAdjustment"
+                  id={s.id}
+                  isOwn={s.isOwn}
                 />,
               ])}
             />

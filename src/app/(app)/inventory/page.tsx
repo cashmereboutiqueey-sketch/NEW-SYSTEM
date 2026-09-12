@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
-import { can, ROLES, type Role } from "@/core/permissions";
+import { can } from "@/core/permissions";
 import { countSheet, approvalThreshold, recentAdjustments } from "@/lib/stocktake";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -30,7 +30,6 @@ export default async function InventoryPage({
   const query = await searchParams;
 
   const mayAdjust = can(session.role, "inventory:adjust");
-  const mayApprove = can(session.role, "inventory:approve_adjustment");
 
   const [lots, locations, deadStockDays] = await Promise.all([
     db.inventoryLot.findMany({
@@ -49,22 +48,12 @@ export default async function InventoryPage({
     ? locations.find((l) => l.id === countingLocationId)
     : null;
 
-  const [sheet, limit, adjustments, approvers] = await Promise.all([
+  const [sheet, limit, adjustments] = await Promise.all([
     countingLocation
       ? countSheet(countingLocation.id, countingLocation.entityId ?? "")
       : Promise.resolve([]),
     approvalThreshold(),
     recentAdjustments(20),
-    db.user.findMany({
-      where: {
-        isActive: true,
-        role: {
-          in: ROLES.filter((r) => can(r as Role, "inventory:approve_adjustment")) as never,
-        },
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
   ]);
 
   const value = (l: { remainingQty: unknown; unitCost: unknown }) =>
@@ -167,8 +156,6 @@ export default async function InventoryPage({
                     locale={locale}
                     today={asOf.toISOString().slice(0, 10)}
                     approvalLimit={Number(limit)}
-                    approvers={approvers}
-                    mayApprove={mayApprove}
                     row={{
                       lotId: row.lotId,
                       lotNumber: row.lotNumber,

@@ -32,15 +32,11 @@ export function CountForm({
   row,
   today,
   approvalLimit,
-  approvers,
-  mayApprove,
 }: {
   locale: Locale;
   row: CountRow;
   today: string;
   approvalLimit: number;
-  approvers: { id: string; name: string }[];
-  mayApprove: boolean;
 }) {
   const [state, formAction, pending] = useActionState(recordCountAction, initial);
   const [counted, setCounted] = useState("");
@@ -90,25 +86,6 @@ export function CountForm({
           />
         </div>
 
-        {needsApproval && (
-          <div>
-            <label className="mb-1 block text-xs text-warn" htmlFor={`a-${row.lotId}`}>
-              {ar ? "اعتماد" : "Approved by"}
-            </label>
-            <select
-              id={`a-${row.lotId}`}
-              name="approverUserId"
-              required
-              className={`${field} min-w-36`}
-            >
-              <option value="">{ar ? "اختر" : "Choose"}</option>
-              {approvers.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
         <button
           type="submit"
           disabled={pending || counted === ""}
@@ -125,22 +102,14 @@ export function CountForm({
             : `${difference < 0 ? "Short" : "Over"} by ${Math.abs(difference)} ${row.uom} — worth ${worth.toFixed(2)}`}
           {needsApproval &&
             (ar
-              ? ` · فوق حد ${approvalLimit} فمحتاج اعتماد شخص تاني`
-              : ` · over the ${approvalLimit} limit, so it needs a second person`)}
+              ? ` · فوق حد ${approvalLimit}، فهيروح الاعتمادات ومش هيتقيّد لحد ما حد تاني يعتمده`
+              : ` · over the ${approvalLimit} limit, so it goes to approvals and posts only when someone else approves it`)}
         </p>
       )}
 
       {value != null && difference === 0 && (
         <p className="text-xs text-good">
           {ar ? "مطابق للدفاتر." : "Agrees with the books."}
-        </p>
-      )}
-
-      {needsApproval && !mayApprove && (
-        <p className="text-xs text-ink-400">
-          {ar
-            ? "إنت مش من صلاحياتك تعتمد فرق بالحجم ده — لازم حد تاني."
-            : "Approving a difference this size is not yours to do — it needs someone else."}
         </p>
       )}
 

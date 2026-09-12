@@ -3,7 +3,6 @@ import Link from "next/link";
 import { requirePermission } from "@/lib/auth";
 import { getPrefs } from "@/lib/session";
 import { can } from "@/core/permissions";
-import { db } from "@/lib/db";
 import {
   exhibitionPosition,
   sendableStock,
@@ -45,15 +44,10 @@ export default async function ExhibitionPage({
 
   const { exhibition, lines, totals } = position;
 
-  const [sendable, approvers, threshold] = await Promise.all([
+  const [sendable, threshold] = await Promise.all([
     exhibition.isActive && exhibition.parentId
       ? sendableStock(exhibition.parentId)
       : Promise.resolve([]),
-    db.user.findMany({
-      where: { isActive: true, id: { not: session.userId } },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
     approvalThreshold(),
   ]);
 
@@ -201,7 +195,6 @@ export default async function ExhibitionPage({
                 expected: l.expected,
                 unitCost: l.unitCost,
               }))}
-            approvers={approvers.map((a) => ({ id: a.id, name: a.name }))}
             threshold={threshold.toString()}
             ar={ar}
           />

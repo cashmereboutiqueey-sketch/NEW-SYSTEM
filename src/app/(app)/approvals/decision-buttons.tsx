@@ -7,17 +7,20 @@ import {
   approvePurchaseOrderAction,
   rejectPurchaseOrderAction,
   approvePayrollAction,
+  approveStockAdjustmentAction,
+  rejectStockAdjustmentAction,
   type ApprovalState,
 } from "./actions";
 
 const empty: ApprovalState = {};
 
-type Kind = "expense" | "purchaseOrder" | "payroll";
+type Kind = "expense" | "purchaseOrder" | "payroll" | "stockAdjustment";
 
 const FIELD: Record<Kind, string> = {
   expense: "expenseId",
   purchaseOrder: "purchaseOrderId",
   payroll: "payrollRunId",
+  stockAdjustment: "requestId",
 };
 
 /**
@@ -45,15 +48,32 @@ export function DecisionButtons({
       ? approveExpenseAction
       : kind === "purchaseOrder"
         ? approvePurchaseOrderAction
-        : approvePayrollAction;
+        : kind === "stockAdjustment"
+          ? approveStockAdjustmentAction
+          : approvePayrollAction;
 
   const rejectFn =
-    kind === "expense" ? rejectExpenseAction : rejectPurchaseOrderAction;
+    kind === "expense"
+      ? rejectExpenseAction
+      : kind === "stockAdjustment"
+        ? rejectStockAdjustmentAction
+        : rejectPurchaseOrderAction;
 
   const [approveState, approve, approving] = useActionState(approveFn, empty);
   const [rejectState, sendBack, rejecting] = useActionState(rejectFn, empty);
   const [showReason, setShowReason] = useState(false);
   const [showOverride, setShowOverride] = useState(false);
+
+  // A stock difference you counted yourself has no override. Whoever counts
+  // the shelf and signs off what is missing from it can make stock vanish,
+  // and that is the one pairing this inbox exists to prevent.
+  if (isOwn && kind === "stockAdjustment") {
+    return (
+      <span className="text-xs text-ink-400">
+        {ar ? "انت اللي عدّيتها — لازم حد تاني يعتمدها" : "you counted it — somebody else must decide"}
+      </span>
+    );
+  }
 
   // Approving something you raised yourself. Refused outright until now,
   // which left a one-person shop with an inbox nothing could clear. It is

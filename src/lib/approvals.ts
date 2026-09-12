@@ -3,6 +3,7 @@ import { db } from "./db";
 import { dec, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { violatesSeparationOfDuties } from "@/core/permissions";
+import { command } from "./command";
 
 /**
  * Somebody other than the person who raised it has to say yes.
@@ -97,49 +98,51 @@ export async function approveExpense(
   },
   ctx: AuditContext,
 ): Promise<void> {
-  const expense = await db.expense.findUnique({ where: { id: input.expenseId } });
-  if (!expense) throw new ApprovalError("Expense not found.");
-  if (expense.approvedAt) throw new ApprovalError("This expense is already approved.");
+  return command("approvals.approveExpense", input, ctx, async () => {
+    const expense = await db.expense.findUnique({ where: { id: input.expenseId } });
+    if (!expense) throw new ApprovalError("Expense not found.");
+    if (expense.approvedAt) throw new ApprovalError("This expense is already approved.");
 
-  const selfApproving =
-    !!ctx.userId &&
-    violatesSeparationOfDuties({
-      creatorUserId: expense.createdByUserId,
-      approverUserId: ctx.userId,
-      createPermission: "expense:create",
-      approvePermission: "expense:approve",
-    });
+    const selfApproving =
+      !!ctx.userId &&
+      violatesSeparationOfDuties({
+        creatorUserId: expense.createdByUserId,
+        approverUserId: ctx.userId,
+        createPermission: "expense:create",
+        approvePermission: "expense:approve",
+      });
 
-  // A role map cannot say "not this human". This is the only version of the
-  // rule that means anything.
-  if (selfApproving && !input.overrideReason?.trim()) {
-    throw new ApprovalError(
-      "You raised this expense, so somebody else has to approve it — or say why you are approving your own.",
-    );
-  }
+    // A role map cannot say "not this human". This is the only version of the
+    // rule that means anything.
+    if (selfApproving && !input.overrideReason?.trim()) {
+      throw new ApprovalError(
+        "You raised this expense, so somebody else has to approve it — or say why you are approving your own.",
+      );
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.expense.update({
-      where: { id: expense.id },
-      data: {
-        approvedByUserId: ctx.userId,
-        approvedAt: new Date(),
-        rejectedAt: null,
-        rejectionReason: null,
-      },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.expense.update({
+        where: { id: expense.id },
+        data: {
+          approvedByUserId: ctx.userId,
+          approvedAt: new Date(),
+          rejectedAt: null,
+          rejectionReason: null,
+        },
+      });
 
-    await writeAudit(tx, {
-      action: selfApproving ? "EXPENSE_SELF_APPROVED" : "EXPENSE_APPROVED",
-      entityName: "Expense",
-      entityId: expense.id,
-      after: {
-        description: expense.description,
-        amount: dec(expense.amount).toString(),
-        raisedBy: expense.createdByUserId,
-        ...(selfApproving ? { override: input.overrideReason?.trim() } : {}),
-      },
-      ctx: selfApproving ? { ...ctx, reason: input.overrideReason?.trim() ?? null } : ctx,
+      await writeAudit(tx, {
+        action: selfApproving ? "EXPENSE_SELF_APPROVED" : "EXPENSE_APPROVED",
+        entityName: "Expense",
+        entityId: expense.id,
+        after: {
+          description: expense.description,
+          amount: dec(expense.amount).toString(),
+          raisedBy: expense.createdByUserId,
+          ...(selfApproving ? { override: input.overrideReason?.trim() } : {}),
+        },
+        ctx: selfApproving ? { ...ctx, reason: input.overrideReason?.trim() ?? null } : ctx,
+      });
     });
   });
 }
@@ -148,35 +151,37 @@ export async function rejectExpense(
   input: { expenseId: string; reason: string },
   ctx: AuditContext,
 ): Promise<void> {
-  const reason = reject(input.reason);
+  return command("approvals.rejectExpense", input, ctx, async () => {
+    const reason = reject(input.reason);
 
-  const expense = await db.expense.findUnique({ where: { id: input.expenseId } });
-  if (!expense) throw new ApprovalError("Expense not found.");
-  if (expense.status !== "UNPAID") {
-    throw new ApprovalError("Money has already gone out on this; it cannot be sent back.");
-  }
+    const expense = await db.expense.findUnique({ where: { id: input.expenseId } });
+    if (!expense) throw new ApprovalError("Expense not found.");
+    if (expense.status !== "UNPAID") {
+      throw new ApprovalError("Money has already gone out on this; it cannot be sent back.");
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.expense.update({
-      where: { id: expense.id },
-      data: {
-        rejectedAt: new Date(),
-        rejectionReason: reason,
-        approvedByUserId: null,
-        approvedAt: null,
-      },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.expense.update({
+        where: { id: expense.id },
+        data: {
+          rejectedAt: new Date(),
+          rejectionReason: reason,
+          approvedByUserId: null,
+          approvedAt: null,
+        },
+      });
 
-    await writeAudit(tx, {
-      action: "EXPENSE_REJECTED",
-      entityName: "Expense",
-      entityId: expense.id,
-      after: {
-        description: expense.description,
-        amount: dec(expense.amount).toString(),
-        reason,
-      },
-      ctx,
+      await writeAudit(tx, {
+        action: "EXPENSE_REJECTED",
+        entityName: "Expense",
+        entityId: expense.id,
+        after: {
+          description: expense.description,
+          amount: dec(expense.amount).toString(),
+          reason,
+        },
+        ctx,
+      });
     });
   });
 }
@@ -220,51 +225,53 @@ export async function approvePurchaseOrder(
   input: { purchaseOrderId: string; overrideReason?: string | null },
   ctx: AuditContext,
 ): Promise<void> {
-  const order = await db.purchaseOrder.findUnique({
-    where: { id: input.purchaseOrderId },
-  });
-  if (!order) throw new ApprovalError("Purchase order not found.");
-  if (order.approvedAt) throw new ApprovalError("This order is already approved.");
-  if (order.status === "CANCELLED") throw new ApprovalError("This order was cancelled.");
-
-  const selfApproving =
-    !!ctx.userId &&
-    violatesSeparationOfDuties({
-      creatorUserId: order.createdByUserId,
-      approverUserId: ctx.userId,
-      createPermission: "purchase_order:create",
-      approvePermission: "purchase_order:approve",
+  return command("approvals.approvePurchaseOrder", input, ctx, async () => {
+    const order = await db.purchaseOrder.findUnique({
+      where: { id: input.purchaseOrderId },
     });
+    if (!order) throw new ApprovalError("Purchase order not found.");
+    if (order.approvedAt) throw new ApprovalError("This order is already approved.");
+    if (order.status === "CANCELLED") throw new ApprovalError("This order was cancelled.");
 
-  if (selfApproving && !input.overrideReason?.trim()) {
-    throw new ApprovalError(
-      "You raised this order, so somebody else has to approve it — or say why you are approving your own.",
-    );
-  }
+    const selfApproving =
+      !!ctx.userId &&
+      violatesSeparationOfDuties({
+        creatorUserId: order.createdByUserId,
+        approverUserId: ctx.userId,
+        createPermission: "purchase_order:create",
+        approvePermission: "purchase_order:approve",
+      });
 
-  await db.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: order.id },
-      data: {
-        approvedByUserId: ctx.userId,
-        approvedAt: new Date(),
-        rejectedAt: null,
-        rejectionReason: null,
-        // Approval is what turns a proposal into a commitment.
-        ...(order.status === "DRAFT" ? { status: "CONFIRMED" as const } : {}),
-      },
-    });
+    if (selfApproving && !input.overrideReason?.trim()) {
+      throw new ApprovalError(
+        "You raised this order, so somebody else has to approve it — or say why you are approving your own.",
+      );
+    }
 
-    await writeAudit(tx, {
-      action: selfApproving ? "PURCHASE_ORDER_SELF_APPROVED" : "PURCHASE_ORDER_APPROVED",
-      entityName: "PurchaseOrder",
-      entityId: order.id,
-      after: {
-        orderNumber: order.poNumber,
-        raisedBy: order.createdByUserId,
-        ...(selfApproving ? { override: input.overrideReason?.trim() } : {}),
-      },
-      ctx: selfApproving ? { ...ctx, reason: input.overrideReason?.trim() ?? null } : ctx,
+    await db.$transaction(async (tx) => {
+      await tx.purchaseOrder.update({
+        where: { id: order.id },
+        data: {
+          approvedByUserId: ctx.userId,
+          approvedAt: new Date(),
+          rejectedAt: null,
+          rejectionReason: null,
+          // Approval is what turns a proposal into a commitment.
+          ...(order.status === "DRAFT" ? { status: "CONFIRMED" as const } : {}),
+        },
+      });
+
+      await writeAudit(tx, {
+        action: selfApproving ? "PURCHASE_ORDER_SELF_APPROVED" : "PURCHASE_ORDER_APPROVED",
+        entityName: "PurchaseOrder",
+        entityId: order.id,
+        after: {
+          orderNumber: order.poNumber,
+          raisedBy: order.createdByUserId,
+          ...(selfApproving ? { override: input.overrideReason?.trim() } : {}),
+        },
+        ctx: selfApproving ? { ...ctx, reason: input.overrideReason?.trim() ?? null } : ctx,
+      });
     });
   });
 }
@@ -273,32 +280,34 @@ export async function rejectPurchaseOrder(
   input: { purchaseOrderId: string; reason: string },
   ctx: AuditContext,
 ): Promise<void> {
-  const reason = reject(input.reason);
+  return command("approvals.rejectPurchaseOrder", input, ctx, async () => {
+    const reason = reject(input.reason);
 
-  const order = await db.purchaseOrder.findUnique({ where: { id: input.purchaseOrderId } });
-  if (!order) throw new ApprovalError("Purchase order not found.");
-  if (["PARTIALLY_RECEIVED", "RECEIVED"].includes(order.status)) {
-    throw new ApprovalError("Goods have already arrived against this order.");
-  }
+    const order = await db.purchaseOrder.findUnique({ where: { id: input.purchaseOrderId } });
+    if (!order) throw new ApprovalError("Purchase order not found.");
+    if (["PARTIALLY_RECEIVED", "RECEIVED"].includes(order.status)) {
+      throw new ApprovalError("Goods have already arrived against this order.");
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.purchaseOrder.update({
-      where: { id: order.id },
-      data: {
-        rejectedAt: new Date(),
-        rejectionReason: reason,
-        approvedByUserId: null,
-        approvedAt: null,
-        status: "DRAFT",
-      },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.purchaseOrder.update({
+        where: { id: order.id },
+        data: {
+          rejectedAt: new Date(),
+          rejectionReason: reason,
+          approvedByUserId: null,
+          approvedAt: null,
+          status: "DRAFT",
+        },
+      });
 
-    await writeAudit(tx, {
-      action: "PURCHASE_ORDER_REJECTED",
-      entityName: "PurchaseOrder",
-      entityId: order.id,
-      after: { orderNumber: order.poNumber, reason },
-      ctx,
+      await writeAudit(tx, {
+        action: "PURCHASE_ORDER_REJECTED",
+        entityName: "PurchaseOrder",
+        entityId: order.id,
+        after: { orderNumber: order.poNumber, reason },
+        ctx,
+      });
     });
   });
 }

@@ -16,9 +16,9 @@ function toMessage(error: unknown): string {
 /**
  * Recording a count.
  *
- * Counting is one right and approving the difference is another, which is why
- * they are two `authorize` calls rather than one. Somebody who holds both can
- * make any amount of stock disappear a little at a time.
+ * Counting is one right and approving the difference is another. A difference
+ * over the approval limit is not approved here at all: it goes to the
+ * approvals inbox, where somebody else approves it signed in as themselves.
  */
 export async function recordCountAction(
   _prev: FormState,
@@ -27,29 +27,30 @@ export async function recordCountAction(
   try {
     const session = await authorize("inventory:adjust");
 
-    const approverUserId = (formData.get("approverUserId") as string) || null;
-    if (approverUserId) {
-      // The approver named on the form must actually hold the right, and the
-      // form cannot be trusted to have checked that.
-      await authorize("inventory:approve_adjustment");
-    }
-
     const result = await recordCount(
       {
         lotId: String(formData.get("lotId") ?? ""),
         countedQty: String(formData.get("countedQty") ?? ""),
         reason: String(formData.get("reason") ?? ""),
         countDate: new Date(String(formData.get("countDate") ?? "")),
-        approverUserId,
       },
       { userId: session.userId },
     );
 
     revalidatePath("/inventory");
     revalidatePath("/pos");
+    revalidatePath("/approvals");
 
     if (result.direction === "EXACT") {
       return { success: `${result.lotNumber} counted and agreed. Nothing to adjust.` };
+    }
+    if (result.direction === "PENDING") {
+      return {
+        success:
+          `${result.lotNumber}: a difference of ${result.difference}, worth ` +
+          `${Number(result.value).toFixed(2)}, is waiting in approvals. Nothing moves until ` +
+          `somebody else approves it.`,
+      };
     }
 
     return {

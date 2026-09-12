@@ -113,7 +113,6 @@ export async function closeExhibitionAction(
         exhibitionId,
         closeDate: day(formData.get("closeDate")),
         counts,
-        approvedByUserId: String(formData.get("approvedByUserId") ?? "") || null,
         notes: String(formData.get("notes") ?? "") || null,
       },
       { userId: session.userId, reason: null },

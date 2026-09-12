@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { unreconciledLots } from "./inventory";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
@@ -32,7 +33,6 @@ const db = new PrismaClient({
 
 let brandId: string;
 let showroomId: string;
-let cairoId: string;
 let variantId: string;
 let otherVariantId: string;
 let channelId: string;
@@ -45,16 +45,17 @@ const ctx = { userId: null as string | null, reason: null };
 beforeAll(async () => {
   brandId = (await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } })).id;
   showroomId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
-  cairoId = (await db.location.findFirstOrThrow({ where: { code: "LOC-CAI" } })).id;
   channelId = (await db.salesChannel.findFirstOrThrow()).id;
 
   const variants = await db.variant.findMany({ take: 2, orderBy: { sku: "asc" } });
   variantId = variants[0].id;
   otherVariantId = variants[1].id;
 
-  const users = await db.user.findMany({ take: 2, orderBy: { email: "asc" } });
-  counterUserId = users[0].id;
-  approverUserId = users[1].id;
+  // By role, not by position: who may write stock off is the whole point of
+  // the tests below. The accountant may run a bazaar and may not approve a
+  // write-off; the owner may do both.
+  counterUserId = (await db.user.findFirstOrThrow({ where: { role: "ACCOUNTANT" } })).id;
+  approverUserId = (await db.user.findFirstOrThrow({ where: { role: "OWNER" } })).id;
 
   const period = await db.fiscalPeriod.findFirstOrThrow({
     where: { status: "OPEN" },
@@ -71,6 +72,7 @@ async function wipe() {
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
     await db.salesOrder.deleteMany({});
+    await db.tillCashEvent.deleteMany({});
     await db.posSession.deleteMany({});
     await db.inventoryMovement.deleteMany({});
     await db.inventoryLot.deleteMany({});
@@ -86,6 +88,13 @@ async function wipe() {
 }
 
 beforeEach(wipe);
+// Whatever a test did to stock, every lot's balance must be what its own
+// movements say it is — transfers included, which used to leave the lot the
+// goods left with no movement at all.
+afterEach(async () => {
+  expect(await unreconciledLots()).toEqual([]);
+});
+
 afterAll(async () => {
   await wipe();
   await db.$disconnect();
@@ -592,7 +601,7 @@ describe("closing the bazaar", () => {
 });
 
 describe("a large shortfall", () => {
-  it("cannot be written off by one person alone", async () => {
+  it("cannot be closed by somebody who cannot approve a write-off", async () => {
     // 30 garments at 500 is 15,000 — well past the 5,000 approval limit.
     await givenStock(40);
     const bazaar = await givenBazaar();
@@ -606,10 +615,10 @@ describe("a large shortfall", () => {
         { exhibitionId: bazaar.id, closeDate: day, counts: [{ variantId, countedQty: "0" }] },
         { userId: counterUserId, reason: null },
       ),
-    ).rejects.toThrow(/needs an approver/i);
+    ).rejects.toThrow(/approve stock adjustments/i);
   });
 
-  it("cannot be approved by the person who ran the bazaar", async () => {
+  it("records the person who was signed in as the one who approved it", async () => {
     await givenStock(40);
     const bazaar = await givenBazaar();
     await sendToExhibition(
@@ -617,20 +626,21 @@ describe("a large shortfall", () => {
       ctx,
     );
 
-    await expect(
-      closeExhibition(
-        {
-          exhibitionId: bazaar.id,
-          closeDate: day,
-          counts: [{ variantId, countedQty: "0" }],
-          approvedByUserId: counterUserId,
-        },
-        { userId: counterUserId, reason: null },
-      ),
-    ).rejects.toThrow(/cannot approve their own/i);
+    await closeExhibition(
+      { exhibitionId: bazaar.id, closeDate: day, counts: [{ variantId, countedQty: "0" }] },
+      { userId: approverUserId, reason: null },
+    );
+
+    const entry = await db.auditLog.findFirstOrThrow({
+      where: { action: "EXHIBITION_CLOSED", entityId: bazaar.id },
+      orderBy: { createdAt: "desc" },
+    });
+    const after = entry.after as { approvedBy?: string | null };
+    expect(after.approvedBy).toBe(approverUserId);
+    expect(entry.userId).toBe(approverUserId);
   });
 
-  it("goes through with a second person behind it", async () => {
+  it("goes through when somebody who may approve it closes it", async () => {
     await givenStock(40);
     const bazaar = await givenBazaar();
     await sendToExhibition(
@@ -643,9 +653,8 @@ describe("a large shortfall", () => {
         exhibitionId: bazaar.id,
         closeDate: day,
         counts: [{ variantId, countedQty: "0" }],
-        approvedByUserId: approverUserId,
       },
-      { userId: counterUserId, reason: null },
+      { userId: approverUserId, reason: null },
     );
 
     expect(Number(result.missing)).toBe(30);
