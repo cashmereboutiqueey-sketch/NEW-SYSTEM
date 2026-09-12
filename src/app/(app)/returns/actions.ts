@@ -89,6 +89,7 @@ export async function recordReturnAction(
             | "RESTOCK" | "WRITE_OFF" | "REPAIR_AND_RESTOCK",
           refundMethod: String(formData.get("refundMethod") ?? "CASH") as RefundMethod,
           refundAmount: String(formData.get("refundAmount") ?? "") || null,
+          creditAgainstBalance: formData.get("creditAgainstBalance") === "on",
           reason: String(formData.get("reason") ?? "") || null,
           returnDate: Number.isNaN(parsed.getTime()) ? new Date() : parsed,
         },
@@ -102,10 +103,18 @@ export async function recordReturnAction(
     revalidatePath("/receivables");
 
     return {
-      success:
+      success: [
+        `${result.returnNumber}:`,
+        Number(result.creditedBalance) > 0
+          ? `اتخصم ${Number(result.creditedBalance).toFixed(2)} من المديونية`
+          : null,
+        Number(result.cashRefunded) > 0 ? `واترد ${Number(result.cashRefunded).toFixed(2)}` : null,
         result.restocked > 0
-          ? `${result.returnNumber}: اترجّع ${Number(result.refunded).toFixed(2)} و${result.restocked} قطعة رجعت المخزن.`
-          : `${result.returnNumber}: اترجّع ${Number(result.refunded).toFixed(2)}، والقطعة اتشالت من المخزون.`,
+          ? `و${result.restocked} قطعة رجعت المخزن.`
+          : "والقطعة اتشالت من المخزون.",
+      ]
+        .filter(Boolean)
+        .join(" "),
     };
   } catch (error) {
     return { error: toMessage(error) };

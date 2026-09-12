@@ -113,6 +113,7 @@ export const createSaleSchema = z.object({
   locationId: z.string().min(1),
   customerId: z.string().min(1).nullable().optional(),
   posSessionId: z.string().min(1).nullable().optional(),
+  depositOrderId: z.string().min(1).optional(),
   orderDate: z.coerce.date(),
   externalId: z.string().min(1).nullable().optional(),
   shippingAmount: z.coerce.number().min(0).default(0),
@@ -182,6 +183,22 @@ export async function createSale(
       throw new SalesError("Combine repeated variants into one sale line before submitting.");
     }
     const salesOrderId = randomUUID();
+
+    if (data.payments.some((p) => p.method === "STORE_CREDIT")) {
+      throw new SalesError("Store credit must be applied through a funded credit transaction.");
+    }
+    const depositAmount = sum(data.payments.filter((p) => p.method === "DEPOSIT").map((p) => roundMoney(dec(p.amount))));
+    if (depositAmount.greaterThan(0)) {
+      const depositOrder = data.depositOrderId
+        ? await db.customOrder.findUnique({ where: { id: data.depositOrderId } }) : null;
+      if (!depositOrder || depositOrder.salesOrderId || ["CANCELLED", "DELIVERED"].includes(depositOrder.status)
+        || depositOrder.customerId !== data.customerId || depositOrder.entityId !== data.entityId
+        || !depositAmount.equals(depositOrder.depositAmount)
+        || data.lines.length !== 1 || data.lines[0].variantId !== depositOrder.variantId
+        || data.lines[0].quantity !== depositOrder.quantity) {
+        throw new SalesError("This sale has no matching available customer deposit.");
+      }
+    }
 
     if (data.source === "MODERATOR" && !ctx.userId) {
       // The specification is explicit: a social order must name its moderator.
@@ -409,6 +426,15 @@ export async function createSale(
           },
         },
       });
+
+      // The deposit is spent here: the custom order now names the sale it paid
+      // for, so the same deposit cannot be tendered against a second sale.
+      if (depositAmount.greaterThan(0)) {
+        await tx.customOrder.update({
+          where: { id: data.depositOrderId! },
+          data: { salesOrderId: order.id },
+        });
+      }
 
       // Cash taken goes into a drawer: this sale's till, or the one open where
       // the sale was made.

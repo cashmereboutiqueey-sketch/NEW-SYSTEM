@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
-import { dec, roundMoney } from "./money";
+import { dec, roundMoney, Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { outstandingOnOrder } from "./receivables";
 import { command } from "./command";
@@ -148,6 +148,8 @@ export async function recordReturn(
     refundMethod: RefundMethod;
     /** Blank means refund what they paid for it. */
     refundAmount?: string | null;
+    /** Apply the return value to unpaid debt first; refund the remainder. */
+    creditAgainstBalance?: boolean;
     reason?: string | null;
     returnDate: Date;
   },
@@ -155,6 +157,8 @@ export async function recordReturn(
 ): Promise<{
   returnNumber: string;
   refunded: string;
+  cashRefunded: string;
+  creditedBalance: string;
   restocked: number;
   journalEntryId: string;
 }> {
@@ -164,6 +168,12 @@ export async function recordReturn(
     const picture = await returnableLines(input.salesOrderId);
     const line = picture.lines.find((l) => l.variantId === input.variantId);
     if (!line) throw new ReturnError("That garment is not on this order.");
+    if (picture.lines.filter((l) => l.variantId === input.variantId).length !== 1) {
+      throw new ReturnError("This historical invoice has repeated garment lines; reconcile its line allocations before returning it.");
+    }
+    if (!["RESTOCK", "WRITE_OFF", "REPAIR_AND_RESTOCK"].includes(input.disposition)) {
+      throw new ReturnError("Unknown return disposition.");
+    }
 
     if (input.quantity > line.returnable) {
       // Returning more than was bought is either a mistake or a way of taking
@@ -188,6 +198,10 @@ export async function recordReturn(
       );
     }
 
+    const owed = dec(picture.order.outstanding);
+    const credit = input.refundMethod === "AGAINST_BALANCE" ? refund
+      : input.creditAgainstBalance ? Decimal.max(0, Decimal.min(owed, refund)) : dec(0);
+    const cashRefund = refund.minus(credit);
     if (input.refundMethod === "AGAINST_BALANCE") {
       const owed = dec(picture.order.outstanding);
       if (owed.lessThanOrEqualTo(0)) {
@@ -205,7 +219,7 @@ export async function recordReturn(
     const entityId = picture.order.entityId;
     if (!entityId) throw new ReturnError("This order is not attached to a company.");
 
-    if (input.refundMethod !== "AGAINST_BALANCE" && refund.greaterThan(0)) {
+    if (cashRefund.greaterThan(0)) {
       const [collected, refunded] = await Promise.all([
         db.salesPayment.aggregate({
           where: { salesOrderId: input.salesOrderId, status: "COLLECTED", method: { not: "STORE_CREDIT" } },
@@ -218,7 +232,7 @@ export async function recordReturn(
         }),
       ]);
       const available = dec(collected._sum.amount ?? 0).minus(refunded._sum.credit ?? 0);
-      if (refund.greaterThan(available)) {
+      if (cashRefund.greaterThan(available)) {
         throw new ReturnError(`Only ${available.toFixed(2)} of collected money remains refundable. Set the unpaid amount against the customer's balance instead.`);
       }
     }
@@ -226,8 +240,24 @@ export async function recordReturn(
     const returnDate = asDay(input.returnDate);
     const restocking = input.disposition !== "WRITE_OFF";
     // The cost the garment left at, frozen on the line that sold it.
-    const unitCost = dec(line.unitCost);
-    const totalCost = unitCost.times(input.quantity);
+    const soldMovements = await db.inventoryMovement.findMany({
+      where: { type: "SALE", referenceId: input.salesOrderId, lot: { variantId: input.variantId } },
+      include: { lot: true },
+      orderBy: [{ lot: { receivedDate: "asc" } }, { lot: { sequence: "asc" } }, { id: "asc" }],
+    });
+    let skip = line.returned;
+    let remaining = input.quantity;
+    const allocations: { lot: (typeof soldMovements)[number]["lot"]; quantity: number; unitCost: ReturnType<typeof dec> }[] = [];
+    for (const movement of soldMovements) {
+      const quantity = Number(movement.quantity);
+      const skipped = Math.min(skip, quantity);
+      skip -= skipped;
+      const take = Math.min(remaining, quantity - skipped);
+      if (take > 0) allocations.push({ lot: movement.lot, quantity: take, unitCost: dec(movement.unitCost) });
+      remaining -= take;
+    }
+    if (remaining > 0) throw new ReturnError("The original stock allocation is missing. Reconcile this historical sale before returning it.");
+    const totalCost = allocations.reduce((s, a) => s.plus(a.unitCost.times(a.quantity)), dec(0));
 
     return db.$transaction(async (tx) => {
       const returnNumber = await nextDocumentNumber(tx, "RTN", returnDate);
@@ -259,7 +289,7 @@ export async function recordReturn(
         });
         lines.push({
           accountId: await accountId(refundCode),
-          credit: refund,
+          credit: input.refundMethod === "AGAINST_BALANCE" ? credit : cashRefund,
           entityId,
           customerId: picture.order.customerId,
           description:
@@ -267,6 +297,10 @@ export async function recordReturn(
               ? `Set against what they owe on ${picture.order.orderNumber}`
               : `Refunded to customer for ${returnNumber}`,
         });
+        if (credit.greaterThan(0) && input.refundMethod !== "AGAINST_BALANCE") {
+          lines.push({ accountId: await accountId(ACC.RECEIVABLE), credit, entityId,
+            customerId: picture.order.customerId, description: `Debt credited on ${returnNumber}` });
+        }
       }
 
       // --- the goods ------------------------------------------------------
@@ -299,11 +333,11 @@ export async function recordReturn(
 
       // Cash handed back leaves the drawer open where the return is taken;
       // left out, the till reads short by exactly the refund.
-      if (input.refundMethod === "CASH" && refund.greaterThan(0)) {
+      if (input.refundMethod === "CASH" && cashRefund.greaterThan(0)) {
         await recordTillCash(tx, {
           locationId: picture.order.locationId,
           kind: "REFUND",
-          amount: refund.negated(),
+          amount: cashRefund.negated(),
           reference: returnNumber,
         });
       }
@@ -315,12 +349,12 @@ export async function recordReturn(
       // less what has settled it. Crediting account 1210 without settling the
       // order would make the ledger and the customer's account disagree, which
       // is the exact drift that rule exists to prevent.
-      if (input.refundMethod === "AGAINST_BALANCE" && refund.greaterThan(0)) {
+      if (credit.greaterThan(0)) {
         await tx.salesPayment.create({
           data: {
             salesOrderId: input.salesOrderId,
             method: "STORE_CREDIT",
-            amount: refund.toString(),
+            amount: credit.toString(),
             fee: "0",
             status: "COLLECTED",
             collectedAt: returnDate,
@@ -336,38 +370,11 @@ export async function recordReturn(
       // `releaseRepairedStock` — so the till cannot sell the fault back out.
       const needsRepair = input.disposition === "REPAIR_AND_RESTOCK";
       if (restocking) {
+        for (const allocation of allocations) {
         const lotNumber = await nextDocumentNumber(tx, "LOT", returnDate);
 
-        // The lot this sale actually took the garment from, so the return
-        // carries its history: when it first arrived (the aging clock is not
-        // laundered by the trip out and back), which run made it, and the
-        // factory margin inside its cost, which group reporting has to go on
-        // eliminating while it sits on the shelf again. Sales from before
-        // stock movements named their order fall back to the oldest lot of
-        // the garment, which is what this used to do for everything.
-        const soldFrom = await tx.inventoryMovement.findFirst({
-          where: {
-            type: "SALE",
-            referenceId: input.salesOrderId,
-            lot: { variantId: input.variantId },
-          },
-          orderBy: { movementDate: "asc" },
-          select: { lotId: true },
-        });
-        const originalLot = await tx.inventoryLot.findFirst({
-          where: soldFrom
-            ? { id: soldFrom.lotId }
-            : { variantId: input.variantId, entityId },
-          orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-          select: {
-            receivedDate: true,
-            labelsPrintedAt: true,
-            productionOrderId: true,
-            transferMarginPerUnit: true,
-            sourceCostSnapshotId: true,
-          },
-        });
-
+        const originalLot = allocation.lot;
+        const unitCost = allocation.unitCost;
         const lot = await tx.inventoryLot.create({
           data: {
             lotNumber,
@@ -376,8 +383,8 @@ export async function recordReturn(
             locationId: picture.order.locationId,
             entityId,
             productionOrderId: originalLot?.productionOrderId ?? null,
-            originalQty: String(input.quantity),
-            remainingQty: String(input.quantity),
+            originalQty: String(allocation.quantity),
+            remainingQty: String(allocation.quantity),
             unitCost: unitCost.toString(),
             receivedDate: originalLot?.receivedDate ?? returnDate,
             labelsPrintedAt: originalLot?.labelsPrintedAt ?? returnDate,
@@ -391,9 +398,9 @@ export async function recordReturn(
             lotId: lot.id,
             type: "RETURN_IN",
             direction: "IN",
-            quantity: String(input.quantity),
+            quantity: String(allocation.quantity),
             unitCost: unitCost.toString(),
-            totalCost: totalCost.toString(),
+            totalCost: unitCost.times(allocation.quantity).toString(),
             movementDate: returnDate,
             toLocationId: picture.order.locationId,
             referenceType: "RETURN",
@@ -412,7 +419,7 @@ export async function recordReturn(
             salesOrderLine: { salesOrderId: input.salesOrderId },
           },
           orderBy: { soldAt: "desc" },
-          take: input.quantity,
+          take: allocation.quantity,
           select: { id: true },
         });
         if (units.length > 0) {
@@ -429,7 +436,8 @@ export async function recordReturn(
           });
         }
 
-        restocked = input.quantity;
+        restocked += allocation.quantity;
+        }
       }
 
       const record = await tx.return.create({
@@ -441,6 +449,8 @@ export async function recordReturn(
           reason: input.reason ?? null,
           disposition: input.disposition,
           refundAmount: refund.toString(),
+          costAmount: totalCost.toString(),
+          creditAmount: credit.toString(),
           returnDate,
         },
       });
@@ -455,6 +465,8 @@ export async function recordReturn(
           sku: line.sku,
           quantity: input.quantity,
           refund: refund.toString(),
+          cashRefund: cashRefund.toString(),
+          credit: credit.toString(),
           refundMethod: input.refundMethod,
           disposition: input.disposition,
           restocked,
@@ -466,6 +478,8 @@ export async function recordReturn(
       return {
         returnNumber,
         refunded: refund.toString(),
+        cashRefunded: cashRefund.toString(),
+        creditedBalance: credit.toString(),
         restocked,
         journalEntryId: entry.id,
       };

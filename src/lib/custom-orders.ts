@@ -458,6 +458,7 @@ export async function deliverCustomOrder(
         customerId: order.customerId,
         orderDate: asDay(input.deliveredOn),
         notes: `Custom order ${order.orderNumber}`,
+        depositOrderId: order.id,
         lines: [
           {
             variantId: order.variantId,

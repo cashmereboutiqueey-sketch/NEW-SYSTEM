@@ -93,7 +93,7 @@ async function transferredStockAsOf(
     LEFT JOIN "variants" v ON v."id" = l."variantId"
     LEFT JOIN "styles" s ON s."id" = v."styleId"
     WHERE l."entityId" = ${brandId}
-      AND l."state" = 'FINISHED_GOODS'
+      AND l."state" IN ('FINISHED_GOODS', 'AWAITING_REPAIR')
       AND l."transferMarginPerUnit" IS NOT NULL
       AND q.qty > 0
     ORDER BY l."lotNumber"

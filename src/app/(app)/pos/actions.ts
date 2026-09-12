@@ -264,6 +264,9 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
 
     const method = String(formData.get("method") ?? "CASH") as
       | "CASH" | "CARD" | "INSTAPAY" | "COD";
+    if (!["CASH", "CARD", "INSTAPAY", "COD"].includes(method)) {
+      throw new CheckoutError("Choose a supported till payment method.");
+    }
     const tendered = Number(formData.get("tendered") ?? 0);
 
     // The total is worked out here, the way the invoice will work it out,

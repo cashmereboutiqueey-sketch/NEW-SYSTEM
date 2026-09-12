@@ -381,7 +381,10 @@ describe("what happens to an order after it is imported", () => {
     expect(await db.salesPayment.count()).toBe(1);
   });
 
-  it("reverses a cancelled order: stock back, money back", async () => {
+  it("asks somebody to look at a cancelled order rather than reversing it alone", async () => {
+    // Cancelling on Shopify says the shop will not ship it. It does not say
+    // the garment is back on the shelf or that the money was returned — both
+    // of which this used to do on the strength of a status change.
     const paid = order();
     await importOrders({ connectionId, orders: [paid] }, { userId });
     expect(await onHand()).toBe(98);
@@ -390,26 +393,47 @@ describe("what happens to an order after it is imported", () => {
       { connectionId, orders: [{ ...paid, cancelled_at: day.toISOString() }] },
       { userId },
     );
-    expect(await onHand()).toBe(100);
-    expect(await db.return.count()).toBe(1);
+    expect(await onHand()).toBe(98);
+    expect(await db.return.count()).toBe(0);
 
-    // Cancelled twice is cancelled once.
+    const raised = await db.integrationException.findMany({
+      where: { objectType: "order", externalId: String(paid.id) },
+    });
+    expect(raised).toHaveLength(1);
+    expect(raised[0].reason).toMatch(/verify refund transactions and physical receipt/i);
+
+    // Cancelled twice is one thing to look at, not two.
     await importOrders(
       { connectionId, orders: [{ ...paid, cancelled_at: day.toISOString() }] },
       { userId },
     );
-    expect(await db.return.count()).toBe(1);
+    expect(
+      await db.integrationException.count({
+        where: { objectType: "order", externalId: String(paid.id) },
+      }),
+    ).toBe(1);
   });
 
-  it("clears the debt rather than paying cash out when an unpaid order is cancelled", async () => {
+  it("leaves an unpaid cancelled order's debt standing until somebody settles it", async () => {
+    // The debt is real until the shop decides what happened to the order, so
+    // it stays on the books and stays visible instead of being written off by
+    // an importer reading a status field.
     const pending = order({ financial_status: "pending" });
     await importOrders({ connectionId, orders: [pending] }, { userId });
+    const owed = await receivable();
+    expect(owed).toBeGreaterThan(0);
+
     await importOrders(
       { connectionId, orders: [{ ...pending, cancelled_at: day.toISOString() }] },
       { userId },
     );
-    expect(await receivable()).toBeCloseTo(0, 2);
-    expect(await onHand()).toBe(100);
+    expect(await receivable()).toBeCloseTo(owed, 2);
+    expect(await onHand()).toBe(98);
+    expect(
+      await db.integrationException.count({
+        where: { objectType: "order", externalId: String(pending.id) },
+      }),
+    ).toBe(1);
   });
 
   it("raises a refund for a person once, instead of guessing what came back", async () => {

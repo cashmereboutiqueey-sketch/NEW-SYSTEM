@@ -274,6 +274,12 @@ export function ReturnDesk({
             </label>
           </div>
 
+          {Number(picture.order.outstanding) > 0 && refundMethod !== "AGAINST_BALANCE" && (
+            <label className="flex gap-2 text-sm">
+              <input type="checkbox" name="creditAgainstBalance" defaultChecked />
+              {ar ? "إلغاء المديونية من قيمة المرتجع أولاً، ورد الباقي بالطريقة المختارة" : "Credit unpaid debt first, then refund the remainder by the selected method"}
+            </label>
+          )}
           <label className="block text-sm">
             <span className="mb-1 block text-ink-600">{ar ? "السبب" : "Reason"}</span>
             <input

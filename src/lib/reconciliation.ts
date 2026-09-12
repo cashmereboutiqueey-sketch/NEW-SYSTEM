@@ -161,6 +161,9 @@ export async function recordSettlement(
     if (input.paymentIds.length === 0) {
       throw new ReconciliationError("Tick the orders this remittance covers.");
     }
+    if (!["COURIER", "PAYMENT_GATEWAY"].includes(input.provider)) {
+      throw new ReconciliationError("Unknown settlement provider.");
+    }
 
     const netReceived = dec(input.netReceived);
     if (netReceived.lessThan(0)) {
@@ -178,6 +181,12 @@ export async function recordSettlement(
       }
 
       const alreadySettled = payments.filter((p) => p.settlementLine !== null);
+      const methods = input.provider === "COURIER" ? ["COD"] : ["CARD", "WALLET"];
+      if (payments.some((p) => p.salesOrder.entityId !== input.entityId
+        || !methods.includes(p.method)
+        || (input.channelId && p.salesOrder.channelId !== input.channelId))) {
+        throw new ReconciliationError("Every payment must belong to this company, provider and channel.");
+      }
       if (alreadySettled.length > 0) {
         throw new ReconciliationError(
           `${alreadySettled.length} of these were already settled. Clearing them twice would credit the bank for money that only arrived once.`,
@@ -480,6 +489,7 @@ export async function reconciliationView(statementId: string) {
       ? await db.journalLine.findMany({
           where: {
             accountId: account.id,
+            entityId: statement.entityId,
             bankStatementLine: null,
             journalEntry: {
               status: "POSTED",

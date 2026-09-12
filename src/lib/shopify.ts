@@ -7,7 +7,7 @@ import { dec } from "./money";
 import { postEntry } from "./ledger";
 import { command } from "./command";
 import { outstandingOnOrder } from "./receivables";
-import { recordReturn, returnableLines, ReturnError } from "./returns";
+import { ReturnError } from "./returns";
 import { isShopDomain, isApiVersion } from "@/core/shopify-domain";
 import { openSecret } from "./secrets";
 
@@ -322,6 +322,15 @@ export async function importOrders(
     const externalId = String(order.id);
 
     try {
+      const outcome = await inTransaction(async () => {
+      const stateKey = { connectionId: connection.id, externalId };
+      if (order.cancelled_at) {
+        await db.shopifyOrderState.upsert({ where: { connectionId_externalId: stateKey },
+          create: { ...stateKey, cancelledAt: new Date(order.cancelled_at) },
+          update: { cancelledAt: new Date(order.cancelled_at) } });
+      } else if (await db.shopifyOrderState.findUnique({ where: { connectionId_externalId: stateKey } })) {
+        return "UNCHANGED";
+      }
       const mapped = await db.externalMapping.findUnique({
         where: {
           connectionId_objectType_externalId: {
@@ -335,17 +344,13 @@ export async function importOrders(
         // Already imported. That used to end it — so the "paid" that follows
         // a pending order, or a cancellation, never reached the books. The
         // order's news is applied instead; a plain repeat changes nothing.
-        const outcome = await applyOrderUpdate(connection.id, order, mapped.internalId, ctx);
-        if (outcome === "UNCHANGED") duplicates += 1;
-        else updated += 1;
-        continue;
+        return applyOrderUpdate(connection.id, order, mapped.internalId, ctx);
       }
 
       if (order.cancelled_at) {
         // Cancelled before it ever reached us: recorded, not imported, since
         // importing then reversing would move stock that never left.
-        duplicates += 1;
-        continue;
+        return "UNCHANGED";
       }
 
       // --- resolve every SKU before touching stock --------------------
@@ -422,18 +427,7 @@ export async function importOrders(
         });
       }
 
-      if (unknown.length > 0) {
-        await raiseException({
-          connectionId: connection.id,
-          objectType: "order",
-          externalId,
-          reason: `Unrecognised SKU: ${unknown.join(", ")}. The order was not imported, because guessing which garment was meant would relieve the wrong stock.`,
-          payload: order,
-        });
-        exceptions.push(`${order.name}: ${unknown.join(", ")}`);
-        failed += 1;
-        continue;
-      }
+      if (unknown.length > 0) throw new ShopifyError(`Unrecognised SKU: ${unknown.join(", ")}. The order was not imported.`);
 
       const customerId = order.customer
         ? await resolveCustomer(connection.id, order.customer)
@@ -491,7 +485,11 @@ export async function importOrders(
           externalRef: order.name,
         },
       });
-      created += 1;
+      return "CREATED";
+      });
+      if (outcome === "CREATED") created += 1;
+      else if (outcome === "UPDATED") updated += 1;
+      else duplicates += 1;
     } catch (error) {
       const expected =
         error instanceof SalesError ||
@@ -501,6 +499,7 @@ export async function importOrders(
       failed += 1;
       const reason = expected ? (error as Error).message : "Unexpected error while importing.";
       errors.push({ externalId, reason });
+      exceptions.push(`${order.name}: ${reason}`);
       await raiseException({
         connectionId: connection.id,
         objectType: "order",
@@ -562,27 +561,30 @@ export async function receiveWebhook(input: {
   const existing = await db.shopifyWebhookEvent.findUnique({ where: { webhookId: input.webhookId } });
   if (existing?.status === "PROCESSED") return { duplicate: true };
 
-  const event =
-    existing ??
-    (await db.shopifyWebhookEvent.create({
-      data: {
-        connectionId: input.connectionId,
-        webhookId: input.webhookId,
-        topic: input.topic,
-        payload: JSON.parse(JSON.stringify(input.payload ?? null)),
-      },
-    }));
+  const event = existing ?? await db.shopifyWebhookEvent.upsert({
+    where: { webhookId: input.webhookId }, update: {},
+    create: { connectionId: input.connectionId, webhookId: input.webhookId,
+      topic: input.topic, payload: JSON.parse(JSON.stringify(input.payload ?? null)) },
+  });
 
   await processWebhookEvent(event.id);
   return { duplicate: false, ignored: !ORDER_TOPICS.has(input.topic) };
 }
 
-/** Acts on one recorded delivery, marking how it went. Throws if it failed. */
-async function processWebhookEvent(eventId: string): Promise<void> {
-  const event = await db.shopifyWebhookEvent.update({
-    where: { id: eventId },
-    data: { attempts: { increment: 1 } },
+/**
+ * Acts on one recorded delivery, marking how it went. Throws if it failed.
+ *
+ * Answers whether this caller was the one that took it: a delivery already
+ * being worked on by somebody else — the webhook and the retry pass reaching
+ * for it at the same moment — is left to them rather than done twice.
+ */
+async function processWebhookEvent(eventId: string): Promise<"TAKEN" | "BUSY"> {
+  const claimed = await db.shopifyWebhookEvent.updateMany({
+    where: { id: eventId, status: { not: "PROCESSED" }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
+    data: { attempts: { increment: 1 }, leaseUntil: new Date(Date.now() + 180_000) },
   });
+  if (!claimed.count) return "BUSY";
+  const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { id: eventId } });
   try {
     if (ORDER_TOPICS.has(event.topic)) {
       await importOrders(
@@ -597,12 +599,13 @@ async function processWebhookEvent(eventId: string): Promise<void> {
     }
     await db.shopifyWebhookEvent.update({
       where: { id: event.id },
-      data: { status: "PROCESSED", processedAt: new Date(), lastError: null },
+      data: { status: "PROCESSED", processedAt: new Date(), lastError: null, leaseUntil: null },
     });
+    return "TAKEN";
   } catch (error) {
     await db.shopifyWebhookEvent.update({
       where: { id: event.id },
-      data: { status: "FAILED", lastError: String((error as Error)?.message ?? error).slice(0, 1000) },
+      data: { status: "FAILED", leaseUntil: null, lastError: String((error as Error)?.message ?? error).slice(0, 1000) },
     });
     throw error;
   }
@@ -630,7 +633,7 @@ export async function retryFailedWebhooks(limit = 20): Promise<{
   recovered: number;
 }> {
   const due = await db.shopifyWebhookEvent.findMany({
-    where: { status: "FAILED", attempts: { lt: MAX_WEBHOOK_ATTEMPTS } },
+    where: { status: { in: ["RECEIVED", "FAILED"] }, attempts: { lt: MAX_WEBHOOK_ATTEMPTS }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
     orderBy: { receivedAt: "asc" },
     take: limit,
     select: { id: true },
@@ -639,8 +642,9 @@ export async function retryFailedWebhooks(limit = 20): Promise<{
   let recovered = 0;
   for (const event of due) {
     try {
-      await processWebhookEvent(event.id);
-      recovered += 1;
+      // Only what this pass actually took: one somebody else was already
+      // working on is neither tried nor recovered here.
+      if ((await processWebhookEvent(event.id)) === "TAKEN") recovered += 1;
     } catch {
       // processWebhookEvent has already recorded why on the event itself.
       // One delivery that will not go through must not stop the others.
@@ -652,7 +656,7 @@ export async function retryFailedWebhooks(limit = 20): Promise<{
 /** Deliveries that could not be processed, for a person to replay. */
 export async function failedWebhookEvents(limit = 50) {
   return db.shopifyWebhookEvent.findMany({
-    where: { status: "FAILED" },
+    where: { status: { not: "PROCESSED" }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
     orderBy: { receivedAt: "asc" },
     take: limit,
     select: { id: true, topic: true, attempts: true, lastError: true, receivedAt: true },
@@ -693,30 +697,11 @@ async function applyOrderUpdate(
   const externalId = String(order.id);
 
   if (order.cancelled_at) {
-    return command<"UPDATED" | "UNCHANGED">("shopify.cancelOrder", { salesOrderId, cancelledAt: order.cancelled_at }, ctx, async () => {
-      let changed = false;
-      for (const line of (await returnableLines(salesOrderId)).lines) {
-        if (line.returnable <= 0) continue;
-        // Re-read each time: the first line's credit changes what is owed.
-        const picture = await returnableLines(salesOrderId);
-        const owed = dec(picture.order.outstanding);
-        const value = dec(line.unitPrice).times(line.returnable);
-        await recordReturn(
-          {
-            salesOrderId,
-            variantId: line.variantId,
-            quantity: line.returnable,
-            disposition: "RESTOCK",
-            refundMethod: owed.greaterThanOrEqualTo(value) ? "AGAINST_BALANCE" : "CARD",
-            reason: `Cancelled on Shopify (${order.name})`,
-            returnDate: new Date(order.cancelled_at!),
-          },
-          ctx,
-        );
-        changed = true;
-      }
-      return changed ? ("UPDATED" as const) : ("UNCHANGED" as const);
-    });
+    const reason = "Cancelled on Shopify. Verify refund transactions and physical receipt before recording the return; cancellation alone moves neither money nor stock.";
+    const raised = await db.integrationException.findFirst({ where: { connectionId, objectType: "order", externalId, reason } });
+    if (raised) return "UNCHANGED";
+    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
+    return "UPDATED";
   }
 
   if (order.financial_status === "paid") {

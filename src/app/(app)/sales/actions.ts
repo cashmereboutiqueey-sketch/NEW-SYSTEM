@@ -45,6 +45,9 @@ export async function createModeratorSaleAction(
 
     const lines = JSON.parse(String(formData.get("lines") ?? "[]"));
     const method = String(formData.get("paymentMethod") ?? "COD");
+    if (!["CASH", "CARD", "COD", "BANK_TRANSFER", "INSTAPAY"].includes(method)) {
+      throw new SalesError("Choose a supported payment method.");
+    }
     const shipping = Number(formData.get("shippingAmount") ?? 0);
 
     const discountPct = Number(formData.get("discountPct") ?? 0) / 100;
