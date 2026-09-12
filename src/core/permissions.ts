@@ -151,7 +151,11 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "expense:view", "expense:approve",
     "payment:approve",
     "purchase_order:view", "purchase_order:approve",
-    "inventory:view", "inventory:approve_adjustment",
+    "inventory:view",
+    // Not inventory:approve_adjustment. Writing stock off — a count that does
+    // not match, a bazaar that came back short — is the owner's decision by
+    // instruction, because it is the one approval whose cost never appears on
+    // an invoice anybody else checks.
     "payroll:approve",
     "period:close",
     "audit:view",
