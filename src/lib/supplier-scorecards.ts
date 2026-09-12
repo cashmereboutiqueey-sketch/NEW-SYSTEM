@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "./db";
 import { dec, safeDiv, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * A supplier's scorecard, frozen for a period.
@@ -90,150 +91,152 @@ const clamp = (v: Decimal) =>
  * not the same claim as everything went wrong.
  */
 export async function freezeScorecards(fiscalPeriodId: string, ctx: AuditContext) {
-  const period = await db.fiscalPeriod.findUnique({
-    where: { id: fiscalPeriodId },
-    select: { id: true, year: true, month: true, startDate: true, endDate: true },
-  });
-  if (!period) throw new ScorecardError("Fiscal period not found.");
+  return command("supplier-scorecards.freezeScorecards", { fiscalPeriodId }, ctx, async () => {
+    const period = await db.fiscalPeriod.findUnique({
+      where: { id: fiscalPeriodId },
+      select: { id: true, year: true, month: true, startDate: true, endDate: true },
+    });
+    if (!period) throw new ScorecardError("Fiscal period not found.");
 
-  const w = await weights();
+    const w = await weights();
 
-  const suppliers = await db.supplier.findMany({
-    include: {
-      purchaseOrders: {
-        where: { orderDate: { gte: period.startDate, lte: period.endDate } },
-        include: {
-          lines: true,
-          receipts: {
-            where: { receivedDate: { gte: period.startDate, lte: period.endDate } },
-            include: { lines: true },
+    const suppliers = await db.supplier.findMany({
+      include: {
+        purchaseOrders: {
+          where: { orderDate: { gte: period.startDate, lte: period.endDate } },
+          include: {
+            lines: true,
+            receipts: {
+              where: { receivedDate: { gte: period.startDate, lte: period.endDate } },
+              include: { lines: true },
+            },
           },
         },
       },
-    },
-  });
+    });
 
-  const frozen: {
-    supplierId: string;
-    code: string;
-    priceScore: Decimal;
-    qualityScore: Decimal;
-    deliveryScore: Decimal;
-    overallScore: Decimal;
-    onTimeDeliveryRate: Decimal | null;
-    defectRate: Decimal | null;
-    avgPriceVariance: Decimal | null;
-  }[] = [];
+    const frozen: {
+      supplierId: string;
+      code: string;
+      priceScore: Decimal;
+      qualityScore: Decimal;
+      deliveryScore: Decimal;
+      overallScore: Decimal;
+      onTimeDeliveryRate: Decimal | null;
+      defectRate: Decimal | null;
+      avgPriceVariance: Decimal | null;
+    }[] = [];
 
-  for (const supplier of suppliers) {
-    let ordered = dec(0);
-    let received = dec(0);
-    let rejected = dec(0);
-    let priceVariance = dec(0);
-    let receipts = 0;
-    let late = 0;
+    for (const supplier of suppliers) {
+      let ordered = dec(0);
+      let received = dec(0);
+      let rejected = dec(0);
+      let priceVariance = dec(0);
+      let receipts = 0;
+      let late = 0;
 
-    for (const order of supplier.purchaseOrders) {
-      for (const line of order.lines) {
-        ordered = ordered.plus(dec(line.quantity).times(dec(line.unitPrice)));
-      }
-      for (const receipt of order.receipts) {
-        receipts += 1;
-        if (order.expectedDate && receipt.receivedDate > order.expectedDate) late += 1;
-        for (const line of receipt.lines) {
-          received = received.plus(dec(line.acceptedQty));
-          rejected = rejected.plus(dec(line.rejectedQty));
-          priceVariance = priceVariance.plus(dec(line.priceVariance));
+      for (const order of supplier.purchaseOrders) {
+        for (const line of order.lines) {
+          ordered = ordered.plus(dec(line.quantity).times(dec(line.unitPrice)));
+        }
+        for (const receipt of order.receipts) {
+          receipts += 1;
+          if (order.expectedDate && receipt.receivedDate > order.expectedDate) late += 1;
+          for (const line of receipt.lines) {
+            received = received.plus(dec(line.acceptedQty));
+            rejected = rejected.plus(dec(line.rejectedQty));
+            priceVariance = priceVariance.plus(dec(line.priceVariance));
+          }
         }
       }
+
+      // Nothing happened is not the same claim as everything went wrong.
+      if (supplier.purchaseOrders.length === 0 && receipts === 0) continue;
+
+      const presented = received.plus(rejected);
+      const onTime = receipts > 0 ? dec(receipts - late).div(receipts) : null;
+      const defectRate = safeDiv(rejected, presented);
+      const variancePct = safeDiv(priceVariance, ordered);
+
+      const deliveryScore = clamp(dec(onTime ?? 1).times(MAX_SCORE));
+      const qualityScore = clamp(dec(1).minus(defectRate ?? dec(0)).times(MAX_SCORE));
+
+      // A favourable variance — the goods came in under the order — is a full
+      // score rather than a bonus. Paying less than agreed is good, but it is
+      // not a reason to forgive a late, faulty delivery.
+      const overrun = variancePct && variancePct.greaterThan(0) ? variancePct : dec(0);
+      const priceScore = clamp(
+        dec(MAX_SCORE).minus(overrun.times(w.sensitivity).times(MAX_SCORE)),
+      );
+
+      const overallScore = clamp(
+        deliveryScore.times(w.delivery)
+          .plus(qualityScore.times(w.quality))
+          .plus(priceScore.times(w.price)),
+      );
+
+      const round = (v: Decimal) => v.toDecimalPlaces(2);
+
+      await db.supplierScorecard.upsert({
+        where: { supplierId_fiscalPeriodId: { supplierId: supplier.id, fiscalPeriodId } },
+        update: {
+          priceScore: round(priceScore).toString(),
+          qualityScore: round(qualityScore).toString(),
+          deliveryScore: round(deliveryScore).toString(),
+          overallScore: round(overallScore).toString(),
+          onTimeDeliveryRate: onTime?.toString() ?? null,
+          defectRate: defectRate?.toString() ?? null,
+          avgPriceVariance: variancePct?.toString() ?? null,
+        },
+        create: {
+          supplierId: supplier.id,
+          fiscalPeriodId,
+          priceScore: round(priceScore).toString(),
+          qualityScore: round(qualityScore).toString(),
+          deliveryScore: round(deliveryScore).toString(),
+          overallScore: round(overallScore).toString(),
+          onTimeDeliveryRate: onTime?.toString() ?? null,
+          defectRate: defectRate?.toString() ?? null,
+          avgPriceVariance: variancePct?.toString() ?? null,
+        },
+      });
+
+      frozen.push({
+        supplierId: supplier.id,
+        code: supplier.code,
+        priceScore: round(priceScore),
+        qualityScore: round(qualityScore),
+        deliveryScore: round(deliveryScore),
+        overallScore: round(overallScore),
+        onTimeDeliveryRate: onTime,
+        defectRate,
+        avgPriceVariance: variancePct,
+      });
     }
 
-    // Nothing happened is not the same claim as everything went wrong.
-    if (supplier.purchaseOrders.length === 0 && receipts === 0) continue;
-
-    const presented = received.plus(rejected);
-    const onTime = receipts > 0 ? dec(receipts - late).div(receipts) : null;
-    const defectRate = safeDiv(rejected, presented);
-    const variancePct = safeDiv(priceVariance, ordered);
-
-    const deliveryScore = clamp(dec(onTime ?? 1).times(MAX_SCORE));
-    const qualityScore = clamp(dec(1).minus(defectRate ?? dec(0)).times(MAX_SCORE));
-
-    // A favourable variance — the goods came in under the order — is a full
-    // score rather than a bonus. Paying less than agreed is good, but it is
-    // not a reason to forgive a late, faulty delivery.
-    const overrun = variancePct && variancePct.greaterThan(0) ? variancePct : dec(0);
-    const priceScore = clamp(
-      dec(MAX_SCORE).minus(overrun.times(w.sensitivity).times(MAX_SCORE)),
-    );
-
-    const overallScore = clamp(
-      deliveryScore.times(w.delivery)
-        .plus(qualityScore.times(w.quality))
-        .plus(priceScore.times(w.price)),
-    );
-
-    const round = (v: Decimal) => v.toDecimalPlaces(2);
-
-    await db.supplierScorecard.upsert({
-      where: { supplierId_fiscalPeriodId: { supplierId: supplier.id, fiscalPeriodId } },
-      update: {
-        priceScore: round(priceScore).toString(),
-        qualityScore: round(qualityScore).toString(),
-        deliveryScore: round(deliveryScore).toString(),
-        overallScore: round(overallScore).toString(),
-        onTimeDeliveryRate: onTime?.toString() ?? null,
-        defectRate: defectRate?.toString() ?? null,
-        avgPriceVariance: variancePct?.toString() ?? null,
-      },
-      create: {
-        supplierId: supplier.id,
-        fiscalPeriodId,
-        priceScore: round(priceScore).toString(),
-        qualityScore: round(qualityScore).toString(),
-        deliveryScore: round(deliveryScore).toString(),
-        overallScore: round(overallScore).toString(),
-        onTimeDeliveryRate: onTime?.toString() ?? null,
-        defectRate: defectRate?.toString() ?? null,
-        avgPriceVariance: variancePct?.toString() ?? null,
+    await writeAudit(db, {
+      action: "SUPPLIER_SCORECARDS_FROZEN",
+      entityName: "FiscalPeriod",
+      entityId: fiscalPeriodId,
+      ctx,
+      after: {
+        period: `${period.year}-${String(period.month).padStart(2, "0")}`,
+        suppliers: frozen.length,
+        weights: {
+          delivery: w.delivery.toString(),
+          quality: w.quality.toString(),
+          price: w.price.toString(),
+        },
       },
     });
 
-    frozen.push({
-      supplierId: supplier.id,
-      code: supplier.code,
-      priceScore: round(priceScore),
-      qualityScore: round(qualityScore),
-      deliveryScore: round(deliveryScore),
-      overallScore: round(overallScore),
-      onTimeDeliveryRate: onTime,
-      defectRate,
-      avgPriceVariance: variancePct,
-    });
-  }
-
-  await writeAudit(db, {
-    action: "SUPPLIER_SCORECARDS_FROZEN",
-    entityName: "FiscalPeriod",
-    entityId: fiscalPeriodId,
-    ctx,
-    after: {
+    return {
       period: `${period.year}-${String(period.month).padStart(2, "0")}`,
-      suppliers: frozen.length,
-      weights: {
-        delivery: w.delivery.toString(),
-        quality: w.quality.toString(),
-        price: w.price.toString(),
-      },
-    },
+      scored: frozen.length,
+      skipped: suppliers.length - frozen.length,
+      scorecards: frozen.sort((a, b) => Number(b.overallScore.minus(a.overallScore))),
+    };
   });
-
-  return {
-    period: `${period.year}-${String(period.month).padStart(2, "0")}`,
-    scored: frozen.length,
-    skipped: suppliers.length - frozen.length,
-    scorecards: frozen.sort((a, b) => Number(b.overallScore.minus(a.overallScore))),
-  };
 }
 
 /**

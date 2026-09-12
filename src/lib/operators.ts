@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "./db";
 import { dec, safeDiv, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * What one operator produced against the time they were paid for.
@@ -78,69 +79,71 @@ export async function recordProductivity(
   input: RecordProductivityInput,
   ctx: AuditContext,
 ) {
-  const data = productivitySchema.parse(input);
+  return command("operators.recordProductivity", input, ctx, async () => {
+    const data = productivitySchema.parse(input);
 
-  const operator = await db.operator.findUnique({
-    where: { id: data.operatorId },
-    select: { id: true, code: true, name: true, isActive: true },
-  });
-  if (!operator) throw new OperatorError("Operator not found.");
+    const operator = await db.operator.findUnique({
+      where: { id: data.operatorId },
+      select: { id: true, code: true, name: true, isActive: true },
+    });
+    if (!operator) throw new OperatorError("Operator not found.");
 
-  const measured = await clockedFromAttendance(data.operatorId, data.logDate);
-  const clocked = measured ?? (data.clockedMinutes != null ? dec(data.clockedMinutes) : null);
+    const measured = await clockedFromAttendance(data.operatorId, data.logDate);
+    const clocked = measured ?? (data.clockedMinutes != null ? dec(data.clockedMinutes) : null);
 
-  if (!clocked) {
-    throw new OperatorError(
-      `${operator.name} has no attendance recorded for that day, so there are no clocked ` +
-        "minutes to measure against. Record the attendance first, or enter the minutes.",
-    );
-  }
+    if (!clocked) {
+      throw new OperatorError(
+        `${operator.name} has no attendance recorded for that day, so there are no clocked ` +
+          "minutes to measure against. Record the attendance first, or enter the minutes.",
+      );
+    }
 
-  const smvProduced = dec(data.smvProduced);
-  const efficiency = safeDiv(smvProduced, clocked) ?? dec(0);
+    const smvProduced = dec(data.smvProduced);
+    const efficiency = safeDiv(smvProduced, clocked) ?? dec(0);
 
-  // One row per operator per day, so correcting a miscount replaces it rather
-  // than adding a second day's work to the same day.
-  const record = await db.operatorProductivity.upsert({
-    where: { operatorId_logDate: { operatorId: data.operatorId, logDate: data.logDate } },
-    update: {
-      smvProduced: smvProduced.toString(),
+    // One row per operator per day, so correcting a miscount replaces it rather
+    // than adding a second day's work to the same day.
+    const record = await db.operatorProductivity.upsert({
+      where: { operatorId_logDate: { operatorId: data.operatorId, logDate: data.logDate } },
+      update: {
+        smvProduced: smvProduced.toString(),
+        clockedMinutes: clocked.toString(),
+        efficiencyRate: efficiency.toString(),
+        notes: data.notes ?? null,
+      },
+      create: {
+        operatorId: data.operatorId,
+        logDate: data.logDate,
+        smvProduced: smvProduced.toString(),
+        clockedMinutes: clocked.toString(),
+        efficiencyRate: efficiency.toString(),
+        notes: data.notes ?? null,
+      },
+    });
+
+    await writeAudit(db, {
+      action: "OPERATOR_PRODUCTIVITY_RECORDED",
+      entityName: "OperatorProductivity",
+      entityId: record.id,
+      ctx,
+      after: {
+        operator: operator.code,
+        date: data.logDate.toISOString().slice(0, 10),
+        smvProduced: smvProduced.toString(),
+        clockedMinutes: clocked.toString(),
+        clockedFrom: measured ? "attendance" : "entered",
+        efficiency: efficiency.toString(),
+      },
+    });
+
+    return {
+      productivityId: record.id,
       clockedMinutes: clocked.toString(),
-      efficiencyRate: efficiency.toString(),
-      notes: data.notes ?? null,
-    },
-    create: {
-      operatorId: data.operatorId,
-      logDate: data.logDate,
+      clockedFromAttendance: measured !== null,
       smvProduced: smvProduced.toString(),
-      clockedMinutes: clocked.toString(),
-      efficiencyRate: efficiency.toString(),
-      notes: data.notes ?? null,
-    },
-  });
-
-  await writeAudit(db, {
-    action: "OPERATOR_PRODUCTIVITY_RECORDED",
-    entityName: "OperatorProductivity",
-    entityId: record.id,
-    ctx,
-    after: {
-      operator: operator.code,
-      date: data.logDate.toISOString().slice(0, 10),
-      smvProduced: smvProduced.toString(),
-      clockedMinutes: clocked.toString(),
-      clockedFrom: measured ? "attendance" : "entered",
       efficiency: efficiency.toString(),
-    },
+    };
   });
-
-  return {
-    productivityId: record.id,
-    clockedMinutes: clocked.toString(),
-    clockedFromAttendance: measured !== null,
-    smvProduced: smvProduced.toString(),
-    efficiency: efficiency.toString(),
-  };
 }
 
 /**

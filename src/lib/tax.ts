@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "./db";
 import { dec, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * VAT, and the reason it is switched off.
@@ -246,21 +247,23 @@ export async function vatPosition(from: Date, to: Date) {
  * date needs to be findable afterwards.
  */
 export async function setVatRegistered(registered: boolean, ctx: AuditContext) {
-  const before = await db.setting.findUnique({ where: { key: "vat.registered" } });
+  return command("tax.setVatRegistered", { registered }, ctx, async () => {
+    const before = await db.setting.findUnique({ where: { key: "vat.registered" } });
 
-  const updated = await db.setting.update({
-    where: { key: "vat.registered" },
-    data: { value: registered ? "true" : "false" },
+    const updated = await db.setting.update({
+      where: { key: "vat.registered" },
+      data: { value: registered ? "true" : "false" },
+    });
+
+    await writeAudit(db, {
+      action: "VAT_REGISTRATION_CHANGED",
+      entityName: "Setting",
+      entityId: updated.id,
+      ctx,
+      before: { registered: before?.value ?? "false" },
+      after: { registered: updated.value },
+    });
+
+    return { registered };
   });
-
-  await writeAudit(db, {
-    action: "VAT_REGISTRATION_CHANGED",
-    entityName: "Setting",
-    entityId: updated.id,
-    ctx,
-    before: { registered: before?.value ?? "false" },
-    after: { registered: updated.value },
-  });
-
-  return { registered };
 }

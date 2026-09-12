@@ -3,6 +3,7 @@ import { db } from "./db";
 import { dec, roundMoney, type Decimal } from "./money";
 import { nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * An accepted quote becomes an order.
@@ -38,83 +39,85 @@ export async function confirmOrder(
   input: { quoteId: string; orderDate: Date; dueDate?: Date | null },
   ctx: AuditContext,
 ) {
-  const quote = await db.cMTQuote.findUnique({
-    where: { id: input.quoteId },
-    include: {
-      client: { select: { id: true, code: true, name: true } },
-      minuteRatePeriod: { select: { fiscalPeriodId: true } },
-      orders: { select: { id: true, orderNumber: true } },
-    },
-  });
-  if (!quote) throw new CMTOrderError("That quote no longer exists.");
-
-  if (quote.status !== "ACCEPTED") {
-    throw new CMTOrderError(
-      `Quote ${quote.quoteNumber} is ${quote.status.toLowerCase()}. Only an accepted quote becomes an order.`,
-    );
-  }
-  if (quote.orders.length > 0) {
-    // Confirming twice would book the minutes twice and show capacity the
-    // factory does not have as already spent.
-    throw new CMTOrderError(
-      `Quote ${quote.quoteNumber} is already order ${quote.orders[0].orderNumber}.`,
-    );
-  }
-
-  return db.$transaction(async (tx) => {
-    const orderNumber = await nextDocumentNumber(tx, "CMT", input.orderDate);
-
-    const order = await tx.cMTOrder.create({
-      data: {
-        orderNumber,
-        clientId: quote.clientId,
-        quoteId: quote.id,
-        status: "CONFIRMED",
-        quantity: quote.quantity,
-        smvPerUnit: quote.smvPerUnit,
-        totalMinutes: quote.totalMinutes,
-        // Frozen: a rate recalculated next month must not change what the
-        // client agreed to pay.
-        agreedMinuteRate: quote.quotedMinuteRate,
-        contractValue: quote.quotedTotal,
-        orderDate: input.orderDate,
-        dueDate: input.dueDate ?? null,
+  return command("cmt-orders.confirmOrder", input, ctx, async () => {
+    const quote = await db.cMTQuote.findUnique({
+      where: { id: input.quoteId },
+      include: {
+        client: { select: { id: true, code: true, name: true } },
+        minuteRatePeriod: { select: { fiscalPeriodId: true } },
+        orders: { select: { id: true, orderNumber: true } },
       },
     });
+    if (!quote) throw new CMTOrderError("That quote no longer exists.");
 
-    // The minutes are spent whether or not anybody writes them down. Writing
-    // them down is what makes the next quote honest about what is left.
-    await tx.capacityBooking.create({
-      data: {
-        fiscalPeriodId: quote.minuteRatePeriod.fiscalPeriodId,
-        source: "CMT_ORDER",
+    if (quote.status !== "ACCEPTED") {
+      throw new CMTOrderError(
+        `Quote ${quote.quoteNumber} is ${quote.status.toLowerCase()}. Only an accepted quote becomes an order.`,
+      );
+    }
+    if (quote.orders.length > 0) {
+      // Confirming twice would book the minutes twice and show capacity the
+      // factory does not have as already spent.
+      throw new CMTOrderError(
+        `Quote ${quote.quoteNumber} is already order ${quote.orders[0].orderNumber}.`,
+      );
+    }
+
+    return db.$transaction(async (tx) => {
+      const orderNumber = await nextDocumentNumber(tx, "CMT", input.orderDate);
+
+      const order = await tx.cMTOrder.create({
+        data: {
+          orderNumber,
+          clientId: quote.clientId,
+          quoteId: quote.id,
+          status: "CONFIRMED",
+          quantity: quote.quantity,
+          smvPerUnit: quote.smvPerUnit,
+          totalMinutes: quote.totalMinutes,
+          // Frozen: a rate recalculated next month must not change what the
+          // client agreed to pay.
+          agreedMinuteRate: quote.quotedMinuteRate,
+          contractValue: quote.quotedTotal,
+          orderDate: input.orderDate,
+          dueDate: input.dueDate ?? null,
+        },
+      });
+
+      // The minutes are spent whether or not anybody writes them down. Writing
+      // them down is what makes the next quote honest about what is left.
+      await tx.capacityBooking.create({
+        data: {
+          fiscalPeriodId: quote.minuteRatePeriod.fiscalPeriodId,
+          source: "CMT_ORDER",
+          cmtOrderId: order.id,
+          minutes: quote.totalMinutes,
+          notes: `CMT ${orderNumber} — ${quote.client.name}`,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "CMT_ORDER_CONFIRMED",
+        entityName: "CMTOrder",
+        entityId: order.id,
+        ctx,
+        after: {
+          orderNumber,
+          quote: quote.quoteNumber,
+          client: quote.client.code,
+          quantity: quote.quantity,
+          totalMinutes: quote.totalMinutes.toString(),
+          contractValue: quote.quotedTotal.toString(),
+        },
+      });
+
+      return {
         cmtOrderId: order.id,
-        minutes: quote.totalMinutes,
-        notes: `CMT ${orderNumber} — ${quote.client.name}`,
-      },
-    });
-
-    await writeAudit(tx, {
-      action: "CMT_ORDER_CONFIRMED",
-      entityName: "CMTOrder",
-      entityId: order.id,
-      ctx,
-      after: {
         orderNumber,
-        quote: quote.quoteNumber,
-        client: quote.client.code,
-        quantity: quote.quantity,
-        totalMinutes: quote.totalMinutes.toString(),
         contractValue: quote.quotedTotal.toString(),
-      },
+        minutesBooked: quote.totalMinutes.toString(),
+      };
     });
-
-    return {
-      cmtOrderId: order.id,
-      orderNumber,
-      contractValue: quote.quotedTotal.toString(),
-      minutesBooked: quote.totalMinutes.toString(),
-    };
   });
 }
 
@@ -130,62 +133,64 @@ export async function completeOrder(
   input: { cmtOrderId: string; actualMinutes: number | string; completedAt: Date },
   ctx: AuditContext,
 ) {
-  const order = await db.cMTOrder.findUnique({
-    where: { id: input.cmtOrderId },
-    include: { client: { select: { code: true } } },
-  });
-  if (!order) throw new CMTOrderError("That order no longer exists.");
-  if (order.status === "COMPLETED") {
-    throw new CMTOrderError(`${order.orderNumber} is already closed.`);
-  }
-  if (order.status === "CANCELLED") {
-    throw new CMTOrderError(`${order.orderNumber} was cancelled.`);
-  }
+  return command("cmt-orders.completeOrder", input, ctx, async () => {
+    const order = await db.cMTOrder.findUnique({
+      where: { id: input.cmtOrderId },
+      include: { client: { select: { code: true } } },
+    });
+    if (!order) throw new CMTOrderError("That order no longer exists.");
+    if (order.status === "COMPLETED") {
+      throw new CMTOrderError(`${order.orderNumber} is already closed.`);
+    }
+    if (order.status === "CANCELLED") {
+      throw new CMTOrderError(`${order.orderNumber} was cancelled.`);
+    }
 
-  const actualMinutes = dec(input.actualMinutes);
-  if (actualMinutes.lessThanOrEqualTo(0)) {
-    throw new CMTOrderError("A completed run took some minutes. Record how many.");
-  }
+    const actualMinutes = dec(input.actualMinutes);
+    if (actualMinutes.lessThanOrEqualTo(0)) {
+      throw new CMTOrderError("A completed run took some minutes. Record how many.");
+    }
 
-  // Costed at the rate the factory actually runs at, not at the rate quoted:
-  // the quote is what the client pays, the minute rate is what it costs.
-  const rate = await currentMinuteRate(order.orderDate);
-  const actualCost = roundMoney(actualMinutes.times(rate));
-  const realisedMargin = roundMoney(dec(order.contractValue).minus(actualCost));
+    // Costed at the rate the factory actually runs at, not at the rate quoted:
+    // the quote is what the client pays, the minute rate is what it costs.
+    const rate = await currentMinuteRate(order.orderDate);
+    const actualCost = roundMoney(actualMinutes.times(rate));
+    const realisedMargin = roundMoney(dec(order.contractValue).minus(actualCost));
 
-  const updated = await db.cMTOrder.update({
-    where: { id: order.id },
-    data: {
-      status: "COMPLETED",
-      actualMinutes: actualMinutes.toString(),
+    const updated = await db.cMTOrder.update({
+      where: { id: order.id },
+      data: {
+        status: "COMPLETED",
+        actualMinutes: actualMinutes.toString(),
+        actualCost: actualCost.toString(),
+        realisedMargin: realisedMargin.toString(),
+        completedAt: input.completedAt,
+      },
+    });
+
+    await writeAudit(db, {
+      action: "CMT_ORDER_COMPLETED",
+      entityName: "CMTOrder",
+      entityId: order.id,
+      ctx,
+      before: { status: order.status },
+      after: {
+        orderNumber: order.orderNumber,
+        quotedMinutes: order.totalMinutes.toString(),
+        actualMinutes: actualMinutes.toString(),
+        actualCost: actualCost.toString(),
+        realisedMargin: realisedMargin.toString(),
+      },
+    });
+
+    return {
+      orderNumber: updated.orderNumber,
       actualCost: actualCost.toString(),
       realisedMargin: realisedMargin.toString(),
-      completedAt: input.completedAt,
-    },
+      /** Over the minutes it was sold on. Positive means the run overran. */
+      minutesOverrun: actualMinutes.minus(dec(order.totalMinutes)).toString(),
+    };
   });
-
-  await writeAudit(db, {
-    action: "CMT_ORDER_COMPLETED",
-    entityName: "CMTOrder",
-    entityId: order.id,
-    ctx,
-    before: { status: order.status },
-    after: {
-      orderNumber: order.orderNumber,
-      quotedMinutes: order.totalMinutes.toString(),
-      actualMinutes: actualMinutes.toString(),
-      actualCost: actualCost.toString(),
-      realisedMargin: realisedMargin.toString(),
-    },
-  });
-
-  return {
-    orderNumber: updated.orderNumber,
-    actualCost: actualCost.toString(),
-    realisedMargin: realisedMargin.toString(),
-    /** Over the minutes it was sold on. Positive means the run overran. */
-    minutesOverrun: actualMinutes.minus(dec(order.totalMinutes)).toString(),
-  };
 }
 
 async function currentMinuteRate(when: Date): Promise<Decimal> {
@@ -209,36 +214,38 @@ export async function cancelOrder(
   input: { cmtOrderId: string; reason: string },
   ctx: AuditContext,
 ) {
-  const order = await db.cMTOrder.findUnique({ where: { id: input.cmtOrderId } });
-  if (!order) throw new CMTOrderError("That order no longer exists.");
-  if (order.status === "COMPLETED") {
-    throw new CMTOrderError("A completed run cannot be cancelled. It already happened.");
-  }
-  if (!input.reason.trim()) {
-    throw new CMTOrderError("Cancelling an order needs a reason.");
-  }
+  return command("cmt-orders.cancelOrder", input, ctx, async () => {
+    const order = await db.cMTOrder.findUnique({ where: { id: input.cmtOrderId } });
+    if (!order) throw new CMTOrderError("That order no longer exists.");
+    if (order.status === "COMPLETED") {
+      throw new CMTOrderError("A completed run cannot be cancelled. It already happened.");
+    }
+    if (!input.reason.trim()) {
+      throw new CMTOrderError("Cancelling an order needs a reason.");
+    }
 
-  return db.$transaction(async (tx) => {
-    await tx.cMTOrder.update({
-      where: { id: order.id },
-      data: { status: "CANCELLED" },
+    return db.$transaction(async (tx) => {
+      await tx.cMTOrder.update({
+        where: { id: order.id },
+        data: { status: "CANCELLED" },
+      });
+
+      // The minutes go back: capacity that is no longer committed is capacity
+      // the factory can sell again, and leaving the booking would turn down
+      // work it could actually take.
+      await tx.capacityBooking.deleteMany({ where: { cmtOrderId: order.id } });
+
+      await writeAudit(tx, {
+        action: "CMT_ORDER_CANCELLED",
+        entityName: "CMTOrder",
+        entityId: order.id,
+        ctx,
+        before: { status: order.status },
+        after: { status: "CANCELLED", reason: input.reason },
+      });
+
+      return { orderNumber: order.orderNumber, minutesReleased: order.totalMinutes.toString() };
     });
-
-    // The minutes go back: capacity that is no longer committed is capacity
-    // the factory can sell again, and leaving the booking would turn down
-    // work it could actually take.
-    await tx.capacityBooking.deleteMany({ where: { cmtOrderId: order.id } });
-
-    await writeAudit(tx, {
-      action: "CMT_ORDER_CANCELLED",
-      entityName: "CMTOrder",
-      entityId: order.id,
-      ctx,
-      before: { status: order.status },
-      after: { status: "CANCELLED", reason: input.reason },
-    });
-
-    return { orderNumber: order.orderNumber, minutesReleased: order.totalMinutes.toString() };
   });
 }
 

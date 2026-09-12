@@ -32,7 +32,6 @@ let factoryId: string;
 let ownerId: string;
 let day: Date;
 
-const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   factoryId = (await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } })).id;

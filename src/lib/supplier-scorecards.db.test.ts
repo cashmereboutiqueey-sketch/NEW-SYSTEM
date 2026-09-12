@@ -22,7 +22,6 @@ let periodId: string;
 let periodStart: Date;
 let ownerId: string;
 
-const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   supplierId = (await db.supplier.findFirstOrThrow({ orderBy: { code: "asc" } })).id;

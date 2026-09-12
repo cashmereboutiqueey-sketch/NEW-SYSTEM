@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { db } from "./db";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 import { buildSku, styleCodeSchema } from "@/core/sku";
 import { dec } from "./money";
 
@@ -590,71 +591,73 @@ export async function addVariants(
   },
   ctx: AuditContext,
 ): Promise<{ created: number; existed: number; skus: string[]; unknown: string[] }> {
-  const style = await db.style.findUnique({ where: { id: input.styleId } });
-  if (!style) throw new ProductError("Style not found.");
+  return command("products.addVariants", input, ctx, async () => {
+    const style = await db.style.findUnique({ where: { id: input.styleId } });
+    if (!style) throw new ProductError("Style not found.");
 
-  const [colours, sizes] = await Promise.all([
-    db.colorCode.findMany(),
-    db.sizeCode.findMany(),
-  ]);
-  const colourByCode = new Map(colours.map((c) => [c.code.toUpperCase(), c]));
-  const sizeByCode = new Map(sizes.map((s) => [s.code.toUpperCase(), s]));
+    const [colours, sizes] = await Promise.all([
+      db.colorCode.findMany(),
+      db.sizeCode.findMany(),
+    ]);
+    const colourByCode = new Map(colours.map((c) => [c.code.toUpperCase(), c]));
+    const sizeByCode = new Map(sizes.map((s) => [s.code.toUpperCase(), s]));
 
-  const created: string[] = [];
-  const unknown: string[] = [];
-  let existed = 0;
+    const created: string[] = [];
+    const unknown: string[] = [];
+    let existed = 0;
 
-  for (const pair of input.pairs) {
-    const colour = colourByCode.get(pair.colourCode.toUpperCase());
-    const size = sizeByCode.get(pair.sizeCode.toUpperCase());
+    for (const pair of input.pairs) {
+      const colour = colourByCode.get(pair.colourCode.toUpperCase());
+      const size = sizeByCode.get(pair.sizeCode.toUpperCase());
 
-    if (!colour || !size) {
-      unknown.push(
-        `${pair.colourCode}/${pair.sizeCode}` +
-          (colour ? " (size not on file)" : size ? " (colour not on file)" : " (neither on file)"),
-      );
-      continue;
+      if (!colour || !size) {
+        unknown.push(
+          `${pair.colourCode}/${pair.sizeCode}` +
+            (colour ? " (size not on file)" : size ? " (colour not on file)" : " (neither on file)"),
+        );
+        continue;
+      }
+
+      const sku = buildSku({
+        styleCode: style.code,
+        colorCode: colour.code,
+        sizeCode: size.code,
+      });
+
+      const clash = await db.variant.findFirst({
+        where: {
+          OR: [
+            { sku },
+            { styleId: style.id, colorCodeId: colour.id, sizeCodeId: size.id },
+          ],
+        },
+      });
+      if (clash) {
+        existed += 1;
+        continue;
+      }
+
+      await db.variant.create({
+        data: {
+          styleId: style.id,
+          colorCodeId: colour.id,
+          sizeCodeId: size.id,
+          sku,
+        },
+      });
+      created.push(sku);
     }
 
-    const sku = buildSku({
-      styleCode: style.code,
-      colorCode: colour.code,
-      sizeCode: size.code,
-    });
-
-    const clash = await db.variant.findFirst({
-      where: {
-        OR: [
-          { sku },
-          { styleId: style.id, colorCodeId: colour.id, sizeCodeId: size.id },
-        ],
-      },
-    });
-    if (clash) {
-      existed += 1;
-      continue;
+    if (created.length > 0) {
+      await writeAudit(db, {
+        action: "VARIANTS_ADDED",
+        entityName: "Style",
+        entityId: style.id,
+        ctx,
+        after: { style: style.code, created: created.length, skus: created.slice(0, 20) },
+      });
     }
 
-    await db.variant.create({
-      data: {
-        styleId: style.id,
-        colorCodeId: colour.id,
-        sizeCodeId: size.id,
-        sku,
-      },
-    });
-    created.push(sku);
-  }
-
-  if (created.length > 0) {
-    await writeAudit(db, {
-      action: "VARIANTS_ADDED",
-      entityName: "Style",
-      entityId: style.id,
-      ctx,
-      after: { style: style.code, created: created.length, skus: created.slice(0, 20) },
-    });
-  }
-
-  return { created: created.length, existed, skus: created, unknown };
+    return { created: created.length, existed, skus: created, unknown };
+  });
 }

@@ -23,7 +23,6 @@ let lineId: string;
 let ownerId: string;
 let day: Date;
 
-const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   // A style with a routing, not merely the first one alphabetically. Earned

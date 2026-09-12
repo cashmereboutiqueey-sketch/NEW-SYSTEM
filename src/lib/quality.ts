@@ -5,6 +5,7 @@ import { dec, safeDiv, roundMoney, type Decimal } from "./money";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { consumeFifo } from "@/core/fifo";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -97,52 +98,54 @@ export type RecordInspectionInput = z.input<typeof inspectionSchema>;
  * written off — and each of those is recorded as it happens.
  */
 export async function recordInspection(input: RecordInspectionInput, ctx: AuditContext) {
-  const data = inspectionSchema.parse(input);
+  return command("quality.recordInspection", input, ctx, async () => {
+    const data = inspectionSchema.parse(input);
 
-  const order = await db.productionOrder.findUnique({
-    where: { id: data.productionOrderId },
-    select: { id: true, orderNumber: true, plannedQty: true, actualQty: true },
-  });
-  if (!order) throw new QualityError("Production order not found.");
+    const order = await db.productionOrder.findUnique({
+      where: { id: data.productionOrderId },
+      select: { id: true, orderNumber: true, plannedQty: true, actualQty: true },
+    });
+    if (!order) throw new QualityError("Production order not found.");
 
-  const defective = data.reworkQty + data.rejectedQty;
-  const defectRate = safeDiv(dec(defective), dec(data.inspectedQty)) ?? dec(0);
+    const defective = data.reworkQty + data.rejectedQty;
+    const defectRate = safeDiv(dec(defective), dec(data.inspectedQty)) ?? dec(0);
 
-  const record = await db.qCRecord.create({
-    data: {
-      productionOrderId: data.productionOrderId,
-      stage: data.stage,
-      inspectedQty: data.inspectedQty,
-      passedQty: data.passedQty,
-      reworkQty: data.reworkQty,
-      rejectedQty: data.rejectedQty,
+    const record = await db.qCRecord.create({
+      data: {
+        productionOrderId: data.productionOrderId,
+        stage: data.stage,
+        inspectedQty: data.inspectedQty,
+        passedQty: data.passedQty,
+        reworkQty: data.reworkQty,
+        rejectedQty: data.rejectedQty,
+        defectRate: defectRate.toString(),
+        defectNotes: data.defectNotes ?? null,
+        inspectionDate: data.inspectionDate,
+      },
+    });
+
+    await writeAudit(db, {
+      action: "QC_RECORDED",
+      entityName: "QCRecord",
+      entityId: record.id,
+      ctx,
+      after: {
+        order: order.orderNumber,
+        stage: data.stage,
+        inspected: data.inspectedQty,
+        passed: data.passedQty,
+        rework: data.reworkQty,
+        rejected: data.rejectedQty,
+        defectRate: defectRate.toString(),
+      },
+    });
+
+    return {
+      qcRecordId: record.id,
       defectRate: defectRate.toString(),
-      defectNotes: data.defectNotes ?? null,
-      inspectionDate: data.inspectionDate,
-    },
+      defective,
+    };
   });
-
-  await writeAudit(db, {
-    action: "QC_RECORDED",
-    entityName: "QCRecord",
-    entityId: record.id,
-    ctx,
-    after: {
-      order: order.orderNumber,
-      stage: data.stage,
-      inspected: data.inspectedQty,
-      passed: data.passedQty,
-      rework: data.reworkQty,
-      rejected: data.rejectedQty,
-      defectRate: defectRate.toString(),
-    },
-  });
-
-  return {
-    qcRecordId: record.id,
-    defectRate: defectRate.toString(),
-    defective,
-  };
 }
 
 /* ──────────────────────────────── rework ────────────────────────────────── */
@@ -315,6 +318,7 @@ export async function recordRework(input: RecordReworkInput, ctx: AuditContext) 
         data: {
           lotId: a.lotId,
           type: "ISSUE_TO_PRODUCTION",
+          direction: "OUT",
           quantity: a.quantity.toString(),
           unitCost: a.unitCost.toString(),
           totalCost: a.cost.toString(),

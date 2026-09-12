@@ -4,6 +4,7 @@ import { db } from "./db";
 import { dec, type Decimal } from "./money";
 import { lineEfficiency } from "@/core/production";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * What a line did with the hours it was paid for.
@@ -71,67 +72,69 @@ export async function standardMinutesFor(styleId: string, stage: Stage): Promise
 }
 
 export async function logStage(input: LogStageInput, ctx: AuditContext) {
-  const data = logSchema.parse(input);
+  return command("stage-logs.logStage", input, ctx, async () => {
+    const data = logSchema.parse(input);
 
-  const order = await db.productionOrder.findUnique({
-    where: { id: data.productionOrderId },
-    include: { style: { select: { id: true, code: true, nameAr: true, nameEn: true } } },
-  });
-  if (!order) throw new StageLogError("Production order not found.");
+    const order = await db.productionOrder.findUnique({
+      where: { id: data.productionOrderId },
+      include: { style: { select: { id: true, code: true, nameAr: true, nameEn: true } } },
+    });
+    if (!order) throw new StageLogError("Production order not found.");
 
-  const standard = await standardMinutesFor(order.style.id, data.stage);
-  if (standard.lessThanOrEqualTo(0)) {
-    throw new StageLogError(
-      `${order.style.code} has no operations assigned to ${data.stage.toLowerCase()}, so there are ` +
-        "no standard minutes to measure the line against. Assign the stage on the style's " +
-        "operations first.",
-    );
-  }
+    const standard = await standardMinutesFor(order.style.id, data.stage);
+    if (standard.lessThanOrEqualTo(0)) {
+      throw new StageLogError(
+        `${order.style.code} has no operations assigned to ${data.stage.toLowerCase()}, so there are ` +
+          "no standard minutes to measure the line against. Assign the stage on the style's " +
+          "operations first.",
+      );
+    }
 
-  const earnedMinutes = standard.times(data.qtyOut);
-  const clockedMinutes = dec(data.clockedMinutes);
-  // Null only when nothing was clocked, which the schema refuses anyway.
-  const efficiency = lineEfficiency(earnedMinutes, clockedMinutes) ?? dec(0);
+    const earnedMinutes = standard.times(data.qtyOut);
+    const clockedMinutes = dec(data.clockedMinutes);
+    // Null only when nothing was clocked, which the schema refuses anyway.
+    const efficiency = lineEfficiency(earnedMinutes, clockedMinutes) ?? dec(0);
 
-  const log = await db.productionStageLog.create({
-    data: {
-      productionOrderId: data.productionOrderId,
-      lineId: data.lineId ?? null,
-      stage: data.stage,
-      logDate: data.logDate,
-      qtyIn: data.qtyIn,
-      qtyOut: data.qtyOut,
-      operatorsCount: data.operatorsCount ?? null,
-      clockedMinutes: clockedMinutes.toString(),
+    const log = await db.productionStageLog.create({
+      data: {
+        productionOrderId: data.productionOrderId,
+        lineId: data.lineId ?? null,
+        stage: data.stage,
+        logDate: data.logDate,
+        qtyIn: data.qtyIn,
+        qtyOut: data.qtyOut,
+        operatorsCount: data.operatorsCount ?? null,
+        clockedMinutes: clockedMinutes.toString(),
+        earnedMinutes: earnedMinutes.toString(),
+        efficiencyRate: efficiency.toString(),
+        notes: data.notes ?? null,
+      },
+    });
+
+    await writeAudit(db, {
+      action: "STAGE_LOGGED",
+      entityName: "ProductionStageLog",
+      entityId: log.id,
+      ctx,
+      after: {
+        order: order.orderNumber,
+        stage: data.stage,
+        qtyIn: data.qtyIn,
+        qtyOut: data.qtyOut,
+        clockedMinutes: clockedMinutes.toString(),
+        earnedMinutes: earnedMinutes.toString(),
+        efficiency: efficiency.toString(),
+      },
+    });
+
+    return {
+      stageLogId: log.id,
       earnedMinutes: earnedMinutes.toString(),
-      efficiencyRate: efficiency.toString(),
-      notes: data.notes ?? null,
-    },
-  });
-
-  await writeAudit(db, {
-    action: "STAGE_LOGGED",
-    entityName: "ProductionStageLog",
-    entityId: log.id,
-    ctx,
-    after: {
-      order: order.orderNumber,
-      stage: data.stage,
-      qtyIn: data.qtyIn,
-      qtyOut: data.qtyOut,
       clockedMinutes: clockedMinutes.toString(),
-      earnedMinutes: earnedMinutes.toString(),
       efficiency: efficiency.toString(),
-    },
+      standardMinutesPerUnit: standard.toString(),
+    };
   });
-
-  return {
-    stageLogId: log.id,
-    earnedMinutes: earnedMinutes.toString(),
-    clockedMinutes: clockedMinutes.toString(),
-    efficiency: efficiency.toString(),
-    standardMinutesPerUnit: standard.toString(),
-  };
 }
 
 /** Runs that can be logged against, with the stages their routing supports. */
