@@ -1,9 +1,11 @@
 import "server-only";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
-import { dec, roundMoney, type Decimal } from "./money";
+import { dec, roundMoney } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { outstandingOnOrder } from "./receivables";
+import { command } from "./command";
+import { recordTillCash } from "./till";
 
 /**
  * A customer brings a garment back.
@@ -156,258 +158,377 @@ export async function recordReturn(
   restocked: number;
   journalEntryId: string;
 }> {
-  if (input.quantity <= 0) throw new ReturnError("A return needs at least one garment.");
+  return command("returns.recordReturn", input, ctx, async () => {
+    if (!Number.isSafeInteger(input.quantity) || input.quantity <= 0) throw new ReturnError("A return needs a positive whole number of garments.");
 
-  const picture = await returnableLines(input.salesOrderId);
-  const line = picture.lines.find((l) => l.variantId === input.variantId);
-  if (!line) throw new ReturnError("That garment is not on this order.");
+    const picture = await returnableLines(input.salesOrderId);
+    const line = picture.lines.find((l) => l.variantId === input.variantId);
+    if (!line) throw new ReturnError("That garment is not on this order.");
 
-  if (input.quantity > line.returnable) {
-    // Returning more than was bought is either a mistake or a way of taking
-    // money out of the drawer with a document behind it.
-    throw new ReturnError(
-      line.returned > 0
-        ? `Only ${line.returnable} of ${line.sku} can still come back; ${line.returned} already has.`
-        : `Only ${line.sold} of ${line.sku} were sold on this order.`,
-    );
-  }
-
-  const paid = dec(line.unitPrice).times(input.quantity);
-  const refund =
-    input.refundAmount != null && input.refundAmount !== ""
-      ? roundMoney(dec(input.refundAmount))
-      : roundMoney(paid);
-
-  if (refund.lessThan(0)) throw new ReturnError("A refund cannot be negative.");
-  if (refund.greaterThan(paid)) {
-    throw new ReturnError(
-      `They paid ${paid.toFixed(2)} for those; ${refund.toFixed(2)} is more than that.`,
-    );
-  }
-
-  if (input.refundMethod === "AGAINST_BALANCE") {
-    const owed = dec(picture.order.outstanding);
-    if (owed.lessThanOrEqualTo(0)) {
+    if (input.quantity > line.returnable) {
+      // Returning more than was bought is either a mistake or a way of taking
+      // money out of the drawer with a document behind it.
       throw new ReturnError(
-        "There is nothing outstanding on this order to set the refund against.",
+        line.returned > 0
+          ? `Only ${line.returnable} of ${line.sku} can still come back; ${line.returned} already has.`
+          : `Only ${line.sold} of ${line.sku} were sold on this order.`,
       );
     }
-    if (refund.greaterThan(owed)) {
+
+    const paid = dec(line.unitPrice).times(input.quantity);
+    const refund =
+      input.refundAmount != null && input.refundAmount !== ""
+        ? roundMoney(dec(input.refundAmount))
+        : roundMoney(paid);
+
+    if (refund.lessThan(0)) throw new ReturnError("A refund cannot be negative.");
+    if (refund.greaterThan(paid)) {
       throw new ReturnError(
-        `They only owe ${owed.toFixed(2)} on this order; refund the rest another way.`,
+        `They paid ${paid.toFixed(2)} for those; ${refund.toFixed(2)} is more than that.`,
       );
     }
-  }
 
-  const entityId = picture.order.entityId;
-  if (!entityId) throw new ReturnError("This order is not attached to a company.");
-
-  const returnDate = asDay(input.returnDate);
-  const restocking = input.disposition !== "WRITE_OFF";
-  // The cost the garment left at, frozen on the line that sold it.
-  const unitCost = dec(line.unitCost);
-  const totalCost = unitCost.times(input.quantity);
-
-  return db.$transaction(async (tx) => {
-    const returnNumber = await nextDocumentNumber(tx, "RTN", returnDate);
-
-    const accountId = async (code: string) => {
-      const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
-      if (!a) throw new ReturnError(`Account ${code} is missing from the chart of accounts.`);
-      return a.id;
-    };
-
-    // --- the money ------------------------------------------------------
-    // Shown as a return against revenue rather than netted off sales, so a
-    // style with a return problem is visible instead of merely selling less.
-    const refundCode =
-      input.refundMethod === "AGAINST_BALANCE"
-        ? ACC.RECEIVABLE
-        : REFUND_ACCOUNT[input.refundMethod];
-    if (!refundCode) throw new ReturnError(`Cannot refund by ${input.refundMethod}.`);
-
-    const lines: Parameters<typeof postEntry>[1]["lines"] = [];
-
-    if (refund.greaterThan(0)) {
-      lines.push({
-        accountId: await accountId(ACC.SALES_RETURNS),
-        debit: refund,
-        entityId,
-        customerId: picture.order.customerId,
-        description: `Return ${returnNumber} against ${picture.order.orderNumber}`,
-      });
-      lines.push({
-        accountId: await accountId(refundCode),
-        credit: refund,
-        entityId,
-        customerId: picture.order.customerId,
-        description:
-          input.refundMethod === "AGAINST_BALANCE"
-            ? `Set against what they owe on ${picture.order.orderNumber}`
-            : `Refunded to customer for ${returnNumber}`,
-      });
+    if (input.refundMethod === "AGAINST_BALANCE") {
+      const owed = dec(picture.order.outstanding);
+      if (owed.lessThanOrEqualTo(0)) {
+        throw new ReturnError(
+          "There is nothing outstanding on this order to set the refund against.",
+        );
+      }
+      if (refund.greaterThan(owed)) {
+        throw new ReturnError(
+          `They only owe ${owed.toFixed(2)} on this order; refund the rest another way.`,
+        );
+      }
     }
 
-    // --- the goods ------------------------------------------------------
-    // Cost of sales is relieved either way: the sale did not happen. What
-    // differs is whether the garment becomes stock again or a loss.
-    lines.push({
-      accountId: await accountId(restocking ? ACC.FG_BRAND : ACC.STOCK_LOSS),
-      debit: totalCost,
-      entityId,
-      description: restocking
-        ? `Back on the shelf from ${returnNumber}`
-        : `Unsellable return ${returnNumber}`,
-    });
-    lines.push({
-      accountId: await accountId(ACC.COGS_BRAND),
-      credit: totalCost,
-      entityId,
-      description: `Cost of sales reversed for ${returnNumber}`,
-    });
+    const entityId = picture.order.entityId;
+    if (!entityId) throw new ReturnError("This order is not attached to a company.");
 
-    const entry = await postEntry(tx, {
-      entityId,
-      postingDate: returnDate,
-      sourceType: "SALES_RETURN",
-      sourceId: input.salesOrderId,
-      memo: `Return ${returnNumber} — ${line.sku} ×${input.quantity}`,
-      ctx,
-      lines,
-    });
-
-    // A credit note settles part of the invoice, so it is recorded against
-    // the order as well as in the ledger.
-    //
-    // What a customer owes is never stored — it is always the order total
-    // less what has settled it. Crediting account 1210 without settling the
-    // order would make the ledger and the customer's account disagree, which
-    // is the exact drift that rule exists to prevent.
-    if (input.refundMethod === "AGAINST_BALANCE" && refund.greaterThan(0)) {
-      await tx.salesPayment.create({
-        data: {
-          salesOrderId: input.salesOrderId,
-          method: "STORE_CREDIT",
-          amount: refund.toString(),
-          fee: "0",
-          status: "COLLECTED",
-          collectedAt: returnDate,
-          reference: returnNumber,
-        },
-      });
+    if (input.refundMethod !== "AGAINST_BALANCE" && refund.greaterThan(0)) {
+      const [collected, refunded] = await Promise.all([
+        db.salesPayment.aggregate({
+          where: { salesOrderId: input.salesOrderId, status: "COLLECTED", method: { not: "STORE_CREDIT" } },
+          _sum: { amount: true },
+        }),
+        db.journalLine.aggregate({
+          where: { account: { code: { in: [ACC.POS_DRAWER, ACC.BANK] } },
+            journalEntry: { status: "POSTED", sourceType: "SALES_RETURN", sourceId: input.salesOrderId } },
+          _sum: { credit: true },
+        }),
+      ]);
+      const available = dec(collected._sum.amount ?? 0).minus(refunded._sum.credit ?? 0);
+      if (refund.greaterThan(available)) {
+        throw new ReturnError(`Only ${available.toFixed(2)} of collected money remains refundable. Set the unpaid amount against the customer's balance instead.`);
+      }
     }
 
-    // --- the shelf ------------------------------------------------------
-    let restocked = 0;
-    if (restocking) {
-      const lotNumber = await nextDocumentNumber(tx, "LOT", returnDate);
+    const returnDate = asDay(input.returnDate);
+    const restocking = input.disposition !== "WRITE_OFF";
+    // The cost the garment left at, frozen on the line that sold it.
+    const unitCost = dec(line.unitCost);
+    const totalCost = unitCost.times(input.quantity);
 
-      // A new lot at the original cost, keeping the original receipt date so
-      // the aging clock is not laundered by the trip out and back.
-      const originalLot = await tx.inventoryLot.findFirst({
-        where: { variantId: input.variantId, entityId },
-        orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-        select: { receivedDate: true, labelsPrintedAt: true, productionOrderId: true },
-      });
+    return db.$transaction(async (tx) => {
+      const returnNumber = await nextDocumentNumber(tx, "RTN", returnDate);
 
-      const lot = await tx.inventoryLot.create({
-        data: {
-          lotNumber,
-          state: "FINISHED_GOODS",
-          variantId: input.variantId,
-          locationId: picture.order.locationId,
+      const accountId = async (code: string) => {
+        const a = await tx.account.findUnique({ where: { code }, select: { id: true } });
+        if (!a) throw new ReturnError(`Account ${code} is missing from the chart of accounts.`);
+        return a.id;
+      };
+
+      // --- the money ------------------------------------------------------
+      // Shown as a return against revenue rather than netted off sales, so a
+      // style with a return problem is visible instead of merely selling less.
+      const refundCode =
+        input.refundMethod === "AGAINST_BALANCE"
+          ? ACC.RECEIVABLE
+          : REFUND_ACCOUNT[input.refundMethod];
+      if (!refundCode) throw new ReturnError(`Cannot refund by ${input.refundMethod}.`);
+
+      const lines: Parameters<typeof postEntry>[1]["lines"] = [];
+
+      if (refund.greaterThan(0)) {
+        lines.push({
+          accountId: await accountId(ACC.SALES_RETURNS),
+          debit: refund,
           entityId,
-          productionOrderId: originalLot?.productionOrderId ?? null,
-          originalQty: String(input.quantity),
-          remainingQty: String(input.quantity),
-          unitCost: unitCost.toString(),
-          receivedDate: originalLot?.receivedDate ?? returnDate,
-          labelsPrintedAt: originalLot?.labelsPrintedAt ?? returnDate,
-        },
+          customerId: picture.order.customerId,
+          description: `Return ${returnNumber} against ${picture.order.orderNumber}`,
+        });
+        lines.push({
+          accountId: await accountId(refundCode),
+          credit: refund,
+          entityId,
+          customerId: picture.order.customerId,
+          description:
+            input.refundMethod === "AGAINST_BALANCE"
+              ? `Set against what they owe on ${picture.order.orderNumber}`
+              : `Refunded to customer for ${returnNumber}`,
+        });
+      }
+
+      // --- the goods ------------------------------------------------------
+      // Cost of sales is relieved either way: the sale did not happen. What
+      // differs is whether the garment becomes stock again or a loss.
+      lines.push({
+        accountId: await accountId(restocking ? ACC.FG_BRAND : ACC.STOCK_LOSS),
+        debit: totalCost,
+        entityId,
+        description: restocking
+          ? `Back on the shelf from ${returnNumber}`
+          : `Unsellable return ${returnNumber}`,
+      });
+      lines.push({
+        accountId: await accountId(ACC.COGS_BRAND),
+        credit: totalCost,
+        entityId,
+        description: `Cost of sales reversed for ${returnNumber}`,
       });
 
-      await tx.inventoryMovement.create({
-        data: {
-          lotId: lot.id,
-          type: "RETURN_IN",
-          quantity: String(input.quantity),
-          unitCost: unitCost.toString(),
-          totalCost: totalCost.toString(),
-          movementDate: returnDate,
-          toLocationId: picture.order.locationId,
-          referenceType: "RETURN",
-          referenceId: returnNumber,
-          journalEntryId: entry.id,
-          notes: input.reason ?? null,
-        },
+      const entry = await postEntry(tx, {
+        entityId,
+        postingDate: returnDate,
+        sourceType: "SALES_RETURN",
+        sourceId: input.salesOrderId,
+        memo: `Return ${returnNumber} — ${line.sku} ×${input.quantity}`,
+        ctx,
+        lines,
       });
 
-      // The garments themselves come back, so a tag that was sold can be
-      // scanned again rather than reading as sold forever.
-      const units = await tx.garmentUnit.findMany({
-        where: {
-          variantId: input.variantId,
-          status: "SOLD",
-          salesOrderLine: { salesOrderId: input.salesOrderId },
-        },
-        orderBy: { soldAt: "desc" },
-        take: input.quantity,
-        select: { id: true },
-      });
-      if (units.length > 0) {
-        await tx.garmentUnit.updateMany({
-          where: { id: { in: units.map((u) => u.id) } },
+      // Cash handed back leaves the drawer open where the return is taken;
+      // left out, the till reads short by exactly the refund.
+      if (input.refundMethod === "CASH" && refund.greaterThan(0)) {
+        await recordTillCash(tx, {
+          locationId: picture.order.locationId,
+          kind: "REFUND",
+          amount: refund.negated(),
+          reference: returnNumber,
+        });
+      }
+
+      // A credit note settles part of the invoice, so it is recorded against
+      // the order as well as in the ledger.
+      //
+      // What a customer owes is never stored — it is always the order total
+      // less what has settled it. Crediting account 1210 without settling the
+      // order would make the ledger and the customer's account disagree, which
+      // is the exact drift that rule exists to prevent.
+      if (input.refundMethod === "AGAINST_BALANCE" && refund.greaterThan(0)) {
+        await tx.salesPayment.create({
           data: {
-            status: "IN_STOCK",
-            lotId: lot.id,
-            locationId: picture.order.locationId,
-            salesOrderLineId: null,
-            soldAt: null,
+            salesOrderId: input.salesOrderId,
+            method: "STORE_CREDIT",
+            amount: refund.toString(),
+            fee: "0",
+            status: "COLLECTED",
+            collectedAt: returnDate,
+            reference: returnNumber,
           },
         });
       }
 
-      restocked = input.quantity;
-    }
+      // --- the shelf ------------------------------------------------------
+      let restocked = 0;
+      // Needing repair is not the same as ready to sell. It comes back onto
+      // the books at its cost, but held until somebody releases it — see
+      // `releaseRepairedStock` — so the till cannot sell the fault back out.
+      const needsRepair = input.disposition === "REPAIR_AND_RESTOCK";
+      if (restocking) {
+        const lotNumber = await nextDocumentNumber(tx, "LOT", returnDate);
 
-    const record = await tx.return.create({
-      data: {
-        returnNumber,
-        salesOrderId: input.salesOrderId,
-        variantId: input.variantId,
-        quantity: input.quantity,
-        reason: input.reason ?? null,
-        disposition: input.disposition,
-        refundAmount: refund.toString(),
-        returnDate,
-      },
-    });
+        // The lot this sale actually took the garment from, so the return
+        // carries its history: when it first arrived (the aging clock is not
+        // laundered by the trip out and back), which run made it, and the
+        // factory margin inside its cost, which group reporting has to go on
+        // eliminating while it sits on the shelf again. Sales from before
+        // stock movements named their order fall back to the oldest lot of
+        // the garment, which is what this used to do for everything.
+        const soldFrom = await tx.inventoryMovement.findFirst({
+          where: {
+            type: "SALE",
+            referenceId: input.salesOrderId,
+            lot: { variantId: input.variantId },
+          },
+          orderBy: { movementDate: "asc" },
+          select: { lotId: true },
+        });
+        const originalLot = await tx.inventoryLot.findFirst({
+          where: soldFrom
+            ? { id: soldFrom.lotId }
+            : { variantId: input.variantId, entityId },
+          orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
+          select: {
+            receivedDate: true,
+            labelsPrintedAt: true,
+            productionOrderId: true,
+            transferMarginPerUnit: true,
+            sourceCostSnapshotId: true,
+          },
+        });
 
-    await writeAudit(tx, {
-      action: "SALE_RETURNED",
-      entityName: "Return",
-      entityId: record.id,
-      after: {
+        const lot = await tx.inventoryLot.create({
+          data: {
+            lotNumber,
+            state: needsRepair ? "AWAITING_REPAIR" : "FINISHED_GOODS",
+            variantId: input.variantId,
+            locationId: picture.order.locationId,
+            entityId,
+            productionOrderId: originalLot?.productionOrderId ?? null,
+            originalQty: String(input.quantity),
+            remainingQty: String(input.quantity),
+            unitCost: unitCost.toString(),
+            receivedDate: originalLot?.receivedDate ?? returnDate,
+            labelsPrintedAt: originalLot?.labelsPrintedAt ?? returnDate,
+            transferMarginPerUnit: originalLot?.transferMarginPerUnit ?? null,
+            sourceCostSnapshotId: originalLot?.sourceCostSnapshotId ?? null,
+          },
+        });
+
+        await tx.inventoryMovement.create({
+          data: {
+            lotId: lot.id,
+            type: "RETURN_IN",
+            direction: "IN",
+            quantity: String(input.quantity),
+            unitCost: unitCost.toString(),
+            totalCost: totalCost.toString(),
+            movementDate: returnDate,
+            toLocationId: picture.order.locationId,
+            referenceType: "RETURN",
+            referenceId: returnNumber,
+            journalEntryId: entry.id,
+            notes: input.reason ?? null,
+          },
+        });
+
+        // The garments themselves come back, so a tag that was sold can be
+        // scanned again rather than reading as sold forever.
+        const units = await tx.garmentUnit.findMany({
+          where: {
+            variantId: input.variantId,
+            status: "SOLD",
+            salesOrderLine: { salesOrderId: input.salesOrderId },
+          },
+          orderBy: { soldAt: "desc" },
+          take: input.quantity,
+          select: { id: true },
+        });
+        if (units.length > 0) {
+          await tx.garmentUnit.updateMany({
+            where: { id: { in: units.map((u) => u.id) } },
+            data: {
+              // A garment waiting for repair scans as returned, not in stock.
+              status: needsRepair ? "RETURNED" : "IN_STOCK",
+              lotId: lot.id,
+              locationId: picture.order.locationId,
+              salesOrderLineId: null,
+              soldAt: null,
+            },
+          });
+        }
+
+        restocked = input.quantity;
+      }
+
+      const record = await tx.return.create({
+        data: {
+          returnNumber,
+          salesOrderId: input.salesOrderId,
+          variantId: input.variantId,
+          quantity: input.quantity,
+          reason: input.reason ?? null,
+          disposition: input.disposition,
+          refundAmount: refund.toString(),
+          returnDate,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "SALE_RETURNED",
+        entityName: "Return",
+        entityId: record.id,
+        after: {
+          returnNumber,
+          order: picture.order.orderNumber,
+          sku: line.sku,
+          quantity: input.quantity,
+          refund: refund.toString(),
+          refundMethod: input.refundMethod,
+          disposition: input.disposition,
+          restocked,
+          reason: input.reason ?? null,
+        },
+        ctx,
+      });
+
+      return {
         returnNumber,
-        order: picture.order.orderNumber,
-        sku: line.sku,
-        quantity: input.quantity,
-        refund: refund.toString(),
-        refundMethod: input.refundMethod,
-        disposition: input.disposition,
+        refunded: refund.toString(),
         restocked,
-        reason: input.reason ?? null,
-      },
-      ctx,
+        journalEntryId: entry.id,
+      };
     });
-
-    return {
-      returnNumber,
-      refunded: refund.toString(),
-      restocked,
-      journalEntryId: entry.id,
-    };
   });
+}
+
+/**
+ * Puts a repaired return back on sale.
+ *
+ * Its quantity and cost do not change — it was never out of the books — only
+ * whether it may be sold. The person releasing it is recorded, because saying
+ * a garment is fit to sell again is a judgment somebody is answerable for.
+ */
+export async function releaseRepairedStock(
+  input: { lotId: string; note?: string | null },
+  ctx: AuditContext,
+): Promise<{ lotNumber: string; released: number }> {
+  return command("returns.releaseRepairedStock", input, ctx, async () => {
+    return db.$transaction(async (tx) => {
+      const lot = await tx.inventoryLot.findUnique({ where: { id: input.lotId } });
+      if (!lot) throw new ReturnError("That lot no longer exists.");
+      if (lot.state !== "AWAITING_REPAIR") {
+        throw new ReturnError(`${lot.lotNumber} is not waiting for repair.`);
+      }
+
+      await tx.inventoryLot.update({ where: { id: lot.id }, data: { state: "FINISHED_GOODS" } });
+      await tx.garmentUnit.updateMany({
+        where: { lotId: lot.id, status: "RETURNED" },
+        data: { status: "IN_STOCK" },
+      });
+
+      await writeAudit(tx, {
+        action: "REPAIRED_STOCK_RELEASED",
+        entityName: "InventoryLot",
+        entityId: lot.id,
+        before: { state: "AWAITING_REPAIR" },
+        after: { state: "FINISHED_GOODS", note: input.note ?? null },
+        ctx,
+      });
+
+      return { lotNumber: lot.lotNumber, released: Number(lot.remainingQty) };
+    });
+  });
+}
+
+/** Returned garments held back until repaired. */
+export async function awaitingRepair() {
+  const lots = await db.inventoryLot.findMany({
+    where: { state: "AWAITING_REPAIR", remainingQty: { gt: 0 } },
+    include: { variant: { include: { style: true } }, location: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return lots.map((l) => ({
+    lotId: l.id,
+    lotNumber: l.lotNumber,
+    sku: l.variant?.sku ?? "—",
+    nameEn: l.variant?.style.nameEn ?? "—",
+    nameAr: l.variant?.style.nameAr ?? "—",
+    location: l.location?.nameAr || l.location?.nameEn || "—",
+    quantity: Number(l.remainingQty),
+    since: l.createdAt,
+  }));
 }
 
 /** Orders a customer could bring something back from. */

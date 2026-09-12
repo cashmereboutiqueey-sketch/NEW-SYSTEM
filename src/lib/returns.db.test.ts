@@ -10,9 +10,12 @@ import {
   recentReturns,
   returnRateByStyle,
   recentOrdersForReturn,
+  releaseRepairedStock,
+  awaitingRepair,
   ReturnError,
 } from "./returns";
 import { outstandingForCustomer } from "./receivables";
+import { ownerDashboard } from "./dashboard";
 import { dec } from "./money";
 
 /**
@@ -141,6 +144,90 @@ async function soldGarments(quantity = 2, price = 1500, unitCost = "600", paid =
     ctx,
   );
 }
+
+/**
+ * A garment that needs repair is not a garment ready to sell, and a returned
+ * garment is still the one that was sold — with its history.
+ */
+describe("returns needing repair", () => {
+  const sell = (quantity: number) =>
+    createSale(
+      {
+        source: "MANUAL", channelId, entityId: brandId, locationId, customerId, orderDate: day,
+        lines: [{ variantId, quantity, retailPrice: 1500, discountPct: 0 }],
+        payments: [{ method: "CASH", amount: 1500 * quantity, fee: 0, collected: true }],
+      },
+      ctx,
+    );
+
+  it("holds a repair return off the shelf until it is released", async () => {
+    const sale = await soldGarments(2); // 10 in, 2 sold
+    await recordReturn(
+      {
+        salesOrderId: sale.salesOrderId, variantId, quantity: 1,
+        disposition: "REPAIR_AND_RESTOCK", refundMethod: "CASH", returnDate: day,
+      },
+      ctx,
+    );
+
+    const held = await db.inventoryLot.findFirstOrThrow({ where: { state: "AWAITING_REPAIR" } });
+    expect(Number(held.remainingQty)).toBe(1);
+
+    // Eight sellable, one held: nine cannot be sold.
+    await expect(sell(9)).rejects.toThrow(/Not enough finished goods/i);
+    expect(await awaitingRepair()).toHaveLength(1);
+
+    await releaseRepairedStock({ lotId: held.id, note: "Seam restitched" }, ctx);
+    expect((await db.inventoryLot.findUniqueOrThrow({ where: { id: held.id } })).state).toBe("FINISHED_GOODS");
+    await sell(9);
+  });
+
+  it("keeps the factory margin of the lot it was sold from", async () => {
+    // Group reporting eliminates the factory's margin while the garment sits
+    // in Brand stock; a returned garment is back in Brand stock, margin and all.
+    const sale = await soldGarments(2);
+    const soldLot = await db.inventoryLot.findFirstOrThrow({
+      where: { variantId, state: "FINISHED_GOODS" }, orderBy: { sequence: "asc" },
+    });
+    await db.inventoryLot.update({ where: { id: soldLot.id }, data: { transferMarginPerUnit: "120" } });
+
+    await recordReturn(
+      {
+        salesOrderId: sale.salesOrderId, variantId, quantity: 1,
+        disposition: "RESTOCK", refundMethod: "CASH", returnDate: day,
+      },
+      ctx,
+    );
+
+    const back = await db.inventoryLot.findFirstOrThrow({
+      where: { variantId, id: { not: soldLot.id } }, orderBy: { sequence: "desc" },
+    });
+    expect(back.transferMarginPerUnit?.toString()).toBe("120");
+    expect(back.receivedDate.toISOString()).toBe(soldLot.receivedDate.toISOString());
+  });
+});
+
+describe("what the owner is shown after a return", () => {
+  it("reports sales and margin net of the return, not as first sold", async () => {
+    // Two sold at 1,500 on a cost of 600, then one brought back and restocked.
+    const sale = await soldGarments(2, 1500, "600");
+    await recordReturn(
+      {
+        salesOrderId: sale.salesOrderId, variantId, quantity: 1,
+        disposition: "RESTOCK", refundMethod: "CASH", returnDate: day,
+      },
+      ctx,
+    );
+
+    const d = await ownerDashboard();
+    // The order total still says 3,000; the business kept 1,500 of it.
+    expect(Number(d.sales.revenue)).toBeCloseTo(1500, 2);
+    expect(Number(d.sales.returns)).toBeCloseTo(1500, 2);
+    expect(Number(d.sales.cogs)).toBeCloseTo(600, 2);
+    expect(Number(d.sales.grossMargin)).toBeCloseTo(900, 2);
+    expect(d.sales.unitsSold).toBe(1);
+  });
+});
 
 describe("taking a garment back", () => {
   it("gives the money back and puts it on the shelf", async () => {

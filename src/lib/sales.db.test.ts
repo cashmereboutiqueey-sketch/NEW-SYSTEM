@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
-import { createSale, openPosSession, closePosSession, SalesError } from "./sales";
+import { createSale, openPosSession, closePosSession } from "./sales";
 import { dec } from "./money";
 
 /** The unified Brand order engine, against a real database. */
@@ -17,7 +17,6 @@ let channelId: string;
 let locationId: string;
 let variantId: string;
 let cashierId: string;
-let customerId: string;
 let day: Date;
 
 const UNIT_COST = "422.6265";
@@ -31,7 +30,6 @@ beforeAll(async () => {
   locationId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
   variantId = (await db.variant.findFirstOrThrow()).id;
   cashierId = (await db.user.findFirstOrThrow({ where: { email: "owner@cashmere.eg" } })).id;
-  customerId = (await db.customer.findFirst())?.id ?? "";
 
   const period = await db.fiscalPeriod.findFirstOrThrow({
     where: { status: "OPEN" }, orderBy: { startDate: "asc" },
@@ -48,6 +46,7 @@ async function wipe() {
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
     await db.salesOrder.deleteMany({});
+    await db.tillCashEvent.deleteMany({});
     await db.posSession.deleteMany({});
     await db.inventoryMovement.deleteMany({});
     await db.inventoryLot.deleteMany({});

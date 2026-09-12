@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { db } from "./db";
-import { dec, safeDiv, type Decimal } from "./money";
+import { dec, type Decimal } from "./money";
 import { nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 

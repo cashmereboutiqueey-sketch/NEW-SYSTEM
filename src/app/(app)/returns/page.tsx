@@ -6,10 +6,12 @@ import {
   recentReturns,
   returnRateByStyle,
   returnWindowDays,
+  awaitingRepair,
 } from "@/lib/returns";
 import { PageHeader, Card, DataTable, StatTile, Badge } from "@/components/ui";
 import { formatMoney, formatNumber, dec } from "@/lib/money";
 import { ReturnDesk } from "./return-desk";
+import { ReleaseForm } from "./release-form";
 
 /**
  * المرتجعات — a customer brings a garment back.
@@ -34,12 +36,14 @@ export default async function ReturnsPage({
   const params = await searchParams;
 
   const mayRefund = can(session.role, "sales_order:refund");
+  const mayRelease = can(session.role, "inventory:adjust");
 
-  const [orders, returns, rates, windowDays] = await Promise.all([
+  const [orders, returns, rates, windowDays, held] = await Promise.all([
     recentOrdersForReturn(params.q ?? null),
     recentReturns(),
     returnRateByStyle(),
     returnWindowDays(),
+    awaitingRepair(),
   ]);
 
   const refunded = returns.reduce((s, r) => s.plus(dec(r.refundAmount)), dec(0));
@@ -108,6 +112,44 @@ export default async function ReturnsPage({
                 returnedUnits: o.returnedUnits,
                 fullyReturned: o.fullyReturned,
               }))}
+            />
+          </Card>
+        </div>
+      )}
+
+      {held.length > 0 && (
+        <div className="mb-5">
+          <Card
+            title={ar ? "مستنية تصليح" : "Waiting for repair"}
+            description={
+              ar
+                ? "رجعت المخزن بتكلفتها، بس مش بتتباع لحد ما حد يقول إنها اتصلّحت."
+                : "Back on the books at cost, but not for sale until somebody says it has been repaired."
+            }
+          >
+            <DataTable
+              headers={[
+                ar ? "اللوت" : "Lot",
+                ar ? "الصنف" : "Item",
+                ar ? "المكان" : "Where",
+                ar ? "العدد" : "Qty",
+                ar ? "من" : "Since",
+                "",
+              ]}
+              rows={held.map((h) => [
+                <span key="n" className="num text-xs" dir="ltr">{h.lotNumber}</span>,
+                <span key="s" className="text-xs">
+                  <span dir="ltr">{h.sku}</span> · {ar ? h.nameAr : h.nameEn}
+                </span>,
+                <span key="l" className="text-xs text-ink-500">{h.location}</span>,
+                <span key="q" className="num">{formatNumber(h.quantity)}</span>,
+                <span key="d" className="num text-xs" dir="ltr">{dateText(h.since)}</span>,
+                mayRelease ? (
+                  <ReleaseForm key="r" ar={ar} lotId={h.lotId} />
+                ) : (
+                  <span key="r" />
+                ),
+              ])}
             />
           </Card>
         </div>

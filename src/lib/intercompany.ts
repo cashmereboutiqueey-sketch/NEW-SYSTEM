@@ -6,6 +6,7 @@ import { consumeFifo } from "@/core/fifo";
 import { writeAudit, type AuditContext } from "./audit";
 import { markUnitsDespatched, settleUnitsOnIntake } from "./garment-units";
 import { dec } from "./money";
+import { command } from "./command";
 
 /**
  * Moving garments from the Factory to the Brand.
@@ -194,83 +195,86 @@ export async function despatchToBrand(
   },
   ctx: AuditContext,
 ): Promise<{ despatchNumber: string; quantity: string; transferPrice: string }> {
-  const quantity = dec(input.quantity);
-  if (quantity.lessThanOrEqualTo(0)) {
-    throw new IntercompanyError("Despatch quantity must be greater than zero.");
-  }
-
-  const [factory, transit, snapshot] = await Promise.all([
-    db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } }),
-    transitLocation(),
-    db.costSnapshot.findUnique({ where: { id: input.costSnapshotId } }),
-  ]);
-  if (!snapshot) throw new IntercompanyError("Cost snapshot not found.");
-  if (input.fromLocationId === transit.id) {
-    throw new IntercompanyError("Goods already in transit cannot be despatched again.");
-  }
-
-  return db.$transaction(async (tx) => {
-    const lots = await tx.inventoryLot.findMany({
-      where: {
-        variantId: input.variantId,
-        locationId: input.fromLocationId,
-        entityId: factory.id,
-        state: "FINISHED_GOODS",
-        remainingQty: { gt: 0 },
-      },
-      orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-    });
-
-    const consumed = consumeFifo(
-      lots.map((l) => ({
-        id: l.id,
-        receivedDate: l.receivedDate,
-        sequence: l.sequence,
-        remainingQty: l.remainingQty.toString(),
-        unitCost: l.unitCost.toString(),
-      })),
-      quantity,
-    );
-
-    if (!consumed.ok) {
-      throw new IntercompanyError(
-        `The factory does not hold enough finished goods: ${consumed.requested.toString()} requested, ${consumed.available.toString()} available.`,
-      );
+  return command("intercompany.despatchToBrand", input, ctx, async () => {
+    const quantity = dec(input.quantity);
+    if (quantity.lessThanOrEqualTo(0)) {
+      throw new IntercompanyError("Despatch quantity must be greater than zero.");
     }
 
-    const despatchNumber = await nextDocumentNumber(tx, "DSP", input.despatchDate);
+    const [factory, transit, snapshot] = await Promise.all([
+      db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } }),
+      transitLocation(),
+      db.costSnapshot.findUnique({ where: { id: input.costSnapshotId } }),
+    ]);
+    if (!snapshot) throw new IntercompanyError("Cost snapshot not found.");
+    if (input.fromLocationId === transit.id) {
+      throw new IntercompanyError("Goods already in transit cannot be despatched again.");
+    }
 
-    // One transit lot per source lot, so each keeps its own factory cost and
-    // FIFO stays meaningful once the shop counts it in.
-    for (const a of consumed.allocations) {
-      await tx.inventoryLot.update({
-        where: { id: a.lotId },
-        data: { remainingQty: { decrement: a.quantity.toString() } },
-      });
-
-      const source = lots.find((l) => l.id === a.lotId)!;
-      const transitLotNumber = await nextDocumentNumber(tx, "LOT", input.despatchDate);
-
-      const transitLot = await tx.inventoryLot.create({
-        data: {
-          lotNumber: transitLotNumber,
-          state: "FINISHED_GOODS",
+    return db.$transaction(async (tx) => {
+      const lots = await tx.inventoryLot.findMany({
+        where: {
           variantId: input.variantId,
-          locationId: transit.id,
+          locationId: input.fromLocationId,
           entityId: factory.id,
-          productionOrderId: source.productionOrderId,
-          originalQty: a.quantity.toString(),
-          remainingQty: a.quantity.toString(),
-          unitCost: a.unitCost.toString(),
-          receivedDate: input.despatchDate,
-          sourceCostSnapshotId: snapshot.id,
+          state: "FINISHED_GOODS",
+          remainingQty: { gt: 0 },
         },
+        orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
       });
 
-      await tx.inventoryMovement.create({
-        data: {
-          lotId: transitLot.id,
-          type: "TRANSFER",
+      const consumed = consumeFifo(
+        lots.map((l) => ({
+          id: l.id,
+          receivedDate: l.receivedDate,
+          sequence: l.sequence,
+          remainingQty: l.remainingQty.toString(),
+          unitCost: l.unitCost.toString(),
+        })),
+        quantity,
+      );
+
+      if (!consumed.ok) {
+        throw new IntercompanyError(
+          `The factory does not hold enough finished goods: ${consumed.requested.toString()} requested, ${consumed.available.toString()} available.`,
+        );
+      }
+
+      const despatchNumber = await nextDocumentNumber(tx, "DSP", input.despatchDate);
+
+      // One transit lot per source lot, so each keeps its own factory cost and
+      // FIFO stays meaningful once the shop counts it in.
+      for (const a of consumed.allocations) {
+        await tx.inventoryLot.update({
+          where: { id: a.lotId },
+          data: { remainingQty: { decrement: a.quantity.toString() } },
+        });
+
+        const source = lots.find((l) => l.id === a.lotId)!;
+        const transitLotNumber = await nextDocumentNumber(tx, "LOT", input.despatchDate);
+
+        const transitLot = await tx.inventoryLot.create({
+          data: {
+            lotNumber: transitLotNumber,
+            state: "FINISHED_GOODS",
+            variantId: input.variantId,
+            locationId: transit.id,
+            entityId: factory.id,
+            productionOrderId: source.productionOrderId,
+            originalQty: a.quantity.toString(),
+            remainingQty: a.quantity.toString(),
+            unitCost: a.unitCost.toString(),
+            receivedDate: input.despatchDate,
+            sourceCostSnapshotId: snapshot.id,
+          },
+        });
+
+        // Both legs: out of the factory's lot, into the transit lot. The
+        // departing side used to go unrecorded, so the source lot's balance
+        // fell with nothing in its history to say why.
+        // Deliberately no journal: same account, same entity, same value.
+        const leg = {
+          type: "TRANSFER" as const,
           quantity: a.quantity.toString(),
           unitCost: a.unitCost.toString(),
           totalCost: a.cost.toString(),
@@ -280,38 +284,39 @@ export async function despatchToBrand(
           referenceType: "DESPATCH_NOTE",
           referenceId: despatchNumber,
           notes: input.notes ?? null,
-          // Deliberately no journal: same account, same entity, same value.
+        };
+        await tx.inventoryMovement.create({ data: { ...leg, lotId: a.lotId, direction: "OUT" } });
+        await tx.inventoryMovement.create({ data: { ...leg, lotId: transitLot.id, direction: "IN" } });
+
+        // The tagged garments travel with the stock they belong to.
+        await markUnitsDespatched(tx, {
+          variantId: input.variantId,
+          quantity: Number(a.quantity),
+          fromLocationId: input.fromLocationId,
+          toLotId: transitLot.id,
+          transitLocationId: transit.id,
+        });
+      }
+
+      await writeAudit(tx, {
+        action: "DESPATCHED_TO_BRAND",
+        entityName: "InventoryLot",
+        entityId: input.variantId,
+        after: {
+          despatchNumber,
+          quantity: quantity.toString(),
+          factoryCost: consumed.totalCost.toString(),
+          transferPrice: snapshot.transferPrice.toString(),
         },
+        ctx,
       });
 
-      // The tagged garments travel with the stock they belong to.
-      await markUnitsDespatched(tx, {
-        variantId: input.variantId,
-        quantity: Number(a.quantity),
-        fromLocationId: input.fromLocationId,
-        toLotId: transitLot.id,
-        transitLocationId: transit.id,
-      });
-    }
-
-    await writeAudit(tx, {
-      action: "DESPATCHED_TO_BRAND",
-      entityName: "InventoryLot",
-      entityId: input.variantId,
-      after: {
+      return {
         despatchNumber,
         quantity: quantity.toString(),
-        factoryCost: consumed.totalCost.toString(),
         transferPrice: snapshot.transferPrice.toString(),
-      },
-      ctx,
+      };
     });
-
-    return {
-      despatchNumber,
-      quantity: quantity.toString(),
-      transferPrice: snapshot.transferPrice.toString(),
-    };
   });
 }
 
@@ -449,277 +454,284 @@ export async function receiveAtBrand(
   receivedSerials: string[];
   lostSerials: string[];
 }> {
-  if (!input.labelsPrinted) {
-    throw new IntercompanyError(
-      "Print and apply the labels before taking this batch onto the floor — an untagged garment cannot be rung up or counted.",
-    );
-  }
-
-  const counted = dec(input.countedQty);
-  if (counted.lessThanOrEqualTo(0)) {
-    throw new IntercompanyError("Counted quantity must be greater than zero.");
-  }
-
-  const [factory, brand, transit] = await Promise.all([
-    db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } }),
-    db.entity.findFirstOrThrow({ where: { kind: "BRAND" } }),
-    transitLocation(),
-  ]);
-
-  const destination = await db.location.findUnique({ where: { id: input.toLocationId } });
-  if (!destination || destination.entityId !== brand.id) {
-    throw new IntercompanyError("Goods can only be received into one of the Brand's locations.");
-  }
-
-  return db.$transaction(async (tx) => {
-    // The lots this despatch note put into transit for this SKU.
-    const movements = await tx.inventoryMovement.findMany({
-      where: { referenceType: "DESPATCH_NOTE", referenceId: input.despatchNumber },
-      select: { lotId: true },
-    });
-
-    const lots = await tx.inventoryLot.findMany({
-      where: {
-        id: { in: movements.map((m) => m.lotId) },
-        variantId: input.variantId,
-        locationId: transit.id,
-        entityId: factory.id,
-        remainingQty: { gt: 0 },
-      },
-      include: { sourceCostSnapshot: true },
-      orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
-    });
-
-    if (lots.length === 0) {
+  return command("intercompany.receiveAtBrand", input, ctx, async () => {
+    if (!input.labelsPrinted) {
       throw new IntercompanyError(
-        `Nothing from ${input.despatchNumber} is still in transit for this SKU.`,
+        "Print and apply the labels before taking this batch onto the floor — an untagged garment cannot be rung up or counted.",
       );
     }
 
-    const despatched = lots.reduce((s, l) => s.plus(dec(l.remainingQty)), dec(0));
-    if (counted.greaterThan(despatched)) {
-      throw new IntercompanyError(
-        `The note says ${despatched.toString()} were sent but ${counted.toString()} were counted. More cannot arrive than left; check the count, or receive the rest against another note.`,
-      );
+    const counted = dec(input.countedQty);
+    if (counted.lessThanOrEqualTo(0)) {
+      throw new IntercompanyError("Counted quantity must be greater than zero.");
     }
 
-    const snapshot = lots[0].sourceCostSnapshot;
-    if (!snapshot) {
-      throw new IntercompanyError(
-        "These garments carry no frozen cost, so there is no transfer price to invoice at.",
-      );
+    const [factory, brand, transit] = await Promise.all([
+      db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } }),
+      db.entity.findFirstOrThrow({ where: { kind: "BRAND" } }),
+      transitLocation(),
+    ]);
+
+    const destination = await db.location.findUnique({ where: { id: input.toLocationId } });
+    if (!destination || destination.entityId !== brand.id) {
+      throw new IntercompanyError("Goods can only be received into one of the Brand's locations.");
     }
 
-    const transferUnitPrice = dec(snapshot.transferPrice);
-    const marginPerUnit = transferUnitPrice.minus(dec(snapshot.factoryTotalCost));
-    const shortfall = despatched.minus(counted);
-
-    // The whole despatch leaves transit: what was counted becomes brand stock,
-    // what was not is gone. Leaving the shortfall in transit would show stock
-    // that nobody can find.
-    const consumed = consumeFifo(
-      lots.map((l) => ({
-        id: l.id,
-        receivedDate: l.receivedDate,
-        sequence: l.sequence,
-        remainingQty: l.remainingQty.toString(),
-        unitCost: l.unitCost.toString(),
-      })),
-      despatched,
-    );
-    if (!consumed.ok) {
-      throw new IntercompanyError("The goods in transit changed while this was being received.");
-    }
-
-    // Factory cost splits by quantity across the same unit costs, so the part
-    // written off and the part sold on always sum to what was despatched.
-    const averageFactoryCost = consumed.totalCost.div(despatched);
-    const soldCost = averageFactoryCost.times(counted).toDecimalPlaces(4);
-    const lostCost = consumed.totalCost.minus(soldCost);
-
-    const transferNumber = await nextDocumentNumber(tx, "TRF", input.receivedDate);
-    const transferTotal = transferUnitPrice.times(counted);
-
-    // --- factory books: a sale of what arrived, a loss on what did not ------
-    const factoryLines = [
-      {
-        accountId: await accountId(tx, ACC.IC_RECEIVABLE),
-        debit: transferTotal,
-        entityId: factory.id,
-        variantId: input.variantId,
-        description: `Internal invoice ${transferNumber}`,
-      },
-      {
-        accountId: await accountId(tx, ACC.IC_REVENUE),
-        credit: transferTotal,
-        entityId: factory.id,
-        variantId: input.variantId,
-        description: `Internal invoice ${transferNumber}`,
-      },
-      {
-        accountId: await accountId(tx, ACC.COGS_FACTORY_MATERIAL),
-        debit: soldCost,
-        entityId: factory.id,
-        variantId: input.variantId,
-        description: `Cost of goods transferred ${transferNumber}`,
-      },
-      {
-        accountId: await accountId(tx, ACC.FG_FACTORY),
-        credit: consumed.totalCost,
-        entityId: factory.id,
-        variantId: input.variantId,
-        description: `Finished goods released ${transferNumber}`,
-      },
-    ];
-
-    if (shortfall.greaterThan(0)) {
-      factoryLines.push({
-        accountId: await accountId(tx, ACC.ABNORMAL_LOSS),
-        debit: lostCost,
-        entityId: factory.id,
-        variantId: input.variantId,
-        description: `Short on delivery ${input.despatchNumber}: ${shortfall.toString()} garments`,
+    return db.$transaction(async (tx) => {
+      // The lots this despatch note put into transit for this SKU.
+      const movements = await tx.inventoryMovement.findMany({
+        // The transit lots are the arriving legs; the departing ones are the
+        // factory lots the goods came out of.
+        where: { referenceType: "DESPATCH_NOTE", referenceId: input.despatchNumber, direction: "IN" },
+        select: { lotId: true },
       });
-    }
 
-    const factoryJournal = await postEntry(tx, {
-      entityId: factory.id,
-      postingDate: input.receivedDate,
-      sourceType: "TRANSFER_INVOICE",
-      sourceId: transferNumber,
-      memo: `Transfer to Brand ${transferNumber}`,
-      ctx,
-      lines: factoryLines,
-    });
-
-    for (const a of consumed.allocations) {
-      await tx.inventoryLot.update({
-        where: { id: a.lotId },
-        data: { remainingQty: { decrement: a.quantity.toString() } },
+      const lots = await tx.inventoryLot.findMany({
+        where: {
+          id: { in: movements.map((m) => m.lotId) },
+          variantId: input.variantId,
+          locationId: transit.id,
+          entityId: factory.id,
+          remainingQty: { gt: 0 },
+        },
+        include: { sourceCostSnapshot: true },
+        orderBy: [{ receivedDate: "asc" }, { sequence: "asc" }],
       });
+
+      if (lots.length === 0) {
+        throw new IntercompanyError(
+          `Nothing from ${input.despatchNumber} is still in transit for this SKU.`,
+        );
+      }
+
+      const despatched = lots.reduce((s, l) => s.plus(dec(l.remainingQty)), dec(0));
+      if (counted.greaterThan(despatched)) {
+        throw new IntercompanyError(
+          `The note says ${despatched.toString()} were sent but ${counted.toString()} were counted. More cannot arrive than left; check the count, or receive the rest against another note.`,
+        );
+      }
+
+      const snapshot = lots[0].sourceCostSnapshot;
+      if (!snapshot) {
+        throw new IntercompanyError(
+          "These garments carry no frozen cost, so there is no transfer price to invoice at.",
+        );
+      }
+
+      const transferUnitPrice = dec(snapshot.transferPrice);
+      const marginPerUnit = transferUnitPrice.minus(dec(snapshot.factoryTotalCost));
+      const shortfall = despatched.minus(counted);
+
+      // The whole despatch leaves transit: what was counted becomes brand stock,
+      // what was not is gone. Leaving the shortfall in transit would show stock
+      // that nobody can find.
+      const consumed = consumeFifo(
+        lots.map((l) => ({
+          id: l.id,
+          receivedDate: l.receivedDate,
+          sequence: l.sequence,
+          remainingQty: l.remainingQty.toString(),
+          unitCost: l.unitCost.toString(),
+        })),
+        despatched,
+      );
+      if (!consumed.ok) {
+        throw new IntercompanyError("The goods in transit changed while this was being received.");
+      }
+
+      // Factory cost splits by quantity across the same unit costs, so the part
+      // written off and the part sold on always sum to what was despatched.
+      const averageFactoryCost = consumed.totalCost.div(despatched);
+      const soldCost = averageFactoryCost.times(counted).toDecimalPlaces(4);
+      const lostCost = consumed.totalCost.minus(soldCost);
+
+      const transferNumber = await nextDocumentNumber(tx, "TRF", input.receivedDate);
+      const transferTotal = transferUnitPrice.times(counted);
+
+      // --- factory books: a sale of what arrived, a loss on what did not ------
+      const factoryLines = [
+        {
+          accountId: await accountId(tx, ACC.IC_RECEIVABLE),
+          debit: transferTotal,
+          entityId: factory.id,
+          variantId: input.variantId,
+          description: `Internal invoice ${transferNumber}`,
+        },
+        {
+          accountId: await accountId(tx, ACC.IC_REVENUE),
+          credit: transferTotal,
+          entityId: factory.id,
+          variantId: input.variantId,
+          description: `Internal invoice ${transferNumber}`,
+        },
+        {
+          accountId: await accountId(tx, ACC.COGS_FACTORY_MATERIAL),
+          debit: soldCost,
+          entityId: factory.id,
+          variantId: input.variantId,
+          description: `Cost of goods transferred ${transferNumber}`,
+        },
+        {
+          accountId: await accountId(tx, ACC.FG_FACTORY),
+          credit: consumed.totalCost,
+          entityId: factory.id,
+          variantId: input.variantId,
+          description: `Finished goods released ${transferNumber}`,
+        },
+      ];
+
+      if (shortfall.greaterThan(0)) {
+        factoryLines.push({
+          accountId: await accountId(tx, ACC.ABNORMAL_LOSS),
+          debit: lostCost,
+          entityId: factory.id,
+          variantId: input.variantId,
+          description: `Short on delivery ${input.despatchNumber}: ${shortfall.toString()} garments`,
+        });
+      }
+
+      const factoryJournal = await postEntry(tx, {
+        entityId: factory.id,
+        postingDate: input.receivedDate,
+        sourceType: "TRANSFER_INVOICE",
+        sourceId: transferNumber,
+        memo: `Transfer to Brand ${transferNumber}`,
+        ctx,
+        lines: factoryLines,
+      });
+
+      for (const a of consumed.allocations) {
+        await tx.inventoryLot.update({
+          where: { id: a.lotId },
+          data: { remainingQty: { decrement: a.quantity.toString() } },
+        });
+        // Out of the transit lot; the arrival is the Brand lot's receipt below.
+        await tx.inventoryMovement.create({
+          data: {
+            lotId: a.lotId,
+            type: "TRANSFER",
+            direction: "OUT",
+            quantity: a.quantity.toString(),
+            unitCost: a.unitCost.toString(),
+            totalCost: a.cost.toString(),
+            movementDate: input.receivedDate,
+            fromLocationId: transit.id,
+            toLocationId: input.toLocationId,
+            referenceType: "TRANSFER_INVOICE",
+            referenceId: transferNumber,
+            journalEntryId: factoryJournal.id,
+          },
+        });
+      }
+
+      // --- brand books: stock in at transfer price, for what arrived ---------
+      const brandLotNumber = await nextDocumentNumber(tx, "LOT", input.receivedDate);
+
+      const brandJournal = await postEntry(tx, {
+        entityId: brand.id,
+        postingDate: input.receivedDate,
+        sourceType: "TRANSFER_INVOICE",
+        sourceId: transferNumber,
+        memo: `Goods received from Factory ${transferNumber}`,
+        ctx,
+        lines: [
+          {
+            accountId: await accountId(tx, ACC.FG_BRAND),
+            debit: transferTotal,
+            entityId: brand.id,
+            variantId: input.variantId,
+            description: `Stock received ${transferNumber}`,
+          },
+          {
+            accountId: await accountId(tx, ACC.IC_PAYABLE),
+            credit: transferTotal,
+            entityId: brand.id,
+            variantId: input.variantId,
+            description: `Owed to the factory ${transferNumber}`,
+          },
+        ],
+      });
+
+      const brandLot = await tx.inventoryLot.create({
+        data: {
+          lotNumber: brandLotNumber,
+          state: "FINISHED_GOODS",
+          variantId: input.variantId,
+          locationId: input.toLocationId,
+          entityId: brand.id,
+          originalQty: counted.toString(),
+          remainingQty: counted.toString(),
+          unitCost: transferUnitPrice.toString(),
+          receivedDate: input.receivedDate,
+          // Recorded on the lot so consolidation eliminates exactly the profit
+          // still held, even if prices change afterwards.
+          transferMarginPerUnit: marginPerUnit.toString(),
+          sourceCostSnapshotId: snapshot.id,
+          labelsPrintedAt: input.receivedDate,
+        },
+      });
+
+      const settled = await settleUnitsOnIntake(tx, {
+        variantId: input.variantId,
+        transitLotIds: lots.map((l) => l.id),
+        countedQty: Number(counted),
+        brandLotId: brandLot.id,
+        toLocationId: input.toLocationId,
+        entityId: brand.id,
+        receivedDate: input.receivedDate,
+        shortfallNote: input.shortfallNote ?? null,
+      });
+
       await tx.inventoryMovement.create({
         data: {
-          lotId: a.lotId,
-          type: "TRANSFER",
-          quantity: a.quantity.toString(),
-          unitCost: a.unitCost.toString(),
-          totalCost: a.cost.toString(),
+          lotId: brandLot.id,
+          type: "RECEIPT",
+          direction: "IN",
+          quantity: counted.toString(),
+          unitCost: transferUnitPrice.toString(),
+          totalCost: transferTotal.toString(),
           movementDate: input.receivedDate,
-          fromLocationId: transit.id,
           toLocationId: input.toLocationId,
           referenceType: "TRANSFER_INVOICE",
           referenceId: transferNumber,
-          journalEntryId: factoryJournal.id,
+          journalEntryId: brandJournal.id,
         },
       });
-    }
 
-    // --- brand books: stock in at transfer price, for what arrived ---------
-    const brandLotNumber = await nextDocumentNumber(tx, "LOT", input.receivedDate);
-
-    const brandJournal = await postEntry(tx, {
-      entityId: brand.id,
-      postingDate: input.receivedDate,
-      sourceType: "TRANSFER_INVOICE",
-      sourceId: transferNumber,
-      memo: `Goods received from Factory ${transferNumber}`,
-      ctx,
-      lines: [
-        {
-          accountId: await accountId(tx, ACC.FG_BRAND),
-          debit: transferTotal,
-          entityId: brand.id,
-          variantId: input.variantId,
-          description: `Stock received ${transferNumber}`,
+      await writeAudit(tx, {
+        action: "RECEIVED_FROM_FACTORY",
+        entityName: "InventoryLot",
+        entityId: brandLot.id,
+        after: {
+          despatchNumber: input.despatchNumber,
+          transferNumber,
+          despatchedQty: despatched.toString(),
+          countedQty: counted.toString(),
+          shortfallQty: shortfall.toString(),
+          shortfallCost: shortfall.greaterThan(0) ? lostCost.toString() : null,
+          shortfallNote: input.shortfallNote ?? null,
+          // Named so a missing garment can be looked for by its tag rather than
+          // being only a number in a variance column.
+          lostSerials: settled.lost,
+          transferPrice: transferTotal.toString(),
+          marginPerUnit: marginPerUnit.toString(),
+          unrealisedIfUnsold: marginPerUnit.times(counted).toString(),
         },
-        {
-          accountId: await accountId(tx, ACC.IC_PAYABLE),
-          credit: transferTotal,
-          entityId: brand.id,
-          variantId: input.variantId,
-          description: `Owed to the factory ${transferNumber}`,
-        },
-      ],
-    });
+        ctx,
+      });
 
-    const brandLot = await tx.inventoryLot.create({
-      data: {
-        lotNumber: brandLotNumber,
-        state: "FINISHED_GOODS",
-        variantId: input.variantId,
-        locationId: input.toLocationId,
-        entityId: brand.id,
-        originalQty: counted.toString(),
-        remainingQty: counted.toString(),
-        unitCost: transferUnitPrice.toString(),
-        receivedDate: input.receivedDate,
-        // Recorded on the lot so consolidation eliminates exactly the profit
-        // still held, even if prices change afterwards.
-        transferMarginPerUnit: marginPerUnit.toString(),
-        sourceCostSnapshotId: snapshot.id,
-        labelsPrintedAt: input.receivedDate,
-      },
-    });
-
-    const settled = await settleUnitsOnIntake(tx, {
-      variantId: input.variantId,
-      transitLotIds: lots.map((l) => l.id),
-      countedQty: Number(counted),
-      brandLotId: brandLot.id,
-      toLocationId: input.toLocationId,
-      entityId: brand.id,
-      receivedDate: input.receivedDate,
-      shortfallNote: input.shortfallNote ?? null,
-    });
-
-    await tx.inventoryMovement.create({
-      data: {
-        lotId: brandLot.id,
-        type: "RECEIPT",
-        quantity: counted.toString(),
-        unitCost: transferUnitPrice.toString(),
-        totalCost: transferTotal.toString(),
-        movementDate: input.receivedDate,
-        toLocationId: input.toLocationId,
-        referenceType: "TRANSFER_INVOICE",
-        referenceId: transferNumber,
-        journalEntryId: brandJournal.id,
-      },
-    });
-
-    await writeAudit(tx, {
-      action: "RECEIVED_FROM_FACTORY",
-      entityName: "InventoryLot",
-      entityId: brandLot.id,
-      after: {
-        despatchNumber: input.despatchNumber,
+      return {
         transferNumber,
-        despatchedQty: despatched.toString(),
         countedQty: counted.toString(),
         shortfallQty: shortfall.toString(),
-        shortfallCost: shortfall.greaterThan(0) ? lostCost.toString() : null,
-        shortfallNote: input.shortfallNote ?? null,
-        // Named so a missing garment can be looked for by its tag rather than
-        // being only a number in a variance column.
-        lostSerials: settled.lost,
+        factoryCost: soldCost.toString(),
         transferPrice: transferTotal.toString(),
         marginPerUnit: marginPerUnit.toString(),
-        unrealisedIfUnsold: marginPerUnit.times(counted).toString(),
-      },
-      ctx,
+        brandLotNumber,
+        receivedSerials: settled.received,
+        lostSerials: settled.lost,
+      };
     });
-
-    return {
-      transferNumber,
-      countedQty: counted.toString(),
-      shortfallQty: shortfall.toString(),
-      factoryCost: soldCost.toString(),
-      transferPrice: transferTotal.toString(),
-      marginPerUnit: marginPerUnit.toString(),
-      brandLotNumber,
-      receivedSerials: settled.received,
-      lostSerials: settled.lost,
-    };
   });
 }
 
@@ -749,37 +761,39 @@ export async function transferToBrand(
   marginPerUnit: string;
   brandLotNumber: string;
 }> {
-  const despatch = await despatchToBrand(
-    {
-      variantId: input.variantId,
-      quantity: input.quantity,
-      fromLocationId: input.fromLocationId,
-      despatchDate: input.transferDate,
-      costSnapshotId: input.costSnapshotId,
-    },
-    ctx,
-  );
+  return command("intercompany.transferToBrand", input, ctx, async () => {
+    const despatch = await despatchToBrand(
+      {
+        variantId: input.variantId,
+        quantity: input.quantity,
+        fromLocationId: input.fromLocationId,
+        despatchDate: input.transferDate,
+        costSnapshotId: input.costSnapshotId,
+      },
+      ctx,
+    );
 
-  const received = await receiveAtBrand(
-    {
+    const received = await receiveAtBrand(
+      {
+        despatchNumber: despatch.despatchNumber,
+        variantId: input.variantId,
+        countedQty: input.quantity,
+        toLocationId: input.toLocationId,
+        receivedDate: input.transferDate,
+        labelsPrinted: true,
+      },
+      ctx,
+    );
+
+    return {
       despatchNumber: despatch.despatchNumber,
-      variantId: input.variantId,
-      countedQty: input.quantity,
-      toLocationId: input.toLocationId,
-      receivedDate: input.transferDate,
-      labelsPrinted: true,
-    },
-    ctx,
-  );
-
-  return {
-    despatchNumber: despatch.despatchNumber,
-    transferNumber: received.transferNumber,
-    factoryCost: received.factoryCost,
-    transferPrice: received.transferPrice,
-    marginPerUnit: received.marginPerUnit,
-    brandLotNumber: received.brandLotNumber,
-  };
+      transferNumber: received.transferNumber,
+      factoryCost: received.factoryCost,
+      transferPrice: received.transferPrice,
+      marginPerUnit: received.marginPerUnit,
+      brandLotNumber: received.brandLotNumber,
+    };
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────── history */

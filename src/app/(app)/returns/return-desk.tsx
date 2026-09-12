@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
+import { RequestIdField } from "@/components/request-id";
 import {
   loadOrderAction,
   recordReturnAction,
@@ -153,6 +154,7 @@ export function ReturnDesk({
 
       {picture && (
         <form action={action} className="space-y-3">
+          <RequestIdField state={state} />
           <input type="hidden" name="salesOrderId" value={picture.order.id} />
           <input type="hidden" name="returnDate" value={today} />
 

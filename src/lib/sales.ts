@@ -9,6 +9,10 @@ import { writeAudit, type AuditContext } from "./audit";
 import type { DraftLine } from "@/core/ledger";
 import { dec, sum, roundMoney } from "./money";
 import { outstandingForCustomer as customerOutstanding } from "./receivables";
+import { command } from "./command";
+import { recordTillCash } from "./till";
+import { canonicalCustomerId } from "./crm";
+import { randomUUID } from "node:crypto";
 
 /**
  * The unified Brand order engine.
@@ -170,365 +174,394 @@ export async function createSale(
   cogs: string;
   grossMargin: string;
 }> {
-  const data = createSaleSchema.parse(input);
+  return command("sales.createSale", input, ctx, async () => {
+    const parsed = createSaleSchema.parse(input);
+    // A merged customer's id means the record it was merged into.
+    const data = { ...parsed, customerId: await canonicalCustomerId(db, parsed.customerId) };
+    if (new Set(data.lines.map((line) => line.variantId)).size !== data.lines.length) {
+      throw new SalesError("Combine repeated variants into one sale line before submitting.");
+    }
+    const salesOrderId = randomUUID();
 
-  if (data.source === "MODERATOR" && !ctx.userId) {
-    // The specification is explicit: a social order must name its moderator.
-    throw new SalesError("A moderator order must record which moderator created it.");
-  }
-  if (data.source === "POS" && !data.posSessionId) {
-    throw new SalesError("A POS sale must belong to an open till session.");
-  }
+    if (data.source === "MODERATOR" && !ctx.userId) {
+      // The specification is explicit: a social order must name its moderator.
+      throw new SalesError("A moderator order must record which moderator created it.");
+    }
+    if (data.source === "POS" && !data.posSessionId) {
+      throw new SalesError("A POS sale must belong to an open till session.");
+    }
 
-  // Idempotency for imports: the same external order can arrive twice.
-  if (data.externalId) {
-    const existing = await db.salesOrder.findFirst({
-      where: { source: data.source, externalId: data.externalId },
-      select: { id: true, orderNumber: true, netAmount: true, cogsAmount: true },
-    });
-    if (existing) {
+    // Idempotency for imports: the same external order can arrive twice.
+    if (data.externalId) {
+      const existing = await db.salesOrder.findFirst({
+        where: { source: data.source, externalId: data.externalId },
+        select: { id: true, orderNumber: true, netAmount: true, cogsAmount: true },
+      });
+      if (existing) {
+        return {
+          salesOrderId: existing.id,
+          orderNumber: existing.orderNumber,
+          netAmount: existing.netAmount.toString(),
+          cogs: existing.cogsAmount.toString(),
+          grossMargin: dec(existing.netAmount).minus(dec(existing.cogsAmount)).toString(),
+        };
+      }
+    }
+
+    if (data.posSessionId) {
+      const session = await db.posSession.findUnique({ where: { id: data.posSessionId } });
+      if (!session) throw new SalesError("Till session not found.");
+      if (session.closedAt) throw new SalesError("That till session is already closed.");
+      // A till's drawer is at one place. A sale rung up on it from another
+      // location would put that location's cash in this drawer's count.
+      if (session.locationId !== data.locationId) {
+        throw new SalesError("That till is at another location from this sale.");
+      }
+    }
+
+    // Invoice amounts are rounded to the piastre, because that is what an
+    // invoice is. A 15% discount on 99.99 gives 84.9915, which no customer can
+    // pay; recognising revenue at that figure while collecting 84.99 leaves the
+    // journal short by fractions nobody can reconcile. Rounding here keeps the
+    // invoice, the revenue posting and the payment in exact agreement.
+    const lines = data.lines.map((l) => {
+      // Both unit prices are rounded first, then multiplied by a whole
+      // quantity. Rounding the multiplication instead would let the gross and
+      // net lines disagree by a piastre on the same order, which is exactly the
+      // imbalance the ledger then refuses to post.
+      const unitPrice = roundMoney(dec(l.retailPrice));
+      const netPrice = roundMoney(unitPrice.times(dec(1).minus(dec(l.discountPct))));
       return {
-        salesOrderId: existing.id,
-        orderNumber: existing.orderNumber,
-        netAmount: existing.netAmount.toString(),
-        cogs: existing.cogsAmount.toString(),
-        grossMargin: dec(existing.netAmount).minus(dec(existing.cogsAmount)).toString(),
+        ...l,
+        gross: unitPrice.times(l.quantity),
+        netPrice,
+        lineTotal: netPrice.times(l.quantity),
       };
-    }
-  }
-
-  if (data.posSessionId) {
-    const session = await db.posSession.findUnique({ where: { id: data.posSessionId } });
-    if (!session) throw new SalesError("Till session not found.");
-    if (session.closedAt) throw new SalesError("That till session is already closed.");
-  }
-
-  // Invoice amounts are rounded to the piastre, because that is what an
-  // invoice is. A 15% discount on 99.99 gives 84.9915, which no customer can
-  // pay; recognising revenue at that figure while collecting 84.99 leaves the
-  // journal short by fractions nobody can reconcile. Rounding here keeps the
-  // invoice, the revenue posting and the payment in exact agreement.
-  const lines = data.lines.map((l) => {
-    // Both unit prices are rounded first, then multiplied by a whole
-    // quantity. Rounding the multiplication instead would let the gross and
-    // net lines disagree by a piastre on the same order, which is exactly the
-    // imbalance the ledger then refuses to post.
-    const unitPrice = roundMoney(dec(l.retailPrice));
-    const netPrice = roundMoney(unitPrice.times(dec(1).minus(dec(l.discountPct))));
-    return {
-      ...l,
-      gross: unitPrice.times(l.quantity),
-      netPrice,
-      lineTotal: netPrice.times(l.quantity),
-    };
-  });
-
-  const grossAmount = sum(lines.map((l) => l.gross));
-  const netAmount = sum(lines.map((l) => l.lineTotal));
-  const discountAmount = grossAmount.minus(netAmount);
-  const shipping = roundMoney(dec(data.shippingAmount));
-
-  // A payment is money, so it is held at money precision from here on and
-  // every later use — the stored record, the settlement posting, the fee —
-  // reads the same rounded figure.
-  const payments = data.payments.map((p) => ({
-    ...p,
-    amount: roundMoney(dec(p.amount)),
-    fee: roundMoney(dec(p.fee)),
-  }));
-
-  const paymentTotal = sum(payments.map((p) => p.amount));
-  const dueFromCustomer = netAmount.plus(shipping);
-  // Compared at money precision, not at full precision: EGP cannot be paid in
-  // fractions of a piastre, so an order totalling 4,989.3915 is settled in
-  // full by 4,989.39. Demanding exact equality here rejects correct payments
-  // and reports them with two figures that look identical on screen.
-  if (roundMoney(paymentTotal).greaterThan(roundMoney(dueFromCustomer))) {
-    // Paying more than the order comes to is not credit, it is a mistake or a
-    // refund waiting to happen, and either way it is not this function's job.
-    throw new SalesError(
-      `Payments total ${paymentTotal.toFixed(2)} but the order only comes to ${dueFromCustomer.toFixed(2)}.`,
-    );
-  }
-
-  // Whatever the customer did not hand over, they owe. Zero for a normal sale.
-  const owed = roundMoney(dueFromCustomer.minus(paymentTotal));
-  let dueDate: Date | null = null;
-
-  /**
-   * Where the money is collected, which is what decides whether an unpaid
-   * order is credit at all.
-   *
-   * A Shopify or moderator order is unsettled rather than lent: the courier
-   * has the goods and will remit, and blocking those on a credit limit would
-   * stop online selling for anybody who has ever owed anything. A wholesale
-   * order waits on its invoice by arrangement.
-   *
-   * Across a counter is different. The customer is standing there, the garment
-   * leaves with them, and whatever they did not hand over is credit.
-   */
-  const acrossTheCounter =
-    data.source === "POS" || data.source === "EXHIBITION" || data.source === "MANUAL";
-
-  // Taking part of the money and letting the rest ride is governed wherever it
-  // happens — that has always been the case.
-  //
-  // Taking *none* of it was not, and that was the hole: testing
-  // `payments.length > 0` meant a named customer who paid nothing skipped the
-  // limit entirely, so the case the limit most needs to govern was the one
-  // case it ignored. A 5,000 dress could walk out against a zero limit.
-  const partPaid = payments.length > 0 && owed.greaterThan(0);
-  const unpaidAtTheCounter = acrossTheCounter && owed.greaterThan(0);
-
-  if (partPaid || unpaidAtTheCounter) {
-    // A debt nobody can be chased for is a loss with extra steps.
-    if (!data.customerId) {
-      throw new SalesError(
-        payments.length > 0
-          ? "A part-paid sale has to be in a customer's name, otherwise nobody can be asked for the rest."
-          : "This sale takes no money at all, so it has to be in a customer's name — " +
-            "otherwise the garment leaves and nobody knows who has it.",
-      );
-    }
-
-    const customer = await db.customer.findUnique({
-      where: { id: data.customerId },
-      select: { name: true, creditLimit: true, creditDays: true },
-    });
-    if (!customer) throw new SalesError("Customer not found.");
-
-    const alreadyOwed = await customerOutstanding(data.customerId);
-    const wouldOwe = alreadyOwed.plus(owed);
-
-    if (wouldOwe.greaterThan(dec(customer.creditLimit))) {
-      throw new SalesError(
-        `${customer.name} would owe ${wouldOwe.toFixed(2)}, over their ${dec(customer.creditLimit).toFixed(2)} limit` +
-          (alreadyOwed.greaterThan(0)
-            ? ` — ${alreadyOwed.toFixed(2)} of it from before.`
-            : "."),
-      );
-    }
-
-    // Their agreed terms, not a house default: an aging report is only
-    // useful if "late" means late for this particular customer.
-    dueDate = new Date(data.orderDate);
-    dueDate.setDate(dueDate.getDate() + customer.creditDays);
-  }
-
-  // Relieved first: a sale that cannot be fulfilled must not book revenue.
-  const relief: { variantId: string; cogs: string }[] = [];
-  for (const line of lines) {
-    const r = await relieveFinishedGoodsForSale(
-      {
-        variantId: line.variantId,
-        locationId: data.locationId,
-        entityId: data.entityId,
-        quantity: String(line.quantity),
-        saleDate: data.orderDate,
-        cogsAccountCode: ACC.COGS_BRAND,
-        customerId: data.customerId ?? null,
-        referenceType: "SALES_ORDER",
-      },
-      ctx,
-    );
-    relief.push({ variantId: line.variantId, cogs: r.cogs });
-  }
-  const totalCogs = sum(relief.map((r) => dec(r.cogs)));
-
-  return db.$transaction(async (tx) => {
-    const orderNumber = await nextDocumentNumber(tx, "SO", data.orderDate);
-    const totalFees = sum(payments.map((p) => p.fee));
-
-    const order = await tx.salesOrder.create({
-      data: {
-        orderNumber,
-        source: data.source,
-        channelId: data.channelId,
-        entityId: data.entityId,
-        locationId: data.locationId,
-        customerId: data.customerId ?? null,
-        posSessionId: data.posSessionId ?? null,
-        createdByUserId: ctx.userId,
-        externalId: data.externalId ?? null,
-        shopifyOrderId: data.source === "SHOPIFY" ? data.externalId ?? null : null,
-        status: "CONFIRMED",
-        orderDate: data.orderDate,
-        dueDate: owed.greaterThan(0) ? dueDate : null,
-        grossAmount: grossAmount.toString(),
-        discountAmount: discountAmount.toString(),
-        netAmount: netAmount.toString(),
-        shippingAmount: shipping.toString(),
-        paymentFee: totalFees.toString(),
-        cogsAmount: totalCogs.toString(),
-        city: data.city ?? null,
-        notes: data.notes ?? null,
-        lines: {
-          create: lines.map((l) => {
-            const unitCost = dec(
-              relief.find((r) => r.variantId === l.variantId)?.cogs ?? 0,
-            ).div(l.quantity);
-            return {
-              variantId: l.variantId,
-              quantity: l.quantity,
-              retailPrice: dec(l.retailPrice).toString(),
-              discountPct: dec(l.discountPct).toString(),
-              netPrice: l.netPrice.toString(),
-              lineTotal: l.lineTotal.toString(),
-              unitCost: unitCost.toString(),
-              lineCost: unitCost.times(l.quantity).toString(),
-            };
-          }),
-        },
-        payments: {
-          create: payments.map((p) => ({
-            method: p.method,
-            amount: p.amount.toString(),
-            fee: p.fee.toString(),
-            status: p.collected ? "COLLECTED" : "PENDING",
-            collectedAt: p.collected ? data.orderDate : null,
-            reference: p.reference ?? null,
-          })),
-        },
-      },
     });
 
-    // The physical garments that left the shop, tied to the line that sold
-    // them. Scanned tags are used first so the record names exact pieces.
-    const orderLines = await tx.salesOrderLine.findMany({
-      where: { salesOrderId: order.id },
-      select: { id: true, variantId: true, quantity: true },
-    });
-    for (const orderLine of orderLines) {
-      const source = lines.find((l) => l.variantId === orderLine.variantId);
-      await markUnitsSold(tx, {
-        variantId: orderLine.variantId,
-        quantity: orderLine.quantity,
-        locationId: data.locationId,
-        entityId: data.entityId,
-        salesOrderLineId: orderLine.id,
-        soldAt: data.orderDate,
-        scannedSerials: source?.scannedSerials,
-      });
-    }
+    const grossAmount = sum(lines.map((l) => l.gross));
+    const netAmount = sum(lines.map((l) => l.lineTotal));
+    const discountAmount = grossAmount.minus(netAmount);
+    const shipping = roundMoney(dec(data.shippingAmount));
 
-    // --- revenue -------------------------------------------------------
-    // Discounts are shown gross-then-contra rather than netted away, so
-    // markdown analysis has something to read.
-    const revenueLines: DraftLine[] = [
-      {
-        accountId: await accountId(tx, REVENUE_ACCOUNT[data.source]),
-        credit: grossAmount,
-        entityId: data.entityId,
-        customerId: data.customerId ?? null,
-        description: `${data.source} sale ${orderNumber}`,
-      },
-    ];
-    if (discountAmount.greaterThan(0)) {
-      revenueLines.push({
-        accountId: await accountId(tx, ACC.DISCOUNTS),
-        debit: discountAmount,
-        entityId: data.entityId,
-        customerId: data.customerId ?? null,
-        description: `Discount on ${orderNumber}`,
-      });
-    }
-
-    // Every pound of the order has to land somewhere: in a drawer, in a
-    // clearing account, or on the customer's tab. `owed` is whatever the
-    // payments did not cover — the whole order when nothing was paid, part of
-    // it when they paid something on account, nothing on a normal sale.
-    const settlements = payments.map((p) => ({
-      code: fundsAccount(p.method, p.collected),
-      amount: p.amount,
+    // A payment is money, so it is held at money precision from here on and
+    // every later use — the stored record, the settlement posting, the fee —
+    // reads the same rounded figure.
+    const payments = data.payments.map((p) => ({
+      ...p,
+      amount: roundMoney(dec(p.amount)),
+      fee: roundMoney(dec(p.fee)),
     }));
 
-    if (owed.greaterThan(0)) {
-      settlements.push({ code: ACC.RECEIVABLE, amount: owed });
+    const paymentTotal = sum(payments.map((p) => p.amount));
+    const dueFromCustomer = netAmount.plus(shipping);
+    // Compared at money precision, not at full precision: EGP cannot be paid in
+    // fractions of a piastre, so an order totalling 4,989.3915 is settled in
+    // full by 4,989.39. Demanding exact equality here rejects correct payments
+    // and reports them with two figures that look identical on screen.
+    if (roundMoney(paymentTotal).greaterThan(roundMoney(dueFromCustomer))) {
+      // Paying more than the order comes to is not credit, it is a mistake or a
+      // refund waiting to happen, and either way it is not this function's job.
+      throw new SalesError(
+        `Payments total ${paymentTotal.toFixed(2)} but the order only comes to ${dueFromCustomer.toFixed(2)}.`,
+      );
     }
 
-    for (const s of settlements) {
-      revenueLines.push({
-        accountId: await accountId(tx, s.code),
-        debit: s.amount,
-        entityId: data.entityId,
-        customerId: data.customerId ?? null,
-        description: `Settlement for ${orderNumber}`,
+    // Whatever the customer did not hand over, they owe. Zero for a normal sale.
+    const owed = roundMoney(dueFromCustomer.minus(paymentTotal));
+    let dueDate: Date | null = null;
+
+    /**
+     * Where the money is collected, which is what decides whether an unpaid
+     * order is credit at all.
+     *
+     * A Shopify or moderator order is unsettled rather than lent: the courier
+     * has the goods and will remit, and blocking those on a credit limit would
+     * stop online selling for anybody who has ever owed anything. A wholesale
+     * order waits on its invoice by arrangement.
+     *
+     * Across a counter is different. The customer is standing there, the garment
+     * leaves with them, and whatever they did not hand over is credit.
+     */
+    const acrossTheCounter =
+      data.source === "POS" || data.source === "EXHIBITION" || data.source === "MANUAL";
+
+    // Taking part of the money and letting the rest ride is governed wherever it
+    // happens — that has always been the case.
+    //
+    // Taking *none* of it was not, and that was the hole: testing
+    // `payments.length > 0` meant a named customer who paid nothing skipped the
+    // limit entirely, so the case the limit most needs to govern was the one
+    // case it ignored. A 5,000 dress could walk out against a zero limit.
+    const partPaid = payments.length > 0 && owed.greaterThan(0);
+    const unpaidAtTheCounter = acrossTheCounter && owed.greaterThan(0);
+
+    if (partPaid || unpaidAtTheCounter) {
+      // A debt nobody can be chased for is a loss with extra steps.
+      if (!data.customerId) {
+        throw new SalesError(
+          payments.length > 0
+            ? "A part-paid sale has to be in a customer's name, otherwise nobody can be asked for the rest."
+            : "This sale takes no money at all, so it has to be in a customer's name — " +
+              "otherwise the garment leaves and nobody knows who has it.",
+        );
+      }
+
+      const customer = await db.customer.findUnique({
+        where: { id: data.customerId },
+        select: { name: true, creditLimit: true, creditDays: true },
       });
+      if (!customer) throw new SalesError("Customer not found.");
+
+      const alreadyOwed = await customerOutstanding(data.customerId);
+      const wouldOwe = alreadyOwed.plus(owed);
+
+      if (wouldOwe.greaterThan(dec(customer.creditLimit))) {
+        throw new SalesError(
+          `${customer.name} would owe ${wouldOwe.toFixed(2)}, over their ${dec(customer.creditLimit).toFixed(2)} limit` +
+            (alreadyOwed.greaterThan(0)
+              ? ` — ${alreadyOwed.toFixed(2)} of it from before.`
+              : "."),
+        );
+      }
+
+      // Their agreed terms, not a house default: an aging report is only
+      // useful if "late" means late for this particular customer.
+      dueDate = new Date(data.orderDate);
+      dueDate.setDate(dueDate.getDate() + customer.creditDays);
     }
 
-    if (shipping.greaterThan(0)) {
-      revenueLines.push({
-        accountId: await accountId(tx, REVENUE_ACCOUNT[data.source]),
-        credit: shipping,
-        entityId: data.entityId,
-        customerId: data.customerId ?? null,
-        description: `Shipping charged on ${orderNumber}`,
+    // Relieved first: a sale that cannot be fulfilled must not book revenue.
+    const relief: { variantId: string; cogs: string }[] = [];
+    for (const line of lines) {
+      const r = await relieveFinishedGoodsForSale(
+        {
+          variantId: line.variantId,
+          locationId: data.locationId,
+          entityId: data.entityId,
+          quantity: String(line.quantity),
+          saleDate: data.orderDate,
+          cogsAccountCode: ACC.COGS_BRAND,
+          customerId: data.customerId ?? null,
+          referenceType: "SALES_ORDER",
+          referenceId: salesOrderId,
+        },
+        ctx,
+      );
+      relief.push({ variantId: line.variantId, cogs: r.cogs });
+    }
+    const totalCogs = sum(relief.map((r) => dec(r.cogs)));
+
+    return db.$transaction(async (tx) => {
+      const orderNumber = await nextDocumentNumber(tx, "SO", data.orderDate);
+      const totalFees = sum(payments.map((p) => p.fee));
+
+      const order = await tx.salesOrder.create({
+        data: {
+          id: salesOrderId,
+          orderNumber,
+          source: data.source,
+          channelId: data.channelId,
+          entityId: data.entityId,
+          locationId: data.locationId,
+          customerId: data.customerId ?? null,
+          posSessionId: data.posSessionId ?? null,
+          createdByUserId: ctx.userId,
+          externalId: data.externalId ?? null,
+          shopifyOrderId: data.source === "SHOPIFY" ? data.externalId ?? null : null,
+          status: "CONFIRMED",
+          orderDate: data.orderDate,
+          dueDate: owed.greaterThan(0) ? dueDate : null,
+          grossAmount: grossAmount.toString(),
+          discountAmount: discountAmount.toString(),
+          netAmount: netAmount.toString(),
+          shippingAmount: shipping.toString(),
+          paymentFee: totalFees.toString(),
+          cogsAmount: totalCogs.toString(),
+          city: data.city ?? null,
+          notes: data.notes ?? null,
+          lines: {
+            create: lines.map((l) => {
+              const unitCost = dec(
+                relief.find((r) => r.variantId === l.variantId)?.cogs ?? 0,
+              ).div(l.quantity);
+              return {
+                variantId: l.variantId,
+                quantity: l.quantity,
+                retailPrice: dec(l.retailPrice).toString(),
+                discountPct: dec(l.discountPct).toString(),
+                netPrice: l.netPrice.toString(),
+                lineTotal: l.lineTotal.toString(),
+                unitCost: unitCost.toString(),
+                lineCost: unitCost.times(l.quantity).toString(),
+              };
+            }),
+          },
+          payments: {
+            create: payments.map((p) => ({
+              method: p.method,
+              amount: p.amount.toString(),
+              fee: p.fee.toString(),
+              status: p.collected ? "COLLECTED" : "PENDING",
+              collectedAt: p.collected ? data.orderDate : null,
+              reference: p.reference ?? null,
+            })),
+          },
+        },
       });
-    }
 
-    const revenueJournal = await postEntry(tx, {
-      entityId: data.entityId,
-      postingDate: data.orderDate,
-      sourceType: "SALES_ORDER",
-      sourceId: order.id,
-      memo: `${data.source} sale ${orderNumber}`,
-      ctx,
-      lines: revenueLines,
-    });
+      // Cash taken goes into a drawer: this sale's till, or the one open where
+      // the sale was made.
+      for (const p of payments) {
+        if (p.method === "CASH" && p.collected) {
+          await recordTillCash(tx, {
+            posSessionId: data.posSessionId ?? null,
+            locationId: data.locationId,
+            kind: "SALE",
+            amount: p.amount,
+            reference: orderNumber,
+          });
+        }
+      }
 
-    // --- payment fees ---------------------------------------------------
-    if (totalFees.greaterThan(0)) {
-      await postEntry(tx, {
+      // The physical garments that left the shop, tied to the line that sold
+      // them. Scanned tags are used first so the record names exact pieces.
+      const orderLines = await tx.salesOrderLine.findMany({
+        where: { salesOrderId: order.id },
+        select: { id: true, variantId: true, quantity: true },
+      });
+      for (const orderLine of orderLines) {
+        const source = lines.find((l) => l.variantId === orderLine.variantId);
+        await markUnitsSold(tx, {
+          variantId: orderLine.variantId,
+          quantity: orderLine.quantity,
+          locationId: data.locationId,
+          entityId: data.entityId,
+          salesOrderLineId: orderLine.id,
+          soldAt: data.orderDate,
+          scannedSerials: source?.scannedSerials,
+        });
+      }
+
+      // --- revenue -------------------------------------------------------
+      // Discounts are shown gross-then-contra rather than netted away, so
+      // markdown analysis has something to read.
+      const revenueLines: DraftLine[] = [
+        {
+          accountId: await accountId(tx, REVENUE_ACCOUNT[data.source]),
+          credit: grossAmount,
+          entityId: data.entityId,
+          customerId: data.customerId ?? null,
+          description: `${data.source} sale ${orderNumber}`,
+        },
+      ];
+      if (discountAmount.greaterThan(0)) {
+        revenueLines.push({
+          accountId: await accountId(tx, ACC.DISCOUNTS),
+          debit: discountAmount,
+          entityId: data.entityId,
+          customerId: data.customerId ?? null,
+          description: `Discount on ${orderNumber}`,
+        });
+      }
+
+      // Every pound of the order has to land somewhere: in a drawer, in a
+      // clearing account, or on the customer's tab. `owed` is whatever the
+      // payments did not cover — the whole order when nothing was paid, part of
+      // it when they paid something on account, nothing on a normal sale.
+      const settlements = payments.map((p) => ({
+        code: fundsAccount(p.method, p.collected),
+        amount: p.amount,
+      }));
+
+      if (owed.greaterThan(0)) {
+        settlements.push({ code: ACC.RECEIVABLE, amount: owed });
+      }
+
+      for (const s of settlements) {
+        revenueLines.push({
+          accountId: await accountId(tx, s.code),
+          debit: s.amount,
+          entityId: data.entityId,
+          customerId: data.customerId ?? null,
+          description: `Settlement for ${orderNumber}`,
+        });
+      }
+
+      if (shipping.greaterThan(0)) {
+        revenueLines.push({
+          accountId: await accountId(tx, REVENUE_ACCOUNT[data.source]),
+          credit: shipping,
+          entityId: data.entityId,
+          customerId: data.customerId ?? null,
+          description: `Shipping charged on ${orderNumber}`,
+        });
+      }
+
+      const revenueJournal = await postEntry(tx, {
         entityId: data.entityId,
         postingDate: data.orderDate,
-        sourceType: "PAYMENT",
+        sourceType: "SALES_ORDER",
         sourceId: order.id,
-        memo: `Payment fees on ${orderNumber}`,
+        memo: `${data.source} sale ${orderNumber}`,
         ctx,
-        lines: [
-          {
-            accountId: await accountId(tx, ACC.PAYMENT_FEES),
-            debit: totalFees,
-            entityId: data.entityId,
-            description: `Processor and courier fees ${orderNumber}`,
-          },
-          {
-            // Deducted from wherever that payment landed, so the fee comes
-            // off the same balance the money went into.
-            accountId: await accountId(
-              tx,
-              fundsAccount(payments[0].method, payments[0].collected),
-            ),
-            credit: totalFees,
-            entityId: data.entityId,
-            description: `Fees deducted at source ${orderNumber}`,
-          },
-        ],
+        lines: revenueLines,
       });
-    }
 
-    await writeAudit(tx, {
-      action: "SALE_RECORDED",
-      entityName: "SalesOrder",
-      entityId: order.id,
-      after: {
-        orderNumber, source: data.source,
+      // --- payment fees ---------------------------------------------------
+      if (totalFees.greaterThan(0)) {
+        await postEntry(tx, {
+          entityId: data.entityId,
+          postingDate: data.orderDate,
+          sourceType: "PAYMENT",
+          sourceId: order.id,
+          memo: `Payment fees on ${orderNumber}`,
+          ctx,
+          lines: [
+            {
+              accountId: await accountId(tx, ACC.PAYMENT_FEES),
+              debit: totalFees,
+              entityId: data.entityId,
+              description: `Processor and courier fees ${orderNumber}`,
+            },
+            {
+              // Deducted from wherever that payment landed, so the fee comes
+              // off the same balance the money went into.
+              accountId: await accountId(
+                tx,
+                fundsAccount(payments[0].method, payments[0].collected),
+              ),
+              credit: totalFees,
+              entityId: data.entityId,
+              description: `Fees deducted at source ${orderNumber}`,
+            },
+          ],
+        });
+      }
+
+      await writeAudit(tx, {
+        action: "SALE_RECORDED",
+        entityName: "SalesOrder",
+        entityId: order.id,
+        after: {
+          orderNumber, source: data.source,
+          netAmount: netAmount.toString(),
+          cogs: totalCogs.toString(),
+          grossMargin: netAmount.minus(totalCogs).toString(),
+          journalEntry: revenueJournal.entryNumber,
+          moderator: data.source === "MODERATOR" ? ctx.userId : undefined,
+        },
+        ctx,
+      });
+
+      return {
+        salesOrderId: order.id,
+        orderNumber,
         netAmount: netAmount.toString(),
         cogs: totalCogs.toString(),
         grossMargin: netAmount.minus(totalCogs).toString(),
-        journalEntry: revenueJournal.entryNumber,
-        moderator: data.source === "MODERATOR" ? ctx.userId : undefined,
-      },
-      ctx,
+      };
     });
-
-    return {
-      salesOrderId: order.id,
-      orderNumber,
-      netAmount: netAmount.toString(),
-      cogs: totalCogs.toString(),
-      grossMargin: netAmount.minus(totalCogs).toString(),
-    };
   });
 }
 
@@ -537,38 +570,40 @@ export async function openPosSession(
   input: { locationId: string; cashierUserId: string; openingFloat: string; openedAt?: Date },
   ctx: AuditContext,
 ): Promise<{ posSessionId: string; sessionNumber: string }> {
-  const openedAt = input.openedAt ?? new Date();
+  return command("sales.openPosSession", input, ctx, async () => {
+    const openedAt = input.openedAt ?? new Date();
 
-  return db.$transaction(async (tx) => {
-    const alreadyOpen = await tx.posSession.findFirst({
-      where: { locationId: input.locationId, closedAt: null },
+    return db.$transaction(async (tx) => {
+      const alreadyOpen = await tx.posSession.findFirst({
+        where: { locationId: input.locationId, closedAt: null },
+      });
+      if (alreadyOpen) {
+        throw new SalesError(
+          `Till ${alreadyOpen.sessionNumber} is still open at this location. Close it before opening another.`,
+        );
+      }
+
+      const sessionNumber = await nextDocumentNumber(tx, "TILL", openedAt);
+      const session = await tx.posSession.create({
+        data: {
+          sessionNumber,
+          locationId: input.locationId,
+          cashierUserId: input.cashierUserId,
+          openingFloat: dec(input.openingFloat).toString(),
+          openedAt,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "POS_SESSION_OPENED",
+        entityName: "PosSession",
+        entityId: session.id,
+        after: { sessionNumber, openingFloat: input.openingFloat },
+        ctx,
+      });
+
+      return { posSessionId: session.id, sessionNumber };
     });
-    if (alreadyOpen) {
-      throw new SalesError(
-        `Till ${alreadyOpen.sessionNumber} is still open at this location. Close it before opening another.`,
-      );
-    }
-
-    const sessionNumber = await nextDocumentNumber(tx, "TILL", openedAt);
-    const session = await tx.posSession.create({
-      data: {
-        sessionNumber,
-        locationId: input.locationId,
-        cashierUserId: input.cashierUserId,
-        openingFloat: dec(input.openingFloat).toString(),
-        openedAt,
-      },
-    });
-
-    await writeAudit(tx, {
-      action: "POS_SESSION_OPENED",
-      entityName: "PosSession",
-      entityId: session.id,
-      after: { sessionNumber, openingFloat: input.openingFloat },
-      ctx,
-    });
-
-    return { posSessionId: session.id, sessionNumber };
   });
 }
 
@@ -582,71 +617,73 @@ export async function closePosSession(
   input: { posSessionId: string; countedCash: string; note?: string | null },
   ctx: AuditContext,
 ): Promise<{ expectedCash: string; countedCash: string; variance: string }> {
-  return db.$transaction(async (tx) => {
-    const session = await tx.posSession.findUnique({
-      where: { id: input.posSessionId },
-      include: { orders: { include: { payments: true } } },
-    });
-    if (!session) throw new SalesError("Till session not found.");
-    if (session.closedAt) throw new SalesError("That till session is already closed.");
-
-    // One person sells, another counts. A cashier who counts their own drawer
-    // is the only witness to a shortfall they caused, and the variance figure
-    // stops meaning anything.
-    //
-    // The owner is the way out of a dead end — somebody has to be able to
-    // close a till when nobody else is on the floor — and their name goes on
-    // the row, which is the whole point of recording who closed it.
-    if (ctx.userId && ctx.userId === session.cashierUserId) {
-      const closer = await tx.user.findUnique({
-        where: { id: ctx.userId },
-        select: { role: true },
+  return command("sales.closePosSession", input, ctx, async () => {
+    return db.$transaction(async (tx) => {
+      const session = await tx.posSession.findUnique({
+        where: { id: input.posSessionId },
+        include: { orders: { select: { id: true } }, cashEvents: true },
       });
-      if (closer?.role !== "OWNER") {
-        throw new SalesError(
-          "You took the money on this till, so somebody else has to count it.",
-        );
+      if (!session) throw new SalesError("Till session not found.");
+      if (session.closedAt) throw new SalesError("That till session is already closed.");
+
+      // One person sells, another counts. A cashier who counts their own drawer
+      // is the only witness to a shortfall they caused, and the variance figure
+      // stops meaning anything.
+      //
+      // The owner is the way out of a dead end — somebody has to be able to
+      // close a till when nobody else is on the floor — and their name goes on
+      // the row, which is the whole point of recording who closed it.
+      if (ctx.userId && ctx.userId === session.cashierUserId) {
+        const closer = await tx.user.findUnique({
+          where: { id: ctx.userId },
+          select: { role: true },
+        });
+        if (closer?.role !== "OWNER") {
+          throw new SalesError(
+            "You took the money on this till, so somebody else has to count it.",
+          );
+        }
       }
-    }
 
-    const cashTaken = session.orders
-      .flatMap((o) => o.payments)
-      .filter((p) => p.method === "CASH")
-      .reduce((s, p) => s.plus(dec(p.amount)), dec(0));
+      // Every movement of cash through this drawer — sales, consigned sales,
+      // deposits, collections in, refunds and payouts out — and nothing that
+      // went through another. See till.ts.
+      const cashMoved = session.cashEvents.reduce((s, e) => s.plus(dec(e.amount)), dec(0));
 
-    const expected = dec(session.openingFloat).plus(cashTaken);
-    const counted = dec(input.countedCash);
-    const variance = counted.minus(expected);
+      const expected = dec(session.openingFloat).plus(cashMoved);
+      const counted = dec(input.countedCash);
+      const variance = counted.minus(expected);
 
-    await tx.posSession.update({
-      where: { id: session.id },
-      data: {
-        closedAt: new Date(),
-        closedByUserId: ctx.userId,
-        countedCash: counted.toString(),
-        expectedCash: expected.toString(),
-        cashVariance: variance.toString(),
-        varianceNote: input.note ?? null,
-      },
-    });
+      await tx.posSession.update({
+        where: { id: session.id },
+        data: {
+          closedAt: new Date(),
+          closedByUserId: ctx.userId,
+          countedCash: counted.toString(),
+          expectedCash: expected.toString(),
+          cashVariance: variance.toString(),
+          varianceNote: input.note ?? null,
+        },
+      });
 
-    await writeAudit(tx, {
-      action: variance.isZero() ? "POS_SESSION_CLOSED" : "POS_SESSION_CLOSED_WITH_VARIANCE",
-      entityName: "PosSession",
-      entityId: session.id,
-      after: {
+      await writeAudit(tx, {
+        action: variance.isZero() ? "POS_SESSION_CLOSED" : "POS_SESSION_CLOSED_WITH_VARIANCE",
+        entityName: "PosSession",
+        entityId: session.id,
+        after: {
+          expectedCash: expected.toString(),
+          countedCash: counted.toString(),
+          variance: variance.toString(),
+          orders: session.orders.length,
+        },
+        ctx: { ...ctx, reason: input.note ?? null },
+      });
+
+      return {
         expectedCash: expected.toString(),
         countedCash: counted.toString(),
         variance: variance.toString(),
-        orders: session.orders.length,
-      },
-      ctx: { ...ctx, reason: input.note ?? null },
+      };
     });
-
-    return {
-      expectedCash: expected.toString(),
-      countedCash: counted.toString(),
-      variance: variance.toString(),
-    };
   });
 }

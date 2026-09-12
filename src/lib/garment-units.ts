@@ -330,7 +330,9 @@ export async function findUnitBySerial(input: string): Promise<
 /** The tags to print for one delivery, one label per garment. */
 export async function unitsForDespatch(despatchNumber: string) {
   const movements = await db.inventoryMovement.findMany({
-    where: { referenceType: "DESPATCH_NOTE", referenceId: despatchNumber },
+    // The transit lots are the arriving legs; the departing ones are the
+    // factory lots the goods came out of.
+    where: { referenceType: "DESPATCH_NOTE", referenceId: despatchNumber, direction: "IN" },
     select: { lotId: true },
   });
   if (movements.length === 0) return [];

@@ -198,6 +198,56 @@ describe("the transfer itself", () => {
   });
 });
 
+/**
+ * A closed month's group profit must not move when stock sells in a later
+ * one. It used to: the elimination was computed from whatever was on the
+ * shelf on the day the report was opened, and the opening balance was always
+ * zero, so every period deferred the whole balance again.
+ */
+describe("group profit period by period", () => {
+  it("keeps a past period's elimination when its stock sells later", async () => {
+    const [first, second] = await db.fiscalPeriod.findMany({
+      where: { status: "OPEN" }, orderBy: { startDate: "asc" }, take: 2,
+    });
+    expect(second).toBeDefined();
+
+    await givenFactoryStock(1000);
+    const t = await transferToBrand(
+      {
+        variantId, quantity: "1000", fromLocationId: factoryLocId,
+        toLocationId: brandLocId, transferDate: day, costSnapshotId: snapshotId,
+      },
+      ctx,
+    );
+    const margin = dec(t.marginPerUnit);
+
+    const before = await groupProfitAndLoss(first.id);
+    expect(Number(before.closingUnrealised)).toBeCloseTo(Number(margin.times(1000)), 2);
+
+    // 400 sell in the next month.
+    await createSale(
+      {
+        source: "SHOPIFY", channelId, entityId: brandId, locationId: brandLocId,
+        orderDate: new Date(second.startDate), externalId: "grp-next-month",
+        lines: [{ variantId, quantity: 400, retailPrice: RETAIL, discountPct: 0 }],
+        payments: [],
+      },
+      ctx,
+    );
+
+    const firstAgain = await groupProfitAndLoss(first.id);
+    expect(Number(firstAgain.closingUnrealised)).toBeCloseTo(Number(before.closingUnrealised), 2);
+    expect(Number(firstAgain.groupProfit)).toBeCloseTo(Number(before.groupProfit), 2);
+
+    // The next month opens with what the last one closed on, and releases the
+    // margin on what sold.
+    const next = await groupProfitAndLoss(second.id);
+    expect(Number(next.openingUnrealised)).toBeCloseTo(Number(margin.times(1000)), 2);
+    expect(Number(next.closingUnrealised)).toBeCloseTo(Number(margin.times(600)), 2);
+    expect(Number(next.unrealisedProfitMovement)).toBeCloseTo(-Number(margin.times(400)), 2);
+  });
+});
+
 describe("the specification's 1,000 made / 400 sold example", () => {
   async function runCycle() {
     await givenFactoryStock(1000);

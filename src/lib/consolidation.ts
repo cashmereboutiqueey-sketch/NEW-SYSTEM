@@ -65,6 +65,41 @@ async function readEntityResult(
   };
 }
 
+/**
+ * Brand stock that came from the factory, as it stood at a moment: every lot
+ * carrying a transfer margin, with the quantity its own movements say it held
+ * then. `before` excludes the day itself, for an opening balance.
+ */
+async function transferredStockAsOf(
+  brandId: string,
+  at: { onOrBefore: Date } | { before: Date } | null,
+) {
+  const onOrBefore = at && "onOrBefore" in at ? at.onOrBefore : null;
+  const before = at && "before" in at ? at.before : null;
+  return db.$queryRaw<
+    { lotId: string; lotNumber: string; sku: string | null; styleCode: string | null; qty: string; margin: string }[]
+  >`
+    SELECT l."id" AS "lotId", l."lotNumber", v."sku", s."code" AS "styleCode",
+           q.qty::text AS qty, l."transferMarginPerUnit"::text AS margin
+    FROM "inventory_lots" l
+    JOIN (
+      SELECT m."lotId",
+             SUM(CASE WHEN m."direction" = 'IN' THEN m."quantity" ELSE -m."quantity" END) AS qty
+      FROM "inventory_movements" m
+      WHERE (${onOrBefore}::date IS NULL OR m."movementDate" <= ${onOrBefore}::date)
+        AND (${before}::date IS NULL OR m."movementDate" < ${before}::date)
+      GROUP BY m."lotId"
+    ) q ON q."lotId" = l."id"
+    LEFT JOIN "variants" v ON v."id" = l."variantId"
+    LEFT JOIN "styles" s ON s."id" = v."styleId"
+    WHERE l."entityId" = ${brandId}
+      AND l."state" = 'FINISHED_GOODS'
+      AND l."transferMarginPerUnit" IS NOT NULL
+      AND q.qty > 0
+    ORDER BY l."lotNumber"
+  `;
+}
+
 export async function groupProfitAndLoss(fiscalPeriodId: string | null = null) {
   const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
@@ -74,31 +109,28 @@ export async function groupProfitAndLoss(fiscalPeriodId: string | null = null) {
     readEntityResult(brand.id, fiscalPeriodId),
   ]);
 
-  // Every Brand lot that came from a transfer and is still on the shelf.
-  const brandLots = await db.inventoryLot.findMany({
-    where: {
-      entityId: brand.id,
-      state: "FINISHED_GOODS",
-      remainingQty: { gt: 0 },
-      transferMarginPerUnit: { not: null },
-    },
-    include: { variant: { include: { style: true } } },
-  });
+  // Factory margin still inside Brand stock, at the start and at the end of
+  // the period, rebuilt from each lot's movements rather than read from what
+  // is on the shelf today. Using today's stock made last month's group profit
+  // change every time a garment sold this month, and with the opening fixed at
+  // zero the whole balance was deferred again in every period it was viewed.
+  //
+  // For all time, there is no opening, and the closing is as of now.
+  const period = fiscalPeriodId
+    ? await db.fiscalPeriod.findUniqueOrThrow({ where: { id: fiscalPeriodId } })
+    : null;
+  const [openingLots, closingLots] = await Promise.all([
+    period ? transferredStockAsOf(brand.id, { before: period.startDate }) : Promise.resolve([]),
+    transferredStockAsOf(brand.id, period ? { onOrBefore: period.endDate } : null),
+  ]);
 
-  const closingUnrealised = unrealisedProfitInStock(
-    brandLots.map((l) => ({
-      remainingQty: l.remainingQty.toString(),
-      transferMarginPerUnit: l.transferMarginPerUnit?.toString() ?? null,
-    })),
-  );
-
-  // Opening is not yet stored per period, so the first period reports the full
-  // closing balance as this period's deferral. Once a period is closed the
-  // stored balance becomes the next period's opening.
-  const opening = dec(0);
+  const deferred = (lots: { qty: string; margin: string }[]) =>
+    unrealisedProfitInStock(lots.map((l) => ({ remainingQty: l.qty, transferMarginPerUnit: l.margin })));
+  const openingUnrealised = deferred(openingLots);
+  const closingUnrealised = deferred(closingLots);
 
   const result = consolidate(factoryResult, brandResult, {
-    opening,
+    opening: openingUnrealised,
     closing: closingUnrealised,
   });
 
@@ -109,14 +141,16 @@ export async function groupProfitAndLoss(fiscalPeriodId: string | null = null) {
     factory: factoryResult,
     brand: brandResult,
     ...result,
+    openingUnrealised,
     closingUnrealised,
-    unrealisedByLot: brandLots.map((l) => ({
+    /** The closing balance, lot by lot, as it stood at the end of the period. */
+    unrealisedByLot: closingLots.map((l) => ({
       lotNumber: l.lotNumber,
-      styleCode: l.variant?.style.code ?? "—",
-      sku: l.variant?.sku ?? "—",
-      remainingQty: l.remainingQty.toString(),
-      marginPerUnit: l.transferMarginPerUnit?.toString() ?? "0",
-      deferred: dec(l.remainingQty).times(dec(l.transferMarginPerUnit ?? 0)).toString(),
+      styleCode: l.styleCode ?? "—",
+      sku: l.sku ?? "—",
+      remainingQty: dec(l.qty).toString(),
+      marginPerUnit: dec(l.margin).toString(),
+      deferred: dec(l.qty).times(dec(l.margin)).toString(),
     })),
     intercompany: {
       receivable: icReceivable.toString(),

@@ -6,6 +6,7 @@ import { consumeFifo, type Lot } from "@/core/fifo";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 import type { Prisma } from "@/generated/prisma/client";
+import { command } from "./command";
 
 /**
  * Offcuts, and what they cost.
@@ -105,41 +106,161 @@ async function openLots(
  * account disagree with the inventory.
  */
 export async function recordScrap(input: RecordScrapInput, ctx: AuditContext) {
-  const data = scrapSchema.parse(input);
+  return command("scrap.recordScrap", input, ctx, async () => {
+    const data = scrapSchema.parse(input);
 
-  if (data.salvageValue > 0 && data.disposition !== "SOLD") {
-    throw new ScrapError(
-      "Only scrap that was sold can have a salvage value. Nothing came back for the rest.",
-    );
-  }
+    if (data.salvageValue > 0 && data.disposition !== "SOLD") {
+      throw new ScrapError(
+        "Only scrap that was sold can have a salvage value. Nothing came back for the rest.",
+      );
+    }
 
-  return db.$transaction(async (tx) => {
-    const material = await tx.material.findUnique({
-      where: { id: data.materialId },
-      select: { id: true, code: true, nameAr: true, nameEn: true },
-    });
-    if (!material) throw new ScrapError("Material not found.");
+    return db.$transaction(async (tx) => {
+      const material = await tx.material.findUnique({
+        where: { id: data.materialId },
+        select: { id: true, code: true, nameAr: true, nameEn: true },
+      });
+      if (!material) throw new ScrapError("Material not found.");
 
-    // The offcut is usable and goes back on the shelf. Nothing left inventory,
-    // so nothing is written off — the record exists to show the cutting room
-    // recovered it rather than to move money.
-    if (data.disposition === KEEPS_STOCK) {
+      // The offcut is usable and goes back on the shelf. Nothing left inventory,
+      // so nothing is written off — the record exists to show the cutting room
+      // recovered it rather than to move money.
+      if (data.disposition === KEEPS_STOCK) {
+        const record = await tx.scrapRecord.create({
+          data: {
+            materialId: data.materialId,
+            productionOrderId: data.productionOrderId ?? null,
+            disposition: data.disposition,
+            quantity: data.quantity.toString(),
+            bookValue: "0",
+            salvageValue: "0",
+            netLoss: "0",
+            scrapDate: data.scrapDate,
+            notes: data.notes ?? null,
+          },
+        });
+
+        await writeAudit(tx, {
+          action: "SCRAP_RECOVERED",
+          entityName: "ScrapRecord",
+          entityId: record.id,
+          ctx,
+          after: {
+            material: material.code,
+            quantity: data.quantity,
+            disposition: data.disposition,
+          },
+        });
+
+        return {
+          scrapRecordId: record.id,
+          bookValue: "0",
+          salvageValue: "0",
+          netLoss: "0",
+          journalEntryNumber: null as string | null,
+        };
+      }
+
+      const lots = await openLots(tx, data.materialId, data.locationId);
+      const consumed = consumeFifo(lots, data.quantity);
+      if (!consumed.ok) {
+        // Refused rather than partly written off: scrapping cloth that is not
+        // there would drive the inventory account negative and hide whichever
+        // earlier issue was really wrong.
+        throw new ScrapError(
+          `Not enough ${material.code} in stock to scrap: ${consumed.requested.toString()} asked for, ` +
+            `${consumed.available.toString()} on hand, short by ${consumed.shortfall.toString()}.`,
+        );
+      }
+
+      const bookValue = roundMoney(consumed.totalCost);
+      const salvage = roundMoney(dec(data.salvageValue));
+      const netLoss = roundMoney(bookValue.minus(salvage));
+
+      if (salvage.greaterThan(bookValue)) {
+        // Selling offcuts for more than the cloth cost is not a scrap loss, it
+        // is a sale, and booking it here would credit a COGS account with a
+        // profit nobody could find later.
+        throw new ScrapError(
+          `Salvage of ${salvage.toString()} exceeds the book value of ${bookValue.toString()}. ` +
+            "That is a sale, not a scrap recovery — record it as one.",
+        );
+      }
+
+      const lines: Parameters<typeof postEntry>[1]["lines"] = [];
+      if (salvage.greaterThan(0)) {
+        lines.push({
+          accountId: await accountId(tx, ACC.CASH),
+          debit: salvage,
+          entityId: data.entityId,
+          description: `Scrap sold — ${material.code}`,
+        });
+      }
+      if (netLoss.greaterThan(0)) {
+        lines.push({
+          accountId: await accountId(tx, ACC.SCRAP_LOSS),
+          debit: netLoss,
+          entityId: data.entityId,
+          description: `Scrap ${data.disposition.toLowerCase()} — ${material.code}`,
+        });
+      }
+      lines.push({
+        accountId: await accountId(tx, ACC.RAW),
+        credit: bookValue,
+        entityId: data.entityId,
+        description: `Cloth off the table — ${material.code}`,
+      });
+
+      const reference = await nextDocumentNumber(tx, "SCR", data.scrapDate);
+
+      const journal = await postEntry(tx, {
+        entityId: data.entityId,
+        postingDate: data.scrapDate,
+        sourceType: "MANUAL",
+        sourceId: data.productionOrderId ?? null,
+        memo: `Scrap ${reference} — ${material.nameEn}`,
+        ctx,
+        lines,
+      });
+
+      for (const a of consumed.allocations) {
+        await tx.inventoryLot.update({
+          where: { id: a.lotId },
+          data: { remainingQty: { decrement: a.quantity.toString() } },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            lotId: a.lotId,
+            type: "SCRAP",
+            direction: "OUT",
+            quantity: a.quantity.toString(),
+            unitCost: a.unitCost.toString(),
+            totalCost: a.cost.toString(),
+            movementDate: data.scrapDate,
+            fromLocationId: data.locationId,
+            referenceType: SCRAP_REF,
+            referenceId: reference,
+            journalEntryId: journal.id,
+          },
+        });
+      }
+
       const record = await tx.scrapRecord.create({
         data: {
           materialId: data.materialId,
           productionOrderId: data.productionOrderId ?? null,
           disposition: data.disposition,
           quantity: data.quantity.toString(),
-          bookValue: "0",
-          salvageValue: "0",
-          netLoss: "0",
+          bookValue: bookValue.toString(),
+          salvageValue: salvage.toString(),
+          netLoss: netLoss.toString(),
           scrapDate: data.scrapDate,
           notes: data.notes ?? null,
         },
       });
 
       await writeAudit(tx, {
-        action: "SCRAP_RECOVERED",
+        action: "SCRAP_RECORDED",
         entityName: "ScrapRecord",
         entityId: record.id,
         ctx,
@@ -147,138 +268,21 @@ export async function recordScrap(input: RecordScrapInput, ctx: AuditContext) {
           material: material.code,
           quantity: data.quantity,
           disposition: data.disposition,
+          bookValue: bookValue.toString(),
+          salvageValue: salvage.toString(),
+          netLoss: netLoss.toString(),
+          journal: journal.entryNumber,
         },
       });
 
       return {
         scrapRecordId: record.id,
-        bookValue: "0",
-        salvageValue: "0",
-        netLoss: "0",
-        journalEntryNumber: null as string | null,
+        bookValue: bookValue.toString(),
+        salvageValue: salvage.toString(),
+        netLoss: netLoss.toString(),
+        journalEntryNumber: journal.entryNumber as string | null,
       };
-    }
-
-    const lots = await openLots(tx, data.materialId, data.locationId);
-    const consumed = consumeFifo(lots, data.quantity);
-    if (!consumed.ok) {
-      // Refused rather than partly written off: scrapping cloth that is not
-      // there would drive the inventory account negative and hide whichever
-      // earlier issue was really wrong.
-      throw new ScrapError(
-        `Not enough ${material.code} in stock to scrap: ${consumed.requested.toString()} asked for, ` +
-          `${consumed.available.toString()} on hand, short by ${consumed.shortfall.toString()}.`,
-      );
-    }
-
-    const bookValue = roundMoney(consumed.totalCost);
-    const salvage = roundMoney(dec(data.salvageValue));
-    const netLoss = roundMoney(bookValue.minus(salvage));
-
-    if (salvage.greaterThan(bookValue)) {
-      // Selling offcuts for more than the cloth cost is not a scrap loss, it
-      // is a sale, and booking it here would credit a COGS account with a
-      // profit nobody could find later.
-      throw new ScrapError(
-        `Salvage of ${salvage.toString()} exceeds the book value of ${bookValue.toString()}. ` +
-          "That is a sale, not a scrap recovery — record it as one.",
-      );
-    }
-
-    const lines: Parameters<typeof postEntry>[1]["lines"] = [];
-    if (salvage.greaterThan(0)) {
-      lines.push({
-        accountId: await accountId(tx, ACC.CASH),
-        debit: salvage,
-        entityId: data.entityId,
-        description: `Scrap sold — ${material.code}`,
-      });
-    }
-    if (netLoss.greaterThan(0)) {
-      lines.push({
-        accountId: await accountId(tx, ACC.SCRAP_LOSS),
-        debit: netLoss,
-        entityId: data.entityId,
-        description: `Scrap ${data.disposition.toLowerCase()} — ${material.code}`,
-      });
-    }
-    lines.push({
-      accountId: await accountId(tx, ACC.RAW),
-      credit: bookValue,
-      entityId: data.entityId,
-      description: `Cloth off the table — ${material.code}`,
     });
-
-    const reference = await nextDocumentNumber(tx, "SCR", data.scrapDate);
-
-    const journal = await postEntry(tx, {
-      entityId: data.entityId,
-      postingDate: data.scrapDate,
-      sourceType: "MANUAL",
-      sourceId: data.productionOrderId ?? null,
-      memo: `Scrap ${reference} — ${material.nameEn}`,
-      ctx,
-      lines,
-    });
-
-    for (const a of consumed.allocations) {
-      await tx.inventoryLot.update({
-        where: { id: a.lotId },
-        data: { remainingQty: { decrement: a.quantity.toString() } },
-      });
-      await tx.inventoryMovement.create({
-        data: {
-          lotId: a.lotId,
-          type: "SCRAP",
-          quantity: a.quantity.toString(),
-          unitCost: a.unitCost.toString(),
-          totalCost: a.cost.toString(),
-          movementDate: data.scrapDate,
-          fromLocationId: data.locationId,
-          referenceType: SCRAP_REF,
-          referenceId: reference,
-          journalEntryId: journal.id,
-        },
-      });
-    }
-
-    const record = await tx.scrapRecord.create({
-      data: {
-        materialId: data.materialId,
-        productionOrderId: data.productionOrderId ?? null,
-        disposition: data.disposition,
-        quantity: data.quantity.toString(),
-        bookValue: bookValue.toString(),
-        salvageValue: salvage.toString(),
-        netLoss: netLoss.toString(),
-        scrapDate: data.scrapDate,
-        notes: data.notes ?? null,
-      },
-    });
-
-    await writeAudit(tx, {
-      action: "SCRAP_RECORDED",
-      entityName: "ScrapRecord",
-      entityId: record.id,
-      ctx,
-      after: {
-        material: material.code,
-        quantity: data.quantity,
-        disposition: data.disposition,
-        bookValue: bookValue.toString(),
-        salvageValue: salvage.toString(),
-        netLoss: netLoss.toString(),
-        journal: journal.entryNumber,
-      },
-    });
-
-    return {
-      scrapRecordId: record.id,
-      bookValue: bookValue.toString(),
-      salvageValue: salvage.toString(),
-      netLoss: netLoss.toString(),
-      journalEntryNumber: journal.entryNumber as string | null,
-    };
   });
 }
 

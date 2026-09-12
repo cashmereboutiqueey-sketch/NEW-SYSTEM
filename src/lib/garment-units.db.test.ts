@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { unreconciledLots } from "./inventory";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { createExpense } from "./expenses";
@@ -33,7 +34,6 @@ let factoryId: string;
 let brandId: string;
 let factoryLocationId: string;
 let showroomId: string;
-let cairoId: string;
 let styleId: string;
 let variantIds: string[];
 let fabricId: string;
@@ -49,7 +49,6 @@ beforeAll(async () => {
   brandId = (await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } })).id;
   factoryLocationId = (await db.location.findFirstOrThrow({ where: { code: "LOC-FAC" } })).id;
   showroomId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
-  cairoId = (await db.location.findFirstOrThrow({ where: { code: "LOC-CAI" } })).id;
   channelId = (await db.salesChannel.findFirstOrThrow()).id;
 
   const style = await db.style.findFirstOrThrow({
@@ -128,6 +127,13 @@ beforeEach(async () => {
     },
     ctx,
   );
+});
+
+// Whatever a test did to stock, every lot's balance must be what its own
+// movements say it is — transfers included, which used to leave the lot the
+// goods left with no movement at all.
+afterEach(async () => {
+  expect(await unreconciledLots()).toEqual([]);
 });
 
 afterAll(async () => { await wipe(); await db.$disconnect(); });

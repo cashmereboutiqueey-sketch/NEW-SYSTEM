@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import { unreconciledLots } from "./inventory";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
@@ -96,6 +97,13 @@ async function wipe() {
 }
 
 beforeEach(wipe);
+// Whatever a test did to stock, every lot's balance must be what its own
+// movements say it is — transfers included, which used to leave the lot the
+// goods left with no movement at all.
+afterEach(async () => {
+  expect(await unreconciledLots()).toEqual([]);
+});
+
 afterAll(async () => { await wipe(); await db.$disconnect(); });
 
 /** A run of garments finished at the factory, costed the way production costs them. */
