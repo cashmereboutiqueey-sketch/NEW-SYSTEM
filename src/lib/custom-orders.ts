@@ -4,6 +4,9 @@ import { postEntry, nextDocumentNumber } from "./ledger";
 import { dec, roundMoney, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { createSale } from "./sales";
+import { command } from "./command";
+import { recordTillCash } from "./till";
+import { canonicalCustomerId } from "./crm";
 
 /**
  * Made to order: somebody wants a garment the shop does not have.
@@ -69,121 +72,133 @@ export async function takeCustomOrder(
   },
   ctx: AuditContext,
 ): Promise<{ id: string; orderNumber: string; agreedTotal: string; deposit: string }> {
-  if (input.quantity <= 0) {
-    throw new CustomOrderError("A custom order needs at least one piece.");
-  }
-
-  const unitPrice = roundMoney(dec(input.agreedUnitPrice));
-  if (unitPrice.lessThan(0)) throw new CustomOrderError("The price cannot be negative.");
-
-  const total = roundMoney(unitPrice.times(input.quantity));
-  const deposit = input.deposit ? roundMoney(dec(input.deposit.amount)) : dec(0);
-
-  if (deposit.lessThan(0)) throw new CustomOrderError("A deposit cannot be negative.");
-  if (deposit.greaterThan(total)) {
-    // Otherwise the shop owes the customer money on the day it delivers.
-    throw new CustomOrderError(
-      `The deposit of ${deposit.toFixed(2)} is more than the ${total.toFixed(2)} agreed.`,
-    );
-  }
-
-  const [customer, variant] = await Promise.all([
-    db.customer.findUnique({ where: { id: input.customerId } }),
-    db.variant.findUnique({
-      where: { id: input.variantId },
-      include: { style: true, colorCode: true, sizeCode: true },
-    }),
-  ]);
-  if (!customer) throw new CustomOrderError("Customer not found.");
-  if (!variant) throw new CustomOrderError("That style, colour and size does not exist.");
-
-  const orderDate = asDay(input.orderDate);
-  if (input.promisedDate && asDay(input.promisedDate) < orderDate) {
-    throw new CustomOrderError("The promised date is before the order was taken.");
-  }
-
-  return db.$transaction(async (tx) => {
-    const orderNumber = await nextDocumentNumber(tx, "CUS", orderDate);
-
-    const order = await tx.customOrder.create({
-      data: {
-        orderNumber,
-        status: "PENDING",
-        customerId: input.customerId,
-        variantId: input.variantId,
-        quantity: input.quantity,
-        agreedUnitPrice: unitPrice.toString(),
-        agreedTotal: total.toString(),
-        depositAmount: deposit.toString(),
-        entityId: input.entityId,
-        locationId: input.locationId,
-        promisedDate: input.promisedDate ? asDay(input.promisedDate) : null,
-        notes: input.notes ?? null,
-        createdByUserId: ctx.userId,
-      },
-    });
-
-    if (deposit.greaterThan(0)) {
-      const fundsCode = DEPOSIT_FUNDS[input.deposit!.method];
-      if (!fundsCode) throw new CustomOrderError(`Cannot take a deposit by ${input.deposit!.method}.`);
-
-      const [funds, liability] = await Promise.all([
-        tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
-        tx.account.findUniqueOrThrow({
-          where: { code: ACC.CUSTOMER_DEPOSITS },
-          select: { id: true },
-        }),
-      ]);
-
-      // The money is real, the sale is not. It sits as something the shop
-      // owes until the garment is handed over.
-      await postEntry(tx, {
-        entityId: input.entityId,
-        postingDate: orderDate,
-        sourceType: "PAYMENT",
-        sourceId: order.id,
-        memo: `Deposit on ${orderNumber} — ${customer.name}`,
-        ctx,
-        lines: [
-          {
-            accountId: funds.id,
-            debit: deposit,
-            entityId: input.entityId,
-            customerId: input.customerId,
-            description: `Deposit taken for ${orderNumber}`,
-          },
-          {
-            accountId: liability.id,
-            credit: deposit,
-            entityId: input.entityId,
-            customerId: input.customerId,
-            description: `Held against ${orderNumber}`,
-          },
-        ],
-      });
+  return command("custom-orders.takeCustomOrder", input, ctx, async () => {
+    if (input.quantity <= 0) {
+      throw new CustomOrderError("A custom order needs at least one piece.");
     }
 
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_TAKEN",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      after: {
+    const unitPrice = roundMoney(dec(input.agreedUnitPrice));
+    if (unitPrice.lessThan(0)) throw new CustomOrderError("The price cannot be negative.");
+
+    const total = roundMoney(unitPrice.times(input.quantity));
+    const deposit = input.deposit ? roundMoney(dec(input.deposit.amount)) : dec(0);
+
+    if (deposit.lessThan(0)) throw new CustomOrderError("A deposit cannot be negative.");
+    if (deposit.greaterThan(total)) {
+      // Otherwise the shop owes the customer money on the day it delivers.
+      throw new CustomOrderError(
+        `The deposit of ${deposit.toFixed(2)} is more than the ${total.toFixed(2)} agreed.`,
+      );
+    }
+
+    const [customer, variant] = await Promise.all([
+      // A merged record's id means the one it was merged into.
+      db.customer.findUnique({ where: { id: (await canonicalCustomerId(db, input.customerId)) ?? "" } }),
+      db.variant.findUnique({
+        where: { id: input.variantId },
+        include: { style: true, colorCode: true, sizeCode: true },
+      }),
+    ]);
+    if (!customer) throw new CustomOrderError("Customer not found.");
+    if (!variant) throw new CustomOrderError("That style, colour and size does not exist.");
+
+    const orderDate = asDay(input.orderDate);
+    if (input.promisedDate && asDay(input.promisedDate) < orderDate) {
+      throw new CustomOrderError("The promised date is before the order was taken.");
+    }
+
+    return db.$transaction(async (tx) => {
+      const orderNumber = await nextDocumentNumber(tx, "CUS", orderDate);
+
+      const order = await tx.customOrder.create({
+        data: {
+          orderNumber,
+          status: "PENDING",
+          customerId: customer.id,
+          variantId: input.variantId,
+          quantity: input.quantity,
+          agreedUnitPrice: unitPrice.toString(),
+          agreedTotal: total.toString(),
+          depositAmount: deposit.toString(),
+          entityId: input.entityId,
+          locationId: input.locationId,
+          promisedDate: input.promisedDate ? asDay(input.promisedDate) : null,
+          notes: input.notes ?? null,
+          createdByUserId: ctx.userId,
+        },
+      });
+
+      if (deposit.greaterThan(0)) {
+        const fundsCode = DEPOSIT_FUNDS[input.deposit!.method];
+        if (!fundsCode) throw new CustomOrderError(`Cannot take a deposit by ${input.deposit!.method}.`);
+
+        const [funds, liability] = await Promise.all([
+          tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
+          tx.account.findUniqueOrThrow({
+            where: { code: ACC.CUSTOMER_DEPOSITS },
+            select: { id: true },
+          }),
+        ]);
+
+        // The money is real, the sale is not. It sits as something the shop
+        // owes until the garment is handed over.
+        await postEntry(tx, {
+          entityId: input.entityId,
+          postingDate: orderDate,
+          sourceType: "PAYMENT",
+          sourceId: order.id,
+          memo: `Deposit on ${orderNumber} — ${customer.name}`,
+          ctx,
+          lines: [
+            {
+              accountId: funds.id,
+              debit: deposit,
+              entityId: input.entityId,
+              customerId: customer.id,
+              description: `Deposit taken for ${orderNumber}`,
+            },
+            {
+              accountId: liability.id,
+              credit: deposit,
+              entityId: input.entityId,
+              customerId: customer.id,
+              description: `Held against ${orderNumber}`,
+            },
+          ],
+        });
+
+        if (input.deposit!.method === "CASH") {
+          await recordTillCash(tx, {
+            locationId: input.locationId,
+            kind: "DEPOSIT",
+            amount: deposit,
+            reference: orderNumber,
+          });
+        }
+      }
+
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_TAKEN",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        after: {
+          orderNumber,
+          customer: customer.name,
+          sku: variant.sku,
+          quantity: input.quantity,
+          agreedTotal: total.toString(),
+          deposit: deposit.toString(),
+        },
+        ctx,
+      });
+
+      return {
+        id: order.id,
         orderNumber,
-        customer: customer.name,
-        sku: variant.sku,
-        quantity: input.quantity,
         agreedTotal: total.toString(),
         deposit: deposit.toString(),
-      },
-      ctx,
+      };
     });
-
-    return {
-      id: order.id,
-      orderNumber,
-      agreedTotal: total.toString(),
-      deposit: deposit.toString(),
-    };
   });
 }
 
@@ -197,78 +212,89 @@ export async function addDeposit(
   },
   ctx: AuditContext,
 ): Promise<{ deposit: string; stillDue: string }> {
-  const amount = roundMoney(dec(input.amount));
-  if (amount.lessThanOrEqualTo(0)) throw new CustomOrderError("A deposit has to be more than zero.");
+  return command("custom-orders.addDeposit", input, ctx, async () => {
+    const amount = roundMoney(dec(input.amount));
+    if (amount.lessThanOrEqualTo(0)) throw new CustomOrderError("A deposit has to be more than zero.");
 
-  const order = await db.customOrder.findUnique({
-    where: { id: input.customOrderId },
-    include: { customer: true },
-  });
-  if (!order) throw new CustomOrderError("Custom order not found.");
-  if (order.status === "DELIVERED") {
-    throw new CustomOrderError("This order has been delivered; take payment against the sale instead.");
-  }
-  if (order.status === "CANCELLED") {
-    throw new CustomOrderError("This order was cancelled.");
-  }
-
-  const already = dec(order.depositAmount);
-  const total = dec(order.agreedTotal);
-  if (already.plus(amount).greaterThan(total)) {
-    throw new CustomOrderError(
-      `That would hold ${already.plus(amount).toFixed(2)} against an order of ${total.toFixed(2)}.`,
-    );
-  }
-
-  const fundsCode = DEPOSIT_FUNDS[input.method];
-  if (!fundsCode) throw new CustomOrderError(`Cannot take a deposit by ${input.method}.`);
-
-  return db.$transaction(async (tx) => {
-    const [funds, liability] = await Promise.all([
-      tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
-      tx.account.findUniqueOrThrow({
-        where: { code: ACC.CUSTOMER_DEPOSITS },
-        select: { id: true },
-      }),
-    ]);
-
-    await postEntry(tx, {
-      entityId: order.entityId,
-      postingDate: asDay(input.paidOn),
-      sourceType: "PAYMENT",
-      sourceId: order.id,
-      memo: `Further deposit on ${order.orderNumber}`,
-      ctx,
-      lines: [
-        {
-          accountId: funds.id, debit: amount, entityId: order.entityId,
-          customerId: order.customerId, description: `Deposit for ${order.orderNumber}`,
-        },
-        {
-          accountId: liability.id, credit: amount, entityId: order.entityId,
-          customerId: order.customerId, description: `Held against ${order.orderNumber}`,
-        },
-      ],
+    const order = await db.customOrder.findUnique({
+      where: { id: input.customOrderId },
+      include: { customer: true },
     });
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status === "DELIVERED") {
+      throw new CustomOrderError("This order has been delivered; take payment against the sale instead.");
+    }
+    if (order.status === "CANCELLED") {
+      throw new CustomOrderError("This order was cancelled.");
+    }
 
-    const updated = await tx.customOrder.update({
-      where: { id: order.id },
-      data: { depositAmount: already.plus(amount).toString() },
+    const already = dec(order.depositAmount);
+    const total = dec(order.agreedTotal);
+    if (already.plus(amount).greaterThan(total)) {
+      throw new CustomOrderError(
+        `That would hold ${already.plus(amount).toFixed(2)} against an order of ${total.toFixed(2)}.`,
+      );
+    }
+
+    const fundsCode = DEPOSIT_FUNDS[input.method];
+    if (!fundsCode) throw new CustomOrderError(`Cannot take a deposit by ${input.method}.`);
+
+    return db.$transaction(async (tx) => {
+      const [funds, liability] = await Promise.all([
+        tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
+        tx.account.findUniqueOrThrow({
+          where: { code: ACC.CUSTOMER_DEPOSITS },
+          select: { id: true },
+        }),
+      ]);
+
+      await postEntry(tx, {
+        entityId: order.entityId,
+        postingDate: asDay(input.paidOn),
+        sourceType: "PAYMENT",
+        sourceId: order.id,
+        memo: `Further deposit on ${order.orderNumber}`,
+        ctx,
+        lines: [
+          {
+            accountId: funds.id, debit: amount, entityId: order.entityId,
+            customerId: order.customerId, description: `Deposit for ${order.orderNumber}`,
+          },
+          {
+            accountId: liability.id, credit: amount, entityId: order.entityId,
+            customerId: order.customerId, description: `Held against ${order.orderNumber}`,
+          },
+        ],
+      });
+
+      if (input.method === "CASH") {
+        await recordTillCash(tx, {
+          locationId: order.locationId,
+          kind: "DEPOSIT",
+          amount,
+          reference: order.orderNumber,
+        });
+      }
+
+      const updated = await tx.customOrder.update({
+        where: { id: order.id },
+        data: { depositAmount: already.plus(amount).toString() },
+      });
+
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_DEPOSIT_ADDED",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        before: { deposit: already.toString() },
+        after: { deposit: updated.depositAmount.toString(), method: input.method },
+        ctx,
+      });
+
+      return {
+        deposit: dec(updated.depositAmount).toString(),
+        stillDue: total.minus(dec(updated.depositAmount)).toString(),
+      };
     });
-
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_DEPOSIT_ADDED",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      before: { deposit: already.toString() },
-      after: { deposit: updated.depositAmount.toString(), method: input.method },
-      ctx,
-    });
-
-    return {
-      deposit: dec(updated.depositAmount).toString(),
-      stillDue: total.minus(dec(updated.depositAmount)).toString(),
-    };
   });
 }
 
@@ -286,49 +312,51 @@ export async function linkProductionOrder(
   input: { customOrderId: string; productionOrderId: string },
   ctx: AuditContext,
 ): Promise<void> {
-  const [order, run] = await Promise.all([
-    db.customOrder.findUnique({ where: { id: input.customOrderId }, include: { variant: true } }),
-    db.productionOrder.findUnique({
-      where: { id: input.productionOrderId },
-      include: { customOrder: true },
-    }),
-  ]);
-  if (!order) throw new CustomOrderError("Custom order not found.");
-  if (!run) throw new CustomOrderError("Production order not found.");
+  return command("custom-orders.linkProductionOrder", input, ctx, async () => {
+    const [order, run] = await Promise.all([
+      db.customOrder.findUnique({ where: { id: input.customOrderId }, include: { variant: true } }),
+      db.productionOrder.findUnique({
+        where: { id: input.productionOrderId },
+        include: { customOrder: true },
+      }),
+    ]);
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (!run) throw new CustomOrderError("Production order not found.");
 
-  if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
-  if (order.status === "DELIVERED") throw new CustomOrderError("This order has already been delivered.");
-  if (order.productionOrderId) {
-    throw new CustomOrderError(`${order.orderNumber} already has a run against it.`);
-  }
-  if (run.customOrder && run.customOrder.id !== order.id) {
-    throw new CustomOrderError(`${run.orderNumber} is already making another custom order.`);
-  }
-  if (run.styleId !== order.variant.styleId) {
-    // A run for a different style would deliver the wrong garment and nobody
-    // would notice until the customer opened the bag.
-    throw new CustomOrderError(
-      `${run.orderNumber} makes a different style from what the customer asked for.`,
-    );
-  }
-  if (run.plannedQty < order.quantity) {
-    throw new CustomOrderError(
-      `${run.orderNumber} plans ${run.plannedQty} pieces but the customer asked for ${order.quantity}.`,
-    );
-  }
+    if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
+    if (order.status === "DELIVERED") throw new CustomOrderError("This order has already been delivered.");
+    if (order.productionOrderId) {
+      throw new CustomOrderError(`${order.orderNumber} already has a run against it.`);
+    }
+    if (run.customOrder && run.customOrder.id !== order.id) {
+      throw new CustomOrderError(`${run.orderNumber} is already making another custom order.`);
+    }
+    if (run.styleId !== order.variant.styleId) {
+      // A run for a different style would deliver the wrong garment and nobody
+      // would notice until the customer opened the bag.
+      throw new CustomOrderError(
+        `${run.orderNumber} makes a different style from what the customer asked for.`,
+      );
+    }
+    if (run.plannedQty < order.quantity) {
+      throw new CustomOrderError(
+        `${run.orderNumber} plans ${run.plannedQty} pieces but the customer asked for ${order.quantity}.`,
+      );
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.customOrder.update({
-      where: { id: order.id },
-      data: { productionOrderId: run.id, status: "IN_PRODUCTION" },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.customOrder.update({
+        where: { id: order.id },
+        data: { productionOrderId: run.id, status: "IN_PRODUCTION" },
+      });
 
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_IN_PRODUCTION",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      after: { orderNumber: order.orderNumber, run: run.orderNumber },
-      ctx,
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_IN_PRODUCTION",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        after: { orderNumber: order.orderNumber, run: run.orderNumber },
+        ctx,
+      });
     });
   });
 }
@@ -338,19 +366,21 @@ export async function markReady(
   input: { customOrderId: string },
   ctx: AuditContext,
 ): Promise<void> {
-  const order = await db.customOrder.findUnique({ where: { id: input.customOrderId } });
-  if (!order) throw new CustomOrderError("Custom order not found.");
-  if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
-  if (order.status === "DELIVERED") throw new CustomOrderError("This order has already been delivered.");
+  return command("custom-orders.markReady", input, ctx, async () => {
+    const order = await db.customOrder.findUnique({ where: { id: input.customOrderId } });
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
+    if (order.status === "DELIVERED") throw new CustomOrderError("This order has already been delivered.");
 
-  await db.$transaction(async (tx) => {
-    await tx.customOrder.update({ where: { id: order.id }, data: { status: "READY" } });
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_READY",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      after: { orderNumber: order.orderNumber },
-      ctx,
+    await db.$transaction(async (tx) => {
+      await tx.customOrder.update({ where: { id: order.id }, data: { status: "READY" } });
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_READY",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        after: { orderNumber: order.orderNumber },
+        ctx,
+      });
     });
   });
 }
@@ -375,103 +405,105 @@ export async function deliverCustomOrder(
   },
   ctx: AuditContext,
 ): Promise<{ orderNumber: string; salesOrderNumber: string; stillOwed: string }> {
-  const order = await db.customOrder.findUnique({
-    where: { id: input.customOrderId },
-    include: { customer: true, variant: true },
-  });
-  if (!order) throw new CustomOrderError("Custom order not found.");
-  if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
-  if (order.status === "DELIVERED") {
-    throw new CustomOrderError(`${order.orderNumber} has already been delivered.`);
-  }
-
-  const total = dec(order.agreedTotal);
-  const deposit = dec(order.depositAmount);
-  const payNow = input.payNow ? roundMoney(dec(input.payNow.amount)) : dec(0);
-
-  if (payNow.lessThan(0)) throw new CustomOrderError("A payment cannot be negative.");
-  if (deposit.plus(payNow).greaterThan(total)) {
-    throw new CustomOrderError(
-      `The deposit and today's payment come to ${deposit.plus(payNow).toFixed(2)}, more than the ${total.toFixed(2)} agreed.`,
-    );
-  }
-
-  // The sale relieves real stock, so the garment must actually be on the
-  // shelf. If production has not delivered it, this fails here rather than
-  // booking revenue for something that does not exist.
-  const payments: {
-    method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "DEPOSIT";
-    amount: number;
-    fee: number;
-    collected: boolean;
-  }[] = [];
-
-  if (deposit.greaterThan(0)) {
-    payments.push({ method: "DEPOSIT", amount: deposit.toNumber(), fee: 0, collected: true });
-  }
-  if (payNow.greaterThan(0)) {
-    payments.push({
-      method: input.payNow!.method,
-      amount: payNow.toNumber(),
-      fee: 0,
-      collected: true,
+  return command("custom-orders.deliverCustomOrder", input, ctx, async () => {
+    const order = await db.customOrder.findUnique({
+      where: { id: input.customOrderId },
+      include: { customer: true, variant: true },
     });
-  }
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
+    if (order.status === "DELIVERED") {
+      throw new CustomOrderError(`${order.orderNumber} has already been delivered.`);
+    }
 
-  const sale = await createSale(
-    {
-      source: "MANUAL",
-      channelId: input.channelId,
-      entityId: order.entityId,
-      locationId: order.locationId,
-      customerId: order.customerId,
-      orderDate: asDay(input.deliveredOn),
-      notes: `Custom order ${order.orderNumber}`,
-      lines: [
-        {
-          variantId: order.variantId,
-          quantity: order.quantity,
-          retailPrice: dec(order.agreedUnitPrice).toNumber(),
-          discountPct: 0,
-        },
-      ],
-      payments,
-    },
-    ctx,
-  );
+    const total = dec(order.agreedTotal);
+    const deposit = dec(order.depositAmount);
+    const payNow = input.payNow ? roundMoney(dec(input.payNow.amount)) : dec(0);
 
-  const stillOwed = total.minus(deposit).minus(payNow);
+    if (payNow.lessThan(0)) throw new CustomOrderError("A payment cannot be negative.");
+    if (deposit.plus(payNow).greaterThan(total)) {
+      throw new CustomOrderError(
+        `The deposit and today's payment come to ${deposit.plus(payNow).toFixed(2)}, more than the ${total.toFixed(2)} agreed.`,
+      );
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.customOrder.update({
-      where: { id: order.id },
-      data: {
-        status: "DELIVERED",
-        deliveredAt: asDay(input.deliveredOn),
-        salesOrderId: sale.salesOrderId,
-      },
-    });
+    // The sale relieves real stock, so the garment must actually be on the
+    // shelf. If production has not delivered it, this fails here rather than
+    // booking revenue for something that does not exist.
+    const payments: {
+      method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "DEPOSIT";
+      amount: number;
+      fee: number;
+      collected: boolean;
+    }[] = [];
 
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_DELIVERED",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      after: {
-        orderNumber: order.orderNumber,
-        salesOrder: sale.orderNumber,
-        deposit: deposit.toString(),
-        paidOnDelivery: payNow.toString(),
-        stillOwed: stillOwed.toString(),
+    if (deposit.greaterThan(0)) {
+      payments.push({ method: "DEPOSIT", amount: deposit.toNumber(), fee: 0, collected: true });
+    }
+    if (payNow.greaterThan(0)) {
+      payments.push({
+        method: input.payNow!.method,
+        amount: payNow.toNumber(),
+        fee: 0,
+        collected: true,
+      });
+    }
+
+    const sale = await createSale(
+      {
+        source: "MANUAL",
+        channelId: input.channelId,
+        entityId: order.entityId,
+        locationId: order.locationId,
+        customerId: order.customerId,
+        orderDate: asDay(input.deliveredOn),
+        notes: `Custom order ${order.orderNumber}`,
+        lines: [
+          {
+            variantId: order.variantId,
+            quantity: order.quantity,
+            retailPrice: dec(order.agreedUnitPrice).toNumber(),
+            discountPct: 0,
+          },
+        ],
+        payments,
       },
       ctx,
-    });
-  });
+    );
 
-  return {
-    orderNumber: order.orderNumber,
-    salesOrderNumber: sale.orderNumber,
-    stillOwed: stillOwed.toString(),
-  };
+    const stillOwed = total.minus(deposit).minus(payNow);
+
+    await db.$transaction(async (tx) => {
+      await tx.customOrder.update({
+        where: { id: order.id },
+        data: {
+          status: "DELIVERED",
+          deliveredAt: asDay(input.deliveredOn),
+          salesOrderId: sale.salesOrderId,
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_DELIVERED",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        after: {
+          orderNumber: order.orderNumber,
+          salesOrder: sale.orderNumber,
+          deposit: deposit.toString(),
+          paidOnDelivery: payNow.toString(),
+          stillOwed: stillOwed.toString(),
+        },
+        ctx,
+      });
+    });
+
+    return {
+      orderNumber: order.orderNumber,
+      salesOrderNumber: sale.orderNumber,
+      stillOwed: stillOwed.toString(),
+    };
+  });
 }
 
 /**
@@ -491,74 +523,85 @@ export async function cancelCustomOrder(
   },
   ctx: AuditContext,
 ): Promise<{ refunded: string }> {
-  if (!input.reason.trim()) {
-    throw new CustomOrderError("Say why it was cancelled — somebody will ask later.");
-  }
-
-  const order = await db.customOrder.findUnique({ where: { id: input.customOrderId } });
-  if (!order) throw new CustomOrderError("Custom order not found.");
-  if (order.status === "DELIVERED") {
-    throw new CustomOrderError("This order was delivered; a return is not a cancellation.");
-  }
-  if (order.status === "CANCELLED") throw new CustomOrderError("Already cancelled.");
-
-  const deposit = dec(order.depositAmount);
-
-  return db.$transaction(async (tx) => {
-    if (deposit.greaterThan(0)) {
-      const fundsCode = DEPOSIT_FUNDS[input.refundMethod ?? "CASH"];
-      const [funds, liability] = await Promise.all([
-        tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
-        tx.account.findUniqueOrThrow({
-          where: { code: ACC.CUSTOMER_DEPOSITS },
-          select: { id: true },
-        }),
-      ]);
-
-      // Exactly the reverse of taking it: the promise is discharged by
-      // handing the money back rather than by handing over a garment.
-      await postEntry(tx, {
-        entityId: order.entityId,
-        postingDate: asDay(input.cancelledOn),
-        sourceType: "PAYMENT",
-        sourceId: order.id,
-        memo: `Deposit returned on cancelled ${order.orderNumber}`,
-        ctx,
-        lines: [
-          {
-            accountId: liability.id, debit: deposit, entityId: order.entityId,
-            customerId: order.customerId,
-            description: `Released ${order.orderNumber}`,
-          },
-          {
-            accountId: funds.id, credit: deposit, entityId: order.entityId,
-            customerId: order.customerId,
-            description: `Refund to customer for ${order.orderNumber}`,
-          },
-        ],
-      });
+  return command("custom-orders.cancelCustomOrder", input, ctx, async () => {
+    if (!input.reason.trim()) {
+      throw new CustomOrderError("Say why it was cancelled — somebody will ask later.");
     }
 
-    await tx.customOrder.update({
-      where: { id: order.id },
-      data: {
-        status: "CANCELLED",
-        cancelledAt: asDay(input.cancelledOn),
-        cancelReason: input.reason.trim(),
-        depositAmount: "0",
-      },
-    });
+    const order = await db.customOrder.findUnique({ where: { id: input.customOrderId } });
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status === "DELIVERED") {
+      throw new CustomOrderError("This order was delivered; a return is not a cancellation.");
+    }
+    if (order.status === "CANCELLED") throw new CustomOrderError("Already cancelled.");
 
-    await writeAudit(tx, {
-      action: "CUSTOM_ORDER_CANCELLED",
-      entityName: "CustomOrder",
-      entityId: order.id,
-      before: { deposit: deposit.toString(), status: order.status },
-      after: { refunded: deposit.toString(), reason: input.reason.trim() },
-      ctx,
-    });
+    const deposit = dec(order.depositAmount);
 
-    return { refunded: deposit.toString() };
+    return db.$transaction(async (tx) => {
+      if (deposit.greaterThan(0)) {
+        const fundsCode = DEPOSIT_FUNDS[input.refundMethod ?? "CASH"];
+        const [funds, liability] = await Promise.all([
+          tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
+          tx.account.findUniqueOrThrow({
+            where: { code: ACC.CUSTOMER_DEPOSITS },
+            select: { id: true },
+          }),
+        ]);
+
+        // Exactly the reverse of taking it: the promise is discharged by
+        // handing the money back rather than by handing over a garment.
+        await postEntry(tx, {
+          entityId: order.entityId,
+          postingDate: asDay(input.cancelledOn),
+          sourceType: "PAYMENT",
+          sourceId: order.id,
+          memo: `Deposit returned on cancelled ${order.orderNumber}`,
+          ctx,
+          lines: [
+            {
+              accountId: liability.id, debit: deposit, entityId: order.entityId,
+              customerId: order.customerId,
+              description: `Released ${order.orderNumber}`,
+            },
+            {
+              accountId: funds.id, credit: deposit, entityId: order.entityId,
+              customerId: order.customerId,
+              description: `Refund to customer for ${order.orderNumber}`,
+            },
+          ],
+        });
+
+        if ((input.refundMethod ?? "CASH") === "CASH") {
+          await recordTillCash(tx, {
+            locationId: order.locationId,
+            kind: "REFUND",
+            amount: deposit.negated(),
+            reference: order.orderNumber,
+          });
+        }
+      }
+
+      await tx.customOrder.update({
+        where: { id: order.id },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: asDay(input.cancelledOn),
+          cancelReason: input.reason.trim(),
+          depositAmount: "0",
+        },
+      });
+
+      await writeAudit(tx, {
+        action: "CUSTOM_ORDER_CANCELLED",
+        entityName: "CustomOrder",
+        entityId: order.id,
+        before: { deposit: deposit.toString(), status: order.status },
+        after: { refunded: deposit.toString(), reason: input.reason.trim() },
+        ctx,
+      });
+
+      return { refunded: deposit.toString() };
+    });
   });
 }
 

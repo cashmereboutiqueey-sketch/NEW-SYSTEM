@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { collectPaymentAction, type ReceivableState } from "./actions";
+import { RequestIdField } from "@/components/request-id";
 
 const empty: ReceivableState = {};
 
@@ -57,6 +58,7 @@ export function CollectForm({
         {ar ? `تحصيل من ${customerName}` : `Collect from ${customerName}`}
       </p>
 
+      <RequestIdField state={state} />
       <input type="hidden" name="collectedOn" value={today} />
 
       <label className="mb-2 block text-xs">

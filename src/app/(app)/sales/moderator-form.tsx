@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { createModeratorSaleAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
+import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
@@ -96,6 +97,7 @@ export function ModeratorOrderForm({
 
   return (
     <form action={formAction} className="space-y-4">
+      <RequestIdField state={state} />
       <input type="hidden" name="entityId" value={entityId} />
       <input type="hidden" name="lines" value={JSON.stringify(lines)} />
       <input type="hidden" name="discountPct" value={discountPct} />

@@ -5,11 +5,20 @@ import { authorize, ForbiddenError } from "@/lib/auth";
 import { createSale, openPosSession, closePosSession, SalesError } from "@/lib/sales";
 import { LedgerError } from "@/lib/ledger";
 import { InventoryError } from "@/lib/inventory";
-import { can } from "@/core/permissions";
+import { can, type Role } from "@/core/permissions";
 import { findUnitBySerial } from "@/lib/garment-units";
 import { db } from "@/lib/db";
 import { sellConsignedItem, ConsignmentError } from "@/lib/consignment";
 import { createCustomer } from "@/lib/master-data";
+import { formCommand, CommandError } from "@/lib/command";
+import { dec, Decimal } from "@/lib/money";
+import {
+  checkOwnedPrices,
+  checkConsignedPrices,
+  ownedTotal,
+  consignedTotal,
+  SalePriceError,
+} from "@/lib/sale-prices";
 import { normalisePhone } from "@/core/crm";
 
 export type PosState = {
@@ -18,9 +27,6 @@ export type PosState = {
   /** Echoed back so the terminal can show a receipt after a sale. */
   receipt?: { orderNumber: string; total: string; change: string };
 };
-
-/** Rounds the way the invoice does, so the split lands on the piastre. */
-const round = (n: number) => Math.round(n * 100) / 100;
 
 /** What is genuinely left of a consigned item, checked before anything moves. */
 async function consignedAvailability(itemId: string) {
@@ -48,7 +54,14 @@ function toMessage(error: unknown): string {
   ) {
     return error.message;
   }
-  if (error instanceof ConsignmentError) return error.message;
+  if (
+    error instanceof ConsignmentError ||
+    error instanceof CheckoutError ||
+    error instanceof SalePriceError ||
+    error instanceof CommandError
+  ) {
+    return error.message;
+  }
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   if (error && typeof error === "object" && "issues" in error) {
     return (error as { issues: { message: string }[] }).issues
@@ -195,6 +208,41 @@ export async function lookupSerialAction(
   }
 }
 
+/** A basket the till refuses, with the reason the cashier is shown. */
+class CheckoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CheckoutError";
+  }
+}
+
+/**
+ * The till this sale is rung up on, and whether this person may use it.
+ *
+ * A till is one cashier at one location for one shift: its drawer count at
+ * the end is only meaningful if every sale in it was theirs, taken there. A
+ * supervisor — anybody who may close a shift — can ring up on a colleague's
+ * till, which is how cover for a break works.
+ */
+async function checkTill(
+  posSessionId: string,
+  locationId: string,
+  session: { userId: string; role: Role },
+): Promise<void> {
+  const till = await db.posSession.findUnique({
+    where: { id: posSessionId },
+    select: { locationId: true, cashierUserId: true, closedAt: true },
+  });
+  if (!till) throw new CheckoutError("Open a till before ringing up a sale.");
+  if (till.closedAt) throw new CheckoutError("That till is already closed. Open a new one.");
+  if (till.locationId !== locationId) {
+    throw new CheckoutError("That till is at another location from this sale.");
+  }
+  if (till.cashierUserId !== session.userId && !can(session.role, "pos:close_shift")) {
+    throw new CheckoutError("That till belongs to another cashier. Open your own.");
+  }
+}
+
 export async function checkoutAction(_prev: PosState, formData: FormData): Promise<PosState> {
   try {
     const session = await authorize("pos:operate");
@@ -209,8 +257,8 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
 
     // Discounting is a separate capability from ringing up a sale, so a
     // cashier cannot mark stock down on their own authority.
-    const discounted = cart.some((l) => l.discountPct > 0);
-    if (discounted && !can(session.role, "sales_order:discount")) {
+    const canDiscount = can(session.role, "sales_order:discount");
+    if (cart.some((l) => l.discountPct > 0) && !canDiscount) {
       return { error: "You do not have permission to apply a discount." };
     }
 
@@ -218,131 +266,144 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       | "CASH" | "CARD" | "INSTAPAY" | "COD";
     const tendered = Number(formData.get("tendered") ?? 0);
 
+    // The total is worked out here, the way the invoice will work it out,
+    // rather than taken from the browser. A total typed down to 1 alongside
+    // "paid 1" used to read as paid in full while the sale recorded the real
+    // price, and the difference went on the customer's account without anyone
+    // allowed to give credit having agreed to it.
+    const ownTotal = ownedTotal(cart);
+    const total = ownTotal.plus(consignedTotal(consignedCart));
+
     // How much is actually being handed over. Anything short of the total is
     // credit, and credit is a separate right from ringing up a sale: a cashier
     // may be trusted to take the full price and not to judge who is good for a
-    // debt. Checked here as well as in the browser, because the browser is not
-    // where permissions live.
-    const total = Number(formData.get("total") ?? 0);
-    const paidNow = Number(formData.get("paidNow") ?? total);
-
-    if (paidNow < total && !can(session.role, "sales_order:credit")) {
+    // debt.
+    const paidRaw = formData.get("paidNow");
+    const paidNow = paidRaw == null || paidRaw === "" ? total : dec(Number(paidRaw));
+    if (!paidNow.isFinite() || paidNow.isNegative()) {
+      return { error: "The amount paid is not a number." };
+    }
+    if (paidNow.lessThan(total) && !can(session.role, "sales_order:credit")) {
       return { error: "You do not have permission to let a customer pay later." };
     }
-
-    // The payment splits by ownership. Each document carries its own share, so
-    // the drawer receives the whole basket across two journals and neither
-    // side claims money belonging to the other.
-    const consignedTotal = round(
-      consignedCart.reduce((sum, l) => sum + l.retailPrice * l.quantity, 0),
-    );
-    const ownTotal = round(total - consignedTotal);
 
     // Goods belonging to somebody else cannot go out on credit. The shop owes
     // their owner a share from the moment they leave, and letting a customer
     // pay later means owing real money against a debt not yet collected.
-    if (consignedCart.length > 0 && paidNow < total) {
+    if (consignedCart.length > 0 && paidNow.lessThan(total)) {
       return {
         error:
           "بضاعة الأمانة لازم تتدفع كاملة — انت مدين لصاحبها من ساعة ما تخرج من المحل.",
       };
     }
 
-    // A sale rung up at a bazaar is a bazaar sale, not a showroom one. The
-    // till is the same till, so the source has to come from where it is
-    // standing — otherwise every bazaar's takings land in the showroom's
-    // revenue account and no channel report can tell them apart.
     const locationId = String(formData.get("locationId") ?? "");
-    const location = await db.location.findUnique({
-      where: { id: locationId },
-      select: { kind: true },
-    });
-    const source = location?.kind === "EXHIBITION" ? "EXHIBITION" : "POS";
-
     const posSessionId = String(formData.get("posSessionId") ?? "");
     const customerId = (formData.get("customerId") as string) || null;
     const now = new Date();
 
-    // Every consigned line is checked for availability before anything is
-    // recorded, so the common failure — the last one of something already
-    // sold — is caught while the basket is still only a basket.
-    for (const line of consignedCart) {
-      const check = await consignedAvailability(line.itemId);
-      if (line.quantity > check.available) {
-        return {
-          error:
-            check.available <= 0
-              ? `${check.description}: خلصت خلاص.`
-              : `${check.description}: فاضل ${check.available} بس.`,
-        };
-      }
-    }
+    // One basket, one transaction. The shop's goods and a consignor's go on
+    // two documents, but the customer paid once: either both are recorded or
+    // neither is, so a failure on the consigned line can no longer leave the
+    // shop's half sold and the cashier guessing what to ring again. A second
+    // press with the same submission — the response lost on the way back —
+    // returns this sale rather than making another.
+    const result = await formCommand(
+      "pos.checkout",
+      formData,
+      { userId: session.userId },
+      async () => {
+        await checkTill(posSessionId, locationId, session);
+        await checkOwnedPrices(cart, canDiscount);
+        await checkConsignedPrices(consignedCart, canDiscount);
 
-    // The goods the shop owns go first. If a consigned line then fails, no
-    // money has been misrecorded: that part of the basket simply was not rung
-    // up, and the cashier is told which item to ring again. Neither document
-    // is ever left half-written.
-    let orderNumber: string | null = null;
-    if (cart.length > 0) {
-      const result = await createSale(
-        {
-          source,
-          channelId: String(formData.get("channelId") ?? ""),
-          entityId: String(formData.get("entityId") ?? ""),
-          locationId,
-          posSessionId,
-          customerId,
-          orderDate: now,
-          lines: cart,
-          payments:
-            paidNow > 0
-              ? [
-                  {
-                    method,
-                    // Only the share belonging to the shop.
-                    amount: Math.min(paidNow, ownTotal),
-                    fee: 0,
-                    // Cash and card at the till are collected there and then;
-                    // a COD sale from the shop floor is not money in hand yet.
-                    collected: method !== "COD",
-                  },
-                ]
-              : [],
-        },
-        { userId: session.userId },
-      );
-      orderNumber = result.orderNumber;
-    }
+        // A sale rung up at a bazaar is a bazaar sale, not a showroom one. The
+        // till is the same till, so the source has to come from where it is
+        // standing — otherwise every bazaar's takings land in the showroom's
+        // revenue account and no channel report can tell them apart.
+        const location = await db.location.findUnique({
+          where: { id: locationId },
+          select: { kind: true },
+        });
+        const source = location?.kind === "EXHIBITION" ? "EXHIBITION" : "POS";
 
-    const consignedSales: string[] = [];
-    let commission = 0;
-    for (const line of consignedCart) {
-      const sale = await sellConsignedItem(
-        {
-          itemId: line.itemId,
-          quantity: line.quantity,
-          soldPrice: String(line.retailPrice),
-          paymentMethod: method,
-          customerId,
-          posSessionId,
-          saleDate: now,
-        },
-        { userId: session.userId, reason: null },
-      );
-      consignedSales.push(sale.saleNumber);
-      commission += Number(sale.commission);
-    }
+        // The last one of a consigned item is the common failure, and it gets
+        // its own message in the cashier's words.
+        for (const line of consignedCart) {
+          const check = await consignedAvailability(line.itemId);
+          if (line.quantity > check.available) {
+            throw new CheckoutError(
+              check.available <= 0
+                ? `${check.description}: خلصت خلاص.`
+                : `${check.description}: فاضل ${check.available} بس.`,
+            );
+          }
+        }
+
+        let orderNumber: string | null = null;
+        if (cart.length > 0) {
+          const sale = await createSale(
+            {
+              source,
+              channelId: String(formData.get("channelId") ?? ""),
+              entityId: String(formData.get("entityId") ?? ""),
+              locationId,
+              posSessionId,
+              customerId,
+              orderDate: now,
+              lines: cart,
+              payments: paidNow.greaterThan(0)
+                ? [
+                    {
+                      method,
+                      // Only the share belonging to the shop.
+                      amount: Decimal.min(paidNow, ownTotal).toNumber(),
+                      fee: 0,
+                      // Cash and card at the till are collected there and then;
+                      // a COD sale from the shop floor is not money in hand yet.
+                      collected: method !== "COD",
+                    },
+                  ]
+                : [],
+            },
+            { userId: session.userId },
+          );
+          orderNumber = sale.orderNumber;
+        }
+
+        const consignedSales: string[] = [];
+        let commission = dec(0);
+        for (const line of consignedCart) {
+          const sale = await sellConsignedItem(
+            {
+              itemId: line.itemId,
+              quantity: line.quantity,
+              soldPrice: String(line.retailPrice),
+              paymentMethod: method,
+              customerId,
+              posSessionId,
+              saleDate: now,
+            },
+            { userId: session.userId, reason: null },
+          );
+          consignedSales.push(sale.saleNumber);
+          commission = commission.plus(sale.commission);
+        }
+
+        return { orderNumber, consignedSales, commission: commission.toFixed(2) };
+      },
+    );
 
     revalidatePath("/pos");
     revalidatePath("/consignment");
 
-    const change = Math.max(0, tendered - total);
-    const reference = orderNumber ?? consignedSales[0] ?? "";
+    const change = Decimal.max(0, dec(Number.isFinite(tendered) ? tendered : 0).minus(total));
+    const reference = result.orderNumber ?? result.consignedSales[0] ?? "";
 
     return {
       success:
-        consignedSales.length > 0
-          ? `${reference} — منها ${consignedSales.length} صنف أمانة، عمولتك ${commission.toFixed(2)}.`
+        result.consignedSales.length > 0
+          ? `${reference} — منها ${result.consignedSales.length} صنف أمانة، عمولتك ${result.commission}.`
           : `Sale ${reference} recorded.`,
       receipt: {
         orderNumber: reference,

@@ -8,6 +8,7 @@ import {
   type PosState,
 } from "./actions";
 import { isWellFormedSerial, normaliseTypedSerial } from "@/core/serial";
+import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
 
 type Product = {
@@ -694,6 +695,7 @@ export function PosTerminal({
 
       {/* -------------------------------------------------------------- cart */}
       <form action={formAction} className="flex flex-col gap-3">
+        <RequestIdField state={state} />
         <input type="hidden" name="cart" value={JSON.stringify(
           cart.map((l) => ({
             variantId: l.variantId,
@@ -718,8 +720,11 @@ export function PosTerminal({
         <input type="hidden" name="entityId" value={entityId} />
         <input type="hidden" name="channelId" value={channelId} />
         <input type="hidden" name="total" value={total.toFixed(2)} />
-        {/* What is being collected right now; the rest goes on the tab. */}
-        <input type="hidden" name="paidNow" value={collectedNow.toFixed(2)} />
+        {/* What is being collected right now; the rest goes on the tab. Blank
+            means the whole price, as the server works it out: this screen
+            rounds in floating point, and a piastre's disagreement must not
+            turn a sale paid in full into credit the cashier cannot give. */}
+        <input type="hidden" name="paidNow" value={onAccount ? collectedNow.toFixed(2) : ""} />
         <input type="hidden" name="method" value={method} />
         <input type="hidden" name="tendered" value={tendered || "0"} />
         <input type="hidden" name="customerId" value={customerId} />

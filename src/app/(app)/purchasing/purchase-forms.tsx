@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { createPurchaseOrderAction, receiveGoodsAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
+import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
@@ -227,6 +228,7 @@ export function GoodsReceiptForm({
 
   return (
     <form action={formAction} className="space-y-3">
+      <RequestIdField state={state} />
       <input type="hidden" name="purchaseOrderId" value={purchaseOrderId} />
       <input type="hidden" name="entityId" value={entityId} />
       <input

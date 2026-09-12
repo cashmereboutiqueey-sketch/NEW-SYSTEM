@@ -14,6 +14,7 @@ import {
   cancelCustomOrder,
   CustomOrderError,
 } from "@/lib/custom-orders";
+import { formCommand, CommandError } from "@/lib/command";
 
 export type CustomOrderState = { error?: string; success?: string };
 
@@ -22,7 +23,8 @@ function toMessage(error: unknown): string {
     error instanceof CustomOrderError ||
     error instanceof SalesError ||
     error instanceof InventoryError ||
-    error instanceof LedgerError
+    error instanceof LedgerError ||
+    error instanceof CommandError
   ) {
     return error.message;
   }
@@ -54,26 +56,30 @@ export async function takeCustomOrderAction(
 
     const promised = String(formData.get("promisedDate") ?? "");
 
-    const result = await takeCustomOrder(
-      {
-        customerId: String(formData.get("customerId") ?? ""),
-        variantId: String(formData.get("variantId") ?? ""),
-        quantity: Number(formData.get("quantity") ?? 1),
-        agreedUnitPrice: String(formData.get("agreedUnitPrice") ?? "0"),
-        deposit: hasDeposit
-          ? {
-              amount: depositAmount,
-              method: String(formData.get("depositMethod") ?? "CASH") as
-                | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-            }
-          : null,
-        entityId: String(formData.get("entityId") ?? ""),
-        locationId: String(formData.get("locationId") ?? ""),
-        orderDate: day(formData.get("orderDate")),
-        promisedDate: promised ? new Date(promised) : null,
-        notes: String(formData.get("notes") ?? "") || null,
-      },
-      { userId: session.userId, reason: null },
+    // Taking the order can take a deposit, so a second press after a lost
+    // response must return this order rather than open a second one.
+    const result = await formCommand("customOrders.take", formData, { userId: session.userId }, () =>
+      takeCustomOrder(
+        {
+          customerId: String(formData.get("customerId") ?? ""),
+          variantId: String(formData.get("variantId") ?? ""),
+          quantity: Number(formData.get("quantity") ?? 1),
+          agreedUnitPrice: String(formData.get("agreedUnitPrice") ?? "0"),
+          deposit: hasDeposit
+            ? {
+                amount: depositAmount,
+                method: String(formData.get("depositMethod") ?? "CASH") as
+                  | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+              }
+            : null,
+          entityId: String(formData.get("entityId") ?? ""),
+          locationId: String(formData.get("locationId") ?? ""),
+          orderDate: day(formData.get("orderDate")),
+          promisedDate: promised ? new Date(promised) : null,
+          notes: String(formData.get("notes") ?? "") || null,
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     refresh();
@@ -94,15 +100,17 @@ export async function addDepositAction(
   try {
     const session = await authorize("payment:create");
 
-    const result = await addDeposit(
-      {
-        customOrderId: String(formData.get("customOrderId") ?? ""),
-        amount: String(formData.get("amount") ?? "0"),
-        method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-        paidOn: day(formData.get("paidOn")),
-      },
-      { userId: session.userId, reason: null },
+    const result = await formCommand("customOrders.deposit", formData, { userId: session.userId }, () =>
+      addDeposit(
+        {
+          customOrderId: String(formData.get("customOrderId") ?? ""),
+          amount: String(formData.get("amount") ?? "0"),
+          method: String(formData.get("method") ?? "CASH") as
+            | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+          paidOn: day(formData.get("paidOn")),
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     refresh();
@@ -163,21 +171,23 @@ export async function deliverAction(
 
     const payNow = String(formData.get("payNow") ?? "").trim();
 
-    const result = await deliverCustomOrder(
-      {
-        customOrderId: String(formData.get("customOrderId") ?? ""),
-        deliveredOn: day(formData.get("deliveredOn")),
-        payNow:
-          payNow !== "" && Number(payNow) > 0
-            ? {
-                amount: payNow,
-                method: String(formData.get("method") ?? "CASH") as
-                  | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-              }
-            : null,
-        channelId: String(formData.get("channelId") ?? ""),
-      },
-      { userId: session.userId, reason: null },
+    const result = await formCommand("customOrders.deliver", formData, { userId: session.userId }, () =>
+      deliverCustomOrder(
+        {
+          customOrderId: String(formData.get("customOrderId") ?? ""),
+          deliveredOn: day(formData.get("deliveredOn")),
+          payNow:
+            payNow !== "" && Number(payNow) > 0
+              ? {
+                  amount: payNow,
+                  method: String(formData.get("method") ?? "CASH") as
+                    | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+                }
+              : null,
+          channelId: String(formData.get("channelId") ?? ""),
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     refresh();
@@ -204,15 +214,17 @@ export async function cancelAction(
     // who may hand money out rather than with whoever took the order.
     const session = await authorize("payment:create");
 
-    const result = await cancelCustomOrder(
-      {
-        customOrderId: String(formData.get("customOrderId") ?? ""),
-        reason: String(formData.get("reason") ?? ""),
-        cancelledOn: day(formData.get("cancelledOn")),
-        refundMethod: String(formData.get("refundMethod") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-      },
-      { userId: session.userId, reason: null },
+    const result = await formCommand("customOrders.cancel", formData, { userId: session.userId }, () =>
+      cancelCustomOrder(
+        {
+          customOrderId: String(formData.get("customOrderId") ?? ""),
+          reason: String(formData.get("reason") ?? ""),
+          cancelledOn: day(formData.get("cancelledOn")),
+          refundMethod: String(formData.get("refundMethod") ?? "CASH") as
+            | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     refresh();

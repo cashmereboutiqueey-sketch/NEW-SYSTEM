@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { RequestIdField } from "@/components/request-id";
 import { takeCustomOrderAction, type CustomOrderState } from "./actions";
 
 const empty: CustomOrderState = {};
@@ -35,6 +36,7 @@ export function TakeOrderForm({
 
   return (
     <form action={action} className="grid gap-3 lg:grid-cols-3">
+      <RequestIdField state={state} />
       <input type="hidden" name="entityId" value={entityId} />
       <input type="hidden" name="orderDate" value={today} />
 

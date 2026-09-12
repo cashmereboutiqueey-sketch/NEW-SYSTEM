@@ -4,11 +4,16 @@ import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { LedgerError } from "@/lib/ledger";
 import { collectPayment, setCreditTerms, ReceivableError } from "@/lib/receivables";
+import { formCommand, CommandError } from "@/lib/command";
 
 export type ReceivableState = { error?: string; success?: string };
 
 function toMessage(error: unknown): string {
-  if (error instanceof ReceivableError || error instanceof LedgerError) {
+  if (
+    error instanceof ReceivableError ||
+    error instanceof LedgerError ||
+    error instanceof CommandError
+  ) {
     return error.message;
   }
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
@@ -29,16 +34,20 @@ export async function collectPaymentAction(
   try {
     const session = await authorize("payment:create");
 
-    const result = await collectPayment(
-      {
-        salesOrderId: String(formData.get("salesOrderId") ?? ""),
-        method: String(formData.get("method") ?? "CASH") as
-          | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-        amount: String(formData.get("amount") ?? "0"),
-        collectedOn: day(formData.get("collectedOn")),
-        reference: String(formData.get("reference") ?? "") || null,
-      },
-      { userId: session.userId, reason: null },
+    // A second press after a lost response returns this collection rather
+    // than taking the money twice.
+    const result = await formCommand("receivables.collect", formData, { userId: session.userId }, () =>
+      collectPayment(
+        {
+          salesOrderId: String(formData.get("salesOrderId") ?? ""),
+          method: String(formData.get("method") ?? "CASH") as
+            | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+          amount: String(formData.get("amount") ?? "0"),
+          collectedOn: day(formData.get("collectedOn")),
+          reference: String(formData.get("reference") ?? "") || null,
+        },
+        { userId: session.userId, reason: null },
+      ),
     );
 
     revalidatePath("/receivables");

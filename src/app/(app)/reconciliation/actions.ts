@@ -71,7 +71,9 @@ export async function importStatementAction(
   formData: FormData,
 ): Promise<FormState> {
   try {
-    const session = await authorize("journal:view");
+    // Importing a statement writes records and marks ledger lines reconciled.
+    // Reading the journal is not the right to do that.
+    const session = await authorize("journal:create");
 
     // One line per row: date, description, amount. Signed, so a single column
     // says which way the money went.
@@ -146,7 +148,8 @@ export async function autoMatchAction(
   formData: FormData,
 ): Promise<FormState> {
   try {
-    await authorize("journal:view");
+    // Matching changes what the books say is reconciled.
+    await authorize("journal:create");
     const matched = await autoMatch(String(formData.get("statementId") ?? ""));
     revalidatePath("/reconciliation");
     return {

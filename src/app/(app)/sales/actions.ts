@@ -6,12 +6,18 @@ import { createSale, SalesError } from "@/lib/sales";
 import { InventoryError } from "@/lib/inventory";
 import { LedgerError } from "@/lib/ledger";
 import type { FormState } from "@/components/entity-form";
+import { can } from "@/core/permissions";
+import { formCommand, CommandError } from "@/lib/command";
+import { checkOwnedPrices, ownedTotal, SalePriceError } from "@/lib/sale-prices";
+import { dec, roundMoney } from "@/lib/money";
 
 function toMessage(error: unknown): string {
   if (
     error instanceof SalesError ||
     error instanceof InventoryError ||
-    error instanceof LedgerError
+    error instanceof LedgerError ||
+    error instanceof SalePriceError ||
+    error instanceof CommandError
   ) {
     return error.message;
   }
@@ -42,45 +48,52 @@ export async function createModeratorSaleAction(
     const shipping = Number(formData.get("shippingAmount") ?? 0);
 
     const discountPct = Number(formData.get("discountPct") ?? 0) / 100;
-    if (discountPct > 0) {
-      // Taking an order and discounting it are separate rights: a moderator
-      // who can do both can give the price away.
-      await authorize("sales_order:discount");
+    // Taking an order and discounting it are separate rights: a moderator who
+    // can do both can give the price away.
+    const canDiscount = can(session.role, "sales_order:discount");
+    if (discountPct > 0 && !canDiscount) {
+      return { error: "You do not have permission to apply a discount." };
     }
 
     const priced = (lines as { variantId: string; quantity: number; retailPrice: number }[]).map(
       (l) => ({ ...l, discountPct }),
     );
-    const goods = priced.reduce(
-      (s, l) => s + Math.round(l.retailPrice * (1 - discountPct) * 100) / 100 * l.quantity,
-      0,
-    );
 
-    const result = await createSale(
-      {
-        source: "MODERATOR",
-        channelId: String(formData.get("channelId") ?? ""),
-        entityId: String(formData.get("entityId") ?? ""),
-        locationId: String(formData.get("locationId") ?? ""),
-        customerId: (formData.get("customerId") as string) || null,
-        orderDate: new Date(String(formData.get("orderDate") ?? "")),
-        shippingAmount: shipping,
-        city: (formData.get("city") as string) || null,
-        notes: (formData.get("notes") as string) || null,
-        lines: priced,
-        payments: [
-          {
-            method: method as "CASH" | "CARD" | "COD" | "BANK_TRANSFER" | "INSTAPAY",
-            amount: Math.round((goods + shipping) * 100) / 100,
-            fee: Number(formData.get("fee") ?? 0),
-            // Cash on delivery is money the courier still owes; anything else
-            // taken up front is already in hand.
-            collected: method !== "COD",
-          },
-        ],
-      },
-      { userId: session.userId },
-    );
+    // The payment is the invoice, worked out the way the invoice works it out
+    // — in decimals, not in floating point, which drops a piastre on some
+    // prices and leaves the order a piastre short of paid.
+    const due = ownedTotal(priced).plus(roundMoney(dec(shipping)));
+
+    // One command: the price check reads the same prices the sale then uses,
+    // and a second press after a lost response returns this order.
+    const result = await formCommand("sales.moderatorOrder", formData, { userId: session.userId }, async () => {
+      await checkOwnedPrices(priced, canDiscount);
+      return createSale(
+        {
+          source: "MODERATOR",
+          channelId: String(formData.get("channelId") ?? ""),
+          entityId: String(formData.get("entityId") ?? ""),
+          locationId: String(formData.get("locationId") ?? ""),
+          customerId: (formData.get("customerId") as string) || null,
+          orderDate: new Date(String(formData.get("orderDate") ?? "")),
+          shippingAmount: shipping,
+          city: (formData.get("city") as string) || null,
+          notes: (formData.get("notes") as string) || null,
+          lines: priced,
+          payments: [
+            {
+              method: method as "CASH" | "CARD" | "COD" | "BANK_TRANSFER" | "INSTAPAY",
+              amount: due.toNumber(),
+              fee: Number(formData.get("fee") ?? 0),
+              // Cash on delivery is money the courier still owes; anything else
+              // taken up front is already in hand.
+              collected: method !== "COD",
+            },
+          ],
+        },
+        { userId: session.userId },
+      );
+    });
 
     revalidatePath("/sales");
     revalidatePath("/inventory");

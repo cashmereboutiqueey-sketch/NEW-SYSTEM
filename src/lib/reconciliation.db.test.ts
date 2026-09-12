@@ -448,6 +448,31 @@ describe("the bank statement", () => {
     ).rejects.toThrow(/do not agree/i);
   });
 
+  it("refuses a hand match to a ledger line on another account, however well the amount agrees", async () => {
+    // The courier's clearing account carries the same 1,000 as the bank line;
+    // matching it would read the bank statement as reconciled against money
+    // the bank never had.
+    await givenStock(3);
+    await codSale(1000);
+    const clearing = await db.journalLine.findFirstOrThrow({
+      where: { account: { code: "1135" }, debit: "1000", journalEntry: { status: "POSTED" } },
+    });
+
+    const result = await importStatement(
+      {
+        accountCode: "1120", entityId: brandId, statementDate: day,
+        openingBalance: "0", closingBalance: "1000",
+        lines: [{ valueDate: day, description: "Transfer", reference: null, amount: "1000" }],
+      },
+      ctx,
+    );
+    const view = await reconciliationView(result.statementId);
+
+    await expect(
+      matchLine({ bankStatementLineId: view!.lines[0].id, journalLineId: clearing.id }, ctx),
+    ).rejects.toThrow(/on account 1135, not 1120/i);
+  });
+
   it("notices a statement whose own arithmetic is wrong", async () => {
     const result = await importStatement(
       {

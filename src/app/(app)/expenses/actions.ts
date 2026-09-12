@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { createExpense, payExpense, ExpenseError } from "@/lib/expenses";
 import { LedgerError } from "@/lib/ledger";
+import { formCommand, CommandError } from "@/lib/command";
 
 export type ActionState = { error?: string; success?: string };
 
@@ -15,7 +16,13 @@ export type ActionState = { error?: string; success?: string };
  * details never reach the browser.
  */
 function toMessage(error: unknown): string {
-  if (error instanceof ExpenseError || error instanceof LedgerError) return error.message;
+  if (
+    error instanceof ExpenseError ||
+    error instanceof LedgerError ||
+    error instanceof CommandError
+  ) {
+    return error.message;
+  }
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   if (error && typeof error === "object" && "issues" in error) {
     const issues = (error as { issues: { message: string }[] }).issues;
@@ -61,18 +68,22 @@ export async function payExpenseAction(
   try {
     const session = await authorize("payment:create");
 
-    const result = await payExpense(
-      {
-        expenseId: String(formData.get("expenseId") ?? ""),
-        amount: Number(formData.get("amount")),
-        paidDate: String(formData.get("paidDate") ?? ""),
-        // Cash leaves the box, everything else leaves the bank — but which
-        // one was used is what makes a bank statement reconcilable.
-        method: (formData.get("method") as
-          | "CASH" | "BANK_TRANSFER" | "INSTAPAY" | "CARD") ?? "BANK_TRANSFER",
-        reference: (formData.get("reference") as string) || null,
-      },
-      { userId: session.userId },
+    // A second press after a lost response returns this payment rather than
+    // paying the supplier twice.
+    const result = await formCommand("expenses.pay", formData, { userId: session.userId }, () =>
+      payExpense(
+        {
+          expenseId: String(formData.get("expenseId") ?? ""),
+          amount: Number(formData.get("amount")),
+          paidDate: String(formData.get("paidDate") ?? ""),
+          // Cash leaves the box, everything else leaves the bank — but which
+          // one was used is what makes a bank statement reconcilable.
+          method: (formData.get("method") as
+            | "CASH" | "BANK_TRANSFER" | "INSTAPAY" | "CARD") ?? "BANK_TRANSFER",
+          reference: (formData.get("reference") as string) || null,
+        },
+        { userId: session.userId },
+      ),
     );
 
     revalidatePath("/expenses");

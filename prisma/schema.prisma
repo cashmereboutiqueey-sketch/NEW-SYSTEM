@@ -23,6 +23,17 @@ datasource db {
   provider = "postgresql"
 }
 
+model CommandReceipt {
+  key         String   @id
+  operation   String
+  fingerprint String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("command_receipts")
+}
+
 // ===========================================================================
 // SYSTEM / AUTH / CONFIG
 // ===========================================================================
@@ -1014,10 +1025,37 @@ model GoodsReceipt {
   notes           String?
   createdAt       DateTime      @default(now())
 
-  lines GoodsReceiptLine[]
+  /// The supplier's open item for this delivery. Receiving credits accounts
+  /// payable with accepted quantity × landed cost, and this is that same
+  /// figure, held where it can be aged and paid. Without it the debt existed
+  /// on the ledger and nowhere a person paying suppliers would look.
+  entityId      String?
+  payableAmount Decimal   @default(0) @db.Decimal(18, 4)
+  paidAmount    Decimal   @default(0) @db.Decimal(18, 4)
+  /// Received date plus the supplier's credit days.
+  dueDate       DateTime? @db.Date
+
+  lines    GoodsReceiptLine[]
+  payments GoodsReceiptPayment[]
 
   @@index([receivedDate])
   @@map("goods_receipts")
+}
+
+/// Money paid to a supplier against a delivery.
+model GoodsReceiptPayment {
+  id             String       @id @default(cuid())
+  goodsReceiptId String
+  goodsReceipt   GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Restrict)
+  amount         Decimal      @db.Decimal(18, 4)
+  paidDate       DateTime     @db.Date
+  method         PayoutMethod @default(BANK_TRANSFER)
+  reference      String?
+  createdAt      DateTime     @default(now())
+
+  @@index([goodsReceiptId])
+  @@index([paidDate])
+  @@map("goods_receipt_payments")
 }
 
 /// Purchase price variance is captured here: the PO said one price, the
@@ -1573,6 +1611,9 @@ enum InventoryState {
   RAW_MATERIAL
   WIP
   FINISHED_GOODS
+  /// Brought back needing repair. Still the Brand's stock at its cost, but not
+  /// sellable until someone releases it as fit to go back on the floor.
+  AWAITING_REPAIR
 }
 
 enum MovementType {
@@ -1713,6 +1754,7 @@ model InventoryLot {
   updatedAt DateTime @updatedAt
 
   movements InventoryMovement[]
+  adjustmentRequests StockAdjustmentRequest[]
 
   // FIFO reads lots oldest-first within a material/variant and location, so
   // the index carries the sort key too.
@@ -1726,12 +1768,63 @@ model InventoryLot {
 /// The append-only stock ledger. Balances are always reconstructible from
 /// these rows, so a lot's `remainingQty` is a cache that must agree with the
 /// movements — never an independent source of truth.
+enum StockAdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// A counted difference too large to post on the counter's word alone.
+///
+/// The count is recorded here and nothing moves. A second person, signed in as
+/// themselves, approves this exact difference against this exact balance —
+/// and only then is it posted. Naming an approver on the counter's own form
+/// proved nothing: the name was whatever the form sent.
+model StockAdjustmentRequest {
+  id    String       @id @default(cuid())
+  lotId String
+  lot   InventoryLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  countedQty     Decimal  @db.Decimal(18, 4)
+  /// The balance the count was made against. Approval is refused if the lot
+  /// has moved since, because the difference would no longer be the one seen.
+  onBooksAtCount Decimal  @db.Decimal(18, 4)
+  difference     Decimal  @db.Decimal(18, 4)
+  value          Decimal  @db.Decimal(18, 4)
+  reason         String
+  countDate      DateTime @db.Date
+
+  requestedByUserId String?
+  status            StockAdjustmentStatus @default(PENDING)
+  decidedByUserId   String?
+  decidedAt         DateTime?
+  decisionNote      String?
+  createdAt         DateTime              @default(now())
+
+  @@index([status])
+  @@index([lotId])
+  @@map("stock_adjustment_requests")
+}
+
+/// Whether a movement put stock into its lot or took it out.
+enum MovementDirection {
+  IN
+  OUT
+}
+
+/// One leg of a stock change, on one lot.
+///
+/// A lot's balance is its inbound legs less its outbound legs, always. A
+/// transfer is therefore two movements — out of the lot it left, into the lot
+/// it arrived in — and a count that finds more than the books is an inbound
+/// adjustment, not an outbound one with a positive number.
 model InventoryMovement {
   id        String       @id @default(cuid())
   lotId     String
   lot       InventoryLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
   type      MovementType
-  /// Always positive. `type` says whether stock came in or went out.
+  direction MovementDirection
+  /// Always positive. `direction` says which way it moved.
   quantity  Decimal      @db.Decimal(18, 4)
   unitCost  Decimal      @db.Decimal(18, 4)
   totalCost Decimal      @db.Decimal(18, 4)
@@ -1886,6 +1979,10 @@ model IntegrationConnection {
   /// Verifies signed webhooks, so a forged payload cannot inject orders.
   webhookSecret String?
   apiVersion  String?
+  /// The version Shopify last actually answered with. When it differs from the
+  /// one asked for, the requested version has fallen out of support and the
+  /// shop is being served something nobody here has tested against.
+  servedApiVersion String?
 
   isActive     Boolean   @default(true)
   lastSyncedAt DateTime?
@@ -2036,6 +2133,35 @@ model IntegrationException {
 
   @@index([status, provider])
   @@map("integration_exceptions")
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+/// Every signed webhook delivery, kept before it is acted on.
+///
+/// Shopify delivers at least once and in no guaranteed order. Recording each
+/// delivery by its own id makes a repeat harmless and a failure recoverable:
+/// a delivery that could not be processed stays here to be replayed, rather
+/// than existing only as a line in a log that nobody reads.
+model ShopifyWebhookEvent {
+  id           String             @id @default(cuid())
+  connectionId String
+  /// Shopify's X-Shopify-Webhook-Id: the same for every retry of one delivery.
+  webhookId    String             @unique
+  topic        String
+  payload      Json
+  status       WebhookEventStatus @default(RECEIVED)
+  attempts     Int                @default(0)
+  lastError    String?
+  receivedAt   DateTime           @default(now())
+  processedAt  DateTime?
+
+  @@index([status])
+  @@map("shopify_webhook_events")
 }
 
 // ===========================================================================
@@ -2397,10 +2523,44 @@ model PosSession {
 
   orders SalesOrder[]
   consignmentSales ConsignmentSale[]
+  cashEvents TillCashEvent[]
 
   @@index([locationId, openedAt])
   @@index([closedByUserId])
   @@map("pos_sessions")
+}
+
+enum TillCashKind {
+  SALE
+  CONSIGNMENT_SALE
+  REFUND
+  DEPOSIT
+  COLLECTION
+  /// Paid out of the drawer: a consignor settled in cash.
+  PAYOUT
+}
+
+/// Cash into or out of a till's drawer, on the till whose drawer it was.
+///
+/// The drawer's expected balance at close is the opening float plus these,
+/// and nothing else. It used to be worked out from the cash payments on the
+/// till's own sales, which missed a consignor's garment sold for cash, cash
+/// handed back on a return, and deposits — and counted a debt collected next
+/// month against the till the goods were first sold on.
+model TillCashEvent {
+  id           String       @id @default(cuid())
+  posSessionId String
+  posSession   PosSession   @relation(fields: [posSessionId], references: [id], onDelete: Restrict)
+  kind         TillCashKind
+  /// Positive into the drawer, negative out of it.
+  amount       Decimal      @db.Decimal(18, 4)
+  /// The document the cash belongs to: an order, a return, a sale number.
+  reference    String
+  occurredAt   DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+
+  @@index([posSessionId])
+  @@map("till_cash_events")
 }
 
 model SalesOrder {

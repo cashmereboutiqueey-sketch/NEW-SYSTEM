@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { RequestIdField } from "@/components/request-id";
 import {
   addDepositAction,
   linkRunAction,
@@ -61,6 +62,7 @@ export function OrderActions({
   if (panel === "deposit") {
     return (
       <form action={depositAction} className="min-w-[15rem] space-y-2">
+        <RequestIdField state={depositState} />
         <input type="hidden" name="customOrderId" value={order.id} />
         <input type="hidden" name="paidOn" value={today} />
         <input
@@ -109,6 +111,7 @@ export function OrderActions({
   if (panel === "deliver") {
     return (
       <form action={deliverActionFn} className="min-w-[15rem] space-y-2">
+        <RequestIdField state={deliverState} />
         <input type="hidden" name="customOrderId" value={order.id} />
         <input type="hidden" name="deliveredOn" value={today} />
         <input type="hidden" name="channelId" value={channelId} />
@@ -141,6 +144,7 @@ export function OrderActions({
   if (panel === "cancel") {
     return (
       <form action={cancelActionFn} className="min-w-[15rem] space-y-2">
+        <RequestIdField state={cancelState} />
         <input type="hidden" name="customOrderId" value={order.id} />
         <input type="hidden" name="cancelledOn" value={today} />
         <input
