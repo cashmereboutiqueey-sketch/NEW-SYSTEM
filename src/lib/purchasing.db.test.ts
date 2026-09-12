@@ -3,7 +3,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { approvePurchaseOrder } from "./approvals";
-import { createPurchaseOrder, receiveGoods, PurchasingError } from "./purchasing";
+import { createPurchaseOrder, receiveGoods, payGoodsReceipt, PurchasingError } from "./purchasing";
+import { apAging, supplierStatements } from "./reports";
 import { dec } from "./money";
 
 /** Purchasing against a real database. */
@@ -19,7 +20,6 @@ let materialId: string;
 let day: Date;
 let userId: string;
 
-const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   factoryId = (await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } })).id;
@@ -42,6 +42,9 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.goodsReceiptPayment.deleteMany({});
+    await db.expensePayment.deleteMany({});
+    await db.expense.deleteMany({});
     await db.goodsReceiptLine.deleteMany({});
     await db.goodsReceipt.deleteMany({});
     await db.purchaseOrderLine.deleteMany({});
@@ -300,5 +303,132 @@ describe("receiving goods", () => {
       WHERE a."code" = '1310' AND e."status" = 'POSTED'
     `;
     expect(Number(raw.balance)).toBeGreaterThan(0);
+  });
+
+  it("records which delivery each lot came in on", async () => {
+    // The receipt line was created and the lot never pointed at it, so a
+    // roll of fabric could not be traced back to its delivery or price.
+    const po = await order();
+    const line = await db.purchaseOrderLine.findFirstOrThrow();
+    await receiveGoods(
+      {
+        purchaseOrderId: po.purchaseOrderId, receivedDate: day, locationId, entityId: factoryId,
+        lines: [{ purchaseOrderLineId: line.id, acceptedQty: 500, rejectedQty: 0, actualUnitPrice: 95 }],
+      },
+      { userId },
+    );
+
+    const lot = await db.inventoryLot.findFirstOrThrow({ include: { goodsReceiptLine: true } });
+    expect(lot.goodsReceiptLine?.purchaseOrderLineId).toBe(line.id);
+  });
+});
+
+async function payablesLedger(): Promise<number> {
+  const [row] = await db.$queryRaw<{ balance: string }[]>`
+    SELECT COALESCE(SUM(l."credit") - SUM(l."debit"), 0)::text AS balance
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE a."code" = '2110' AND e."status" = 'POSTED'
+  `;
+  return Number(row.balance);
+}
+
+/**
+ * What a delivery leaves owing.
+ *
+ * The audit's figures: 199,540 credited to payables for material received,
+ * and a payables aging showing nothing, because it read expenses only. The
+ * only way to pay a delivery was to raise an expense for it, which put the
+ * same debt on the books twice.
+ */
+describe("paying for deliveries", () => {
+  async function delivered(acceptedQty = 500, actualUnitPrice = 95) {
+    const po = await order();
+    const line = await db.purchaseOrderLine.findFirstOrThrow();
+    return receiveGoods(
+      {
+        purchaseOrderId: po.purchaseOrderId, receivedDate: day, locationId, entityId: factoryId,
+        invoiceRef: "INV-2201",
+        lines: [{ purchaseOrderLineId: line.id, acceptedQty, rejectedQty: 0, actualUnitPrice }],
+      },
+      { userId },
+    );
+  }
+
+  it("puts the delivery on the aging at exactly what payables were credited", async () => {
+    const receipt = await delivered();
+
+    const aging = await apAging();
+    const row = aging.rows.find((r) => r.id === receipt.goodsReceiptId);
+    expect(row?.kind).toBe("DELIVERY");
+    expect(Number(row!.outstanding)).toBeCloseTo(Number(receipt.payable), 2);
+    expect(Number(aging.total)).toBeCloseTo(await payablesLedger(), 2);
+    expect(Number(aging.unreconciled)).toBeCloseTo(0, 2);
+  });
+
+  it("names the supplier on their statement", async () => {
+    const receipt = await delivered();
+    const statements = await supplierStatements();
+    const mine = statements.find((s) => s.supplierId === supplierId);
+    expect(mine?.invoices.some((i) => i.id === receipt.goodsReceiptId && i.kind === "DELIVERY")).toBe(true);
+  });
+
+  it("dates the debt on the supplier's terms from the day the goods arrived", async () => {
+    const receipt = await delivered();
+    const supplier = await db.supplier.findUniqueOrThrow({ where: { id: supplierId } });
+    const row = await db.goodsReceipt.findUniqueOrThrow({ where: { id: receipt.goodsReceiptId } });
+    expect(row.dueDate?.toISOString().slice(0, 10)).toBe(
+      new Date(day.getTime() + supplier.creditDays * 86_400_000).toISOString().slice(0, 10),
+    );
+  });
+
+  it("pays part of it, and payables and the aging fall together", async () => {
+    const receipt = await delivered();
+    const owed = Number(receipt.payable);
+
+    const paid = await payGoodsReceipt(
+      { goodsReceiptId: receipt.goodsReceiptId, amount: 10_000, paidDate: day, method: "BANK_TRANSFER" },
+      { userId },
+    );
+
+    expect(Number(paid.outstanding)).toBeCloseTo(owed - 10_000, 2);
+    expect(await payablesLedger()).toBeCloseTo(owed - 10_000, 2);
+    const aging = await apAging();
+    expect(Number(aging.total)).toBeCloseTo(owed - 10_000, 2);
+    expect(Number(aging.unreconciled)).toBeCloseTo(0, 2);
+  });
+
+  it("drops off the aging once paid in full", async () => {
+    const receipt = await delivered();
+    await payGoodsReceipt(
+      { goodsReceiptId: receipt.goodsReceiptId, amount: Number(receipt.payable), paidDate: day },
+      { userId },
+    );
+    const aging = await apAging();
+    expect(aging.rows.some((r) => r.id === receipt.goodsReceiptId)).toBe(false);
+    expect(await payablesLedger()).toBeCloseTo(0, 2);
+  });
+
+  it("refuses to pay more than is owed", async () => {
+    const receipt = await delivered();
+    await expect(
+      payGoodsReceipt(
+        { goodsReceiptId: receipt.goodsReceiptId, amount: Number(receipt.payable) + 1, paidDate: day },
+        { userId },
+      ),
+    ).rejects.toThrow(/exceeds/i);
+  });
+
+  it("pays only once when two payments of the balance race", async () => {
+    const receipt = await delivered();
+    const pay = () =>
+      payGoodsReceipt(
+        { goodsReceiptId: receipt.goodsReceiptId, amount: Number(receipt.payable), paidDate: day },
+        { userId },
+      );
+    const outcomes = await Promise.allSettled([pay(), pay()]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    expect(await db.goodsReceiptPayment.count()).toBe(1);
   });
 });

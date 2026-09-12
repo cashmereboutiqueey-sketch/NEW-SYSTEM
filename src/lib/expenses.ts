@@ -2,11 +2,11 @@ import "server-only";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
-import { postEntry, LedgerError } from "./ledger";
+import { postEntry } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 import { expensePayable } from "./approvals";
 import { dec } from "./money";
-import { violatesSeparationOfDuties } from "@/core/permissions";
+import { command } from "./command";
 
 /**
  * Expense subledger.
@@ -74,109 +74,111 @@ export async function createExpense(
   input: CreateExpenseInput,
   ctx: AuditContext,
 ): Promise<{ expenseId: string; journalEntryNumber: string }> {
-  const data = createExpenseSchema.parse(input);
+  return command("expenses.createExpense", input, ctx, async () => {
+    const data = createExpenseSchema.parse(input);
 
-  if (data.dueDate < data.incurredDate) {
-    throw new ExpenseError("Due date cannot be before the date the cost was incurred.");
-  }
-
-  return db.$transaction(async (tx) => {
-    const category = await tx.costCategory.findUnique({
-      where: { id: data.costCategoryId },
-      select: { id: true, code: true, nameEn: true, entityId: true, accountId: true, isActive: true },
-    });
-
-    if (!category) throw new ExpenseError("Cost category not found.");
-    if (!category.isActive) throw new ExpenseError(`Cost category ${category.code} is inactive.`);
-    if (category.entityId !== data.entityId) {
-      // A factory category on a brand expense would put the cost in the wrong
-      // set of books and quietly corrupt both entities' P&L.
-      throw new ExpenseError(
-        `Cost category ${category.code} belongs to a different entity than this expense.`,
-      );
-    }
-    if (!category.accountId) {
-      throw new ExpenseError(
-        `Cost category ${category.code} has no ledger account, so the expense cannot be posted.`,
-      );
+    if (data.dueDate < data.incurredDate) {
+      throw new ExpenseError("Due date cannot be before the date the cost was incurred.");
     }
 
-    const period = await tx.fiscalPeriod.findFirst({
-      where: { startDate: { lte: data.incurredDate }, endDate: { gte: data.incurredDate } },
-    });
-    if (!period) {
-      throw new ExpenseError(
-        `No fiscal period covers ${data.incurredDate.toISOString().slice(0, 10)}.`,
-      );
-    }
-    if (period.status === "CLOSED") {
-      throw new ExpenseError(
-        `Period ${period.year}-${String(period.month).padStart(2, "0")} is closed. File the expense in an open period.`,
-      );
-    }
+    return db.$transaction(async (tx) => {
+      const category = await tx.costCategory.findUnique({
+        where: { id: data.costCategoryId },
+        select: { id: true, code: true, nameEn: true, entityId: true, accountId: true, isActive: true },
+      });
 
-    const amount = dec(data.amount);
+      if (!category) throw new ExpenseError("Cost category not found.");
+      if (!category.isActive) throw new ExpenseError(`Cost category ${category.code} is inactive.`);
+      if (category.entityId !== data.entityId) {
+        // A factory category on a brand expense would put the cost in the wrong
+        // set of books and quietly corrupt both entities' P&L.
+        throw new ExpenseError(
+          `Cost category ${category.code} belongs to a different entity than this expense.`,
+        );
+      }
+      if (!category.accountId) {
+        throw new ExpenseError(
+          `Cost category ${category.code} has no ledger account, so the expense cannot be posted.`,
+        );
+      }
 
-    const expense = await tx.expense.create({
-      data: {
-        createdByUserId: ctx.userId,
-        entityId: data.entityId,
-        costCategoryId: category.id,
-        fiscalPeriodId: period.id,
-        supplierId: data.supplierId ?? null,
-        description: data.description,
-        reference: data.reference ?? null,
-        amount: amount.toString(),
-        incurredDate: data.incurredDate,
-        dueDate: data.dueDate,
-        status: "UNPAID",
-      },
-    });
+      const period = await tx.fiscalPeriod.findFirst({
+        where: { startDate: { lte: data.incurredDate }, endDate: { gte: data.incurredDate } },
+      });
+      if (!period) {
+        throw new ExpenseError(
+          `No fiscal period covers ${data.incurredDate.toISOString().slice(0, 10)}.`,
+        );
+      }
+      if (period.status === "CLOSED") {
+        throw new ExpenseError(
+          `Period ${period.year}-${String(period.month).padStart(2, "0")} is closed. File the expense in an open period.`,
+        );
+      }
 
-    const payableAccountId = await accountIdByCode(tx, PAYABLE_ACCOUNT_CODE);
+      const amount = dec(data.amount);
 
-    const journal = await postEntry(tx, {
-      entityId: data.entityId,
-      postingDate: data.incurredDate,
-      sourceType: "EXPENSE",
-      sourceId: expense.id,
-      memo: data.description,
-      ctx,
-      lines: [
-        {
-          accountId: category.accountId,
-          debit: amount,
+      const expense = await tx.expense.create({
+        data: {
+          createdByUserId: ctx.userId,
           entityId: data.entityId,
-          costCenterId: data.costCenterId ?? null,
+          costCategoryId: category.id,
+          fiscalPeriodId: period.id,
           supplierId: data.supplierId ?? null,
           description: data.description,
+          reference: data.reference ?? null,
+          amount: amount.toString(),
+          incurredDate: data.incurredDate,
+          dueDate: data.dueDate,
+          status: "UNPAID",
         },
-        {
-          accountId: payableAccountId,
-          credit: amount,
-          entityId: data.entityId,
-          costCenterId: data.costCenterId ?? null,
-          supplierId: data.supplierId ?? null,
-          description: data.reference ?? data.description,
+      });
+
+      const payableAccountId = await accountIdByCode(tx, PAYABLE_ACCOUNT_CODE);
+
+      const journal = await postEntry(tx, {
+        entityId: data.entityId,
+        postingDate: data.incurredDate,
+        sourceType: "EXPENSE",
+        sourceId: expense.id,
+        memo: data.description,
+        ctx,
+        lines: [
+          {
+            accountId: category.accountId,
+            debit: amount,
+            entityId: data.entityId,
+            costCenterId: data.costCenterId ?? null,
+            supplierId: data.supplierId ?? null,
+            description: data.description,
+          },
+          {
+            accountId: payableAccountId,
+            credit: amount,
+            entityId: data.entityId,
+            costCenterId: data.costCenterId ?? null,
+            supplierId: data.supplierId ?? null,
+            description: data.reference ?? data.description,
+          },
+        ],
+      });
+
+      await writeAudit(tx, {
+        action: "EXPENSE_CREATED",
+        entityName: "Expense",
+        entityId: expense.id,
+        after: {
+          amount: amount.toString(),
+          category: category.code,
+          incurredDate: data.incurredDate,
+          dueDate: data.dueDate,
+          journalEntry: journal.entryNumber,
         },
-      ],
-    });
+        ctx,
+      });
 
-    await writeAudit(tx, {
-      action: "EXPENSE_CREATED",
-      entityName: "Expense",
-      entityId: expense.id,
-      after: {
-        amount: amount.toString(),
-        category: category.code,
-        incurredDate: data.incurredDate,
-        dueDate: data.dueDate,
-        journalEntry: journal.entryNumber,
-      },
-      ctx,
+      return { expenseId: expense.id, journalEntryNumber: journal.entryNumber };
     });
-
-    return { expenseId: expense.id, journalEntryNumber: journal.entryNumber };
   });
 }
 
@@ -204,105 +206,107 @@ export async function payExpense(
   input: PayExpenseInput,
   ctx: AuditContext,
 ): Promise<{ paymentId: string; journalEntryNumber: string; status: string }> {
-  const data = payExpenseSchema.parse(input);
+  return command("expenses.payExpense", input, ctx, async () => {
+    const data = payExpenseSchema.parse(input);
 
-  return db.$transaction(async (tx) => {
-    const expense = await tx.expense.findUnique({
-      where: { id: data.expenseId },
-      select: {
-        id: true, entityId: true, amount: true, paidAmount: true, status: true,
-        supplierId: true, description: true,
-      },
-    });
-    if (!expense) throw new ExpenseError("Expense not found.");
+    return db.$transaction(async (tx) => {
+      const expense = await tx.expense.findUnique({
+        where: { id: data.expenseId },
+        select: {
+          id: true, entityId: true, amount: true, paidAmount: true, status: true,
+          supplierId: true, description: true,
+        },
+      });
+      if (!expense) throw new ExpenseError("Expense not found.");
 
-    // Checked here rather than only on the approvals screen, so money cannot
-    // leave by a route that skips the inbox — an import, a script, a second
-    // screen somebody adds later.
-    const payable = await expensePayable(expense.id);
-    if (!payable.ok) throw new ExpenseError(payable.reason ?? "This expense cannot be paid yet.");
+      // Checked here rather than only on the approvals screen, so money cannot
+      // leave by a route that skips the inbox — an import, a script, a second
+      // screen somebody adds later.
+      const payable = await expensePayable(expense.id);
+      if (!payable.ok) throw new ExpenseError(payable.reason ?? "This expense cannot be paid yet.");
 
-    const outstanding = dec(expense.amount).minus(dec(expense.paidAmount));
-    const payment = dec(data.amount);
+      const outstanding = dec(expense.amount).minus(dec(expense.paidAmount));
+      const payment = dec(data.amount);
 
-    if (outstanding.lessThanOrEqualTo(0)) {
-      throw new ExpenseError("This expense is already fully paid.");
-    }
-    if (payment.greaterThan(outstanding)) {
-      throw new ExpenseError(
-        `Payment ${payment.toFixed(2)} exceeds the outstanding balance of ${outstanding.toFixed(2)}.`,
+      if (outstanding.lessThanOrEqualTo(0)) {
+        throw new ExpenseError("This expense is already fully paid.");
+      }
+      if (payment.greaterThan(outstanding)) {
+        throw new ExpenseError(
+          `Payment ${payment.toFixed(2)} exceeds the outstanding balance of ${outstanding.toFixed(2)}.`,
+        );
+      }
+
+      const newPaid = dec(expense.paidAmount).plus(payment);
+      const status = newPaid.greaterThanOrEqualTo(dec(expense.amount))
+        ? "PAID"
+        : "PARTIALLY_PAID";
+
+      const paymentRow = await tx.expensePayment.create({
+        data: {
+          expenseId: expense.id,
+          amount: payment.toString(),
+          paidDate: data.paidDate,
+          method: data.method,
+          reference: data.reference ?? null,
+        },
+      });
+
+      await tx.expense.update({
+        where: { id: expense.id },
+        data: { paidAmount: newPaid.toString(), status },
+      });
+
+      const payableAccountId = await accountIdByCode(tx, PAYABLE_ACCOUNT_CODE);
+      const fundingAccountId = await accountIdByCode(
+        tx,
+        // Cash leaves the box; everything else leaves the bank, whether it went
+        // by InstaPay, a card or a manual transfer. The method is kept so a
+        // statement can be reconciled line by line, but it does not change
+        // which account the money came out of.
+        data.method === "CASH" ? CASH_ACCOUNT_CODE : BANK_ACCOUNT_CODE,
       );
-    }
 
-    const newPaid = dec(expense.paidAmount).plus(payment);
-    const status = newPaid.greaterThanOrEqualTo(dec(expense.amount))
-      ? "PAID"
-      : "PARTIALLY_PAID";
+      const journal = await postEntry(tx, {
+        entityId: expense.entityId,
+        postingDate: data.paidDate,
+        sourceType: "EXPENSE_PAYMENT",
+        sourceId: paymentRow.id,
+        memo: `Payment — ${expense.description}`,
+        ctx,
+        lines: [
+          {
+            accountId: payableAccountId,
+            debit: payment,
+            entityId: expense.entityId,
+            supplierId: expense.supplierId,
+            description: data.reference ?? "Supplier payment",
+          },
+          {
+            accountId: fundingAccountId,
+            credit: payment,
+            entityId: expense.entityId,
+            supplierId: expense.supplierId,
+            description: data.reference ?? "Supplier payment",
+          },
+        ],
+      });
 
-    const paymentRow = await tx.expensePayment.create({
-      data: {
-        expenseId: expense.id,
-        amount: payment.toString(),
-        paidDate: data.paidDate,
-        method: data.method,
-        reference: data.reference ?? null,
-      },
-    });
-
-    await tx.expense.update({
-      where: { id: expense.id },
-      data: { paidAmount: newPaid.toString(), status },
-    });
-
-    const payableAccountId = await accountIdByCode(tx, PAYABLE_ACCOUNT_CODE);
-    const fundingAccountId = await accountIdByCode(
-      tx,
-      // Cash leaves the box; everything else leaves the bank, whether it went
-      // by InstaPay, a card or a manual transfer. The method is kept so a
-      // statement can be reconciled line by line, but it does not change
-      // which account the money came out of.
-      data.method === "CASH" ? CASH_ACCOUNT_CODE : BANK_ACCOUNT_CODE,
-    );
-
-    const journal = await postEntry(tx, {
-      entityId: expense.entityId,
-      postingDate: data.paidDate,
-      sourceType: "EXPENSE_PAYMENT",
-      sourceId: paymentRow.id,
-      memo: `Payment — ${expense.description}`,
-      ctx,
-      lines: [
-        {
-          accountId: payableAccountId,
-          debit: payment,
-          entityId: expense.entityId,
-          supplierId: expense.supplierId,
-          description: data.reference ?? "Supplier payment",
+      await writeAudit(tx, {
+        action: "EXPENSE_PAID",
+        entityName: "Expense",
+        entityId: expense.id,
+        before: { paidAmount: dec(expense.paidAmount).toString(), status: expense.status },
+        after: {
+          paidAmount: newPaid.toString(),
+          status,
+          payment: payment.toString(),
+          journalEntry: journal.entryNumber,
         },
-        {
-          accountId: fundingAccountId,
-          credit: payment,
-          entityId: expense.entityId,
-          supplierId: expense.supplierId,
-          description: data.reference ?? "Supplier payment",
-        },
-      ],
-    });
+        ctx,
+      });
 
-    await writeAudit(tx, {
-      action: "EXPENSE_PAID",
-      entityName: "Expense",
-      entityId: expense.id,
-      before: { paidAmount: dec(expense.paidAmount).toString(), status: expense.status },
-      after: {
-        paidAmount: newPaid.toString(),
-        status,
-        payment: payment.toString(),
-        journalEntry: journal.entryNumber,
-      },
-      ctx,
+      return { paymentId: paymentRow.id, journalEntryNumber: journal.entryNumber, status };
     });
-
-    return { paymentId: paymentRow.id, journalEntryNumber: journal.entryNumber, status };
   });
 }

@@ -3,6 +3,8 @@ import { requirePermission } from "@/lib/auth";
 import { apAging } from "@/lib/reports";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, dec } from "@/lib/money";
+import { can } from "@/core/permissions";
+import { PayForm } from "../pay-form";
 
 /**
  * أعمار الذمم الدائنة — what is owed, and how late it is.
@@ -13,11 +15,13 @@ import { formatMoney, dec } from "@/lib/money";
  * than reality until the supplier rings.
  */
 export default async function ApAgingPage() {
-  await requirePermission("expense:view");
+  const session = await requirePermission("expense:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
+  const mayPay = can(session.role, "payment:create");
 
   const aging = await apAging();
+  const reconciled = aging.unreconciled.abs().lessThan(0.01);
 
   const bucketLabels: Record<string, string> = ar
     ? {
@@ -72,6 +76,14 @@ export default async function ApAgingPage() {
         />
       </div>
 
+      {!reconciled && (
+        <p role="alert" className="mb-4 rounded-lg bg-bad/10 px-3 py-2 text-sm text-bad">
+          {ar
+            ? `حساب الموردين (2110) في الدفاتر ${formatMoney(aging.controlBalance, locale)}، والبنود المفتوحة هنا ${formatMoney(aging.total, locale)}. الفرق ${formatMoney(aging.unreconciled, locale)} اتقيّد على الموردين من غير بند يتدفع عليه، أو العكس — لازم يتفسّر قبل ما الرقم ده يتصدّق.`
+            : `Payables (2110) on the ledger are ${formatMoney(aging.controlBalance, locale)}; the open items here total ${formatMoney(aging.total, locale)}. The ${formatMoney(aging.unreconciled, locale)} between them was credited to suppliers with no item to pay it against, or the other way round — it needs explaining before either figure is believed.`}
+        </p>
+      )}
+
       <Card className="mb-4" title={ar ? "التوزيع" : "The spread"}>
         <DataTable
           headers={[ar ? "الفترة" : "Bucket", ar ? "المبلغ" : "Amount"]}
@@ -107,6 +119,7 @@ export default async function ApAgingPage() {
               ar ? "تاريخ السداد" : "Due",
               ar ? "التأخير" : "Late by",
               ar ? "المتبقي" : "Outstanding",
+              "",
             ]}
             rows={aging.rows.map((r) => [
               <span key={`${r.id}-d`}>{r.description}</span>,
@@ -131,6 +144,19 @@ export default async function ApAgingPage() {
               <span key={`${r.id}-o`} className="num font-medium">
                 {formatMoney(r.outstanding, locale)}
               </span>,
+              // Deliveries are paid here; expenses from the expenses screen,
+              // where their approval is also shown.
+              mayPay && r.kind === "DELIVERY" ? (
+                <PayForm
+                  key={`${r.id}-p`}
+                  ar={ar}
+                  goodsReceiptId={r.id}
+                  description={r.description}
+                  outstanding={Number(r.outstanding)}
+                />
+              ) : (
+                <span key={`${r.id}-p`} />
+              ),
             ])}
           />
         )}

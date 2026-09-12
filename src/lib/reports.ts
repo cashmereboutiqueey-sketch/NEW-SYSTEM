@@ -143,26 +143,86 @@ export async function trialBalance(
 }
 
 /**
+ * Every open supplier item: expenses, and deliveries not yet paid for.
+ *
+ * Both are credits to accounts payable, so both belong on any list of what
+ * is owed. Deliveries used to be missing from it, and a payables figure of
+ * zero sat beside a ledger owing suppliers for every roll of fabric received.
+ */
+async function openPayables(entityId: string | null) {
+  const [expenses, receipts, entities] = await Promise.all([
+    db.expense.findMany({
+      where: {
+        status: { in: ["UNPAID", "PARTIALLY_PAID"] },
+        ...(entityId ? { entityId } : {}),
+      },
+      include: { supplier: true, entity: true, costCategory: true },
+    }),
+    db.goodsReceipt.findMany({
+      where: {
+        paidAmount: { lt: db.goodsReceipt.fields.payableAmount },
+        ...(entityId ? { entityId } : {}),
+      },
+      include: { purchaseOrder: { include: { supplier: true } } },
+    }),
+    db.entity.findMany({ select: { id: true, nameEn: true, nameAr: true } }),
+  ]);
+  const entityById = new Map(entities.map((e) => [e.id, e]));
+
+  return [
+    ...expenses.map((e) => ({
+      kind: "EXPENSE" as const,
+      id: e.id,
+      description: e.description,
+      supplier: e.supplier,
+      entityEn: e.entity.nameEn,
+      entityAr: e.entity.nameAr,
+      categoryEn: e.costCategory.nameEn,
+      categoryAr: e.costCategory.nameAr,
+      amount: dec(e.amount),
+      paid: dec(e.paidAmount),
+      dueDate: e.dueDate,
+    })),
+    ...receipts.map((r) => {
+      const entity = r.entityId ? entityById.get(r.entityId) : undefined;
+      return {
+        kind: "DELIVERY" as const,
+        id: r.id,
+        description:
+          `${r.receiptNumber} — ${r.purchaseOrder.poNumber}` +
+          (r.invoiceRef ? ` (${r.invoiceRef})` : ""),
+        supplier: r.purchaseOrder.supplier,
+        entityEn: entity?.nameEn ?? "—",
+        entityAr: entity?.nameAr ?? "—",
+        categoryEn: "Materials received",
+        categoryAr: "خامات مستلمة",
+        amount: dec(r.payableAmount),
+        paid: dec(r.paidAmount),
+        dueDate: r.dueDate ?? r.receivedDate,
+      };
+    }),
+  ].sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
+}
+
+/**
  * Payables aged by due date, not by when the cost was incurred.
  *
  * A cost incurred in January and due in April is not overdue in February.
+ *
+ * Also checked against the payables account itself. The open items and
+ * account 2110 are two records of one debt; if they disagree, something was
+ * credited to payables that no open item accounts for, or the other way
+ * round, and the screen says so instead of presenting either as the answer.
  */
 export async function apAging(entityId: string | null = null, asOf: Date = new Date()) {
-  const expenses = await db.expense.findMany({
-    where: {
-      status: { in: ["UNPAID", "PARTIALLY_PAID"] },
-      ...(entityId ? { entityId } : {}),
-    },
-    include: { supplier: true, entity: true, costCategory: true },
-    orderBy: { dueDate: "asc" },
-  });
+  const items = await openPayables(entityId);
 
   const buckets = {
     current: dec(0), d1_30: dec(0), d31_60: dec(0), d61_90: dec(0), d90plus: dec(0),
   };
 
-  const rows = expenses.map((e) => {
-    const outstanding = dec(e.amount).minus(dec(e.paidAmount));
+  const rows = items.map((e) => {
+    const outstanding = e.amount.minus(e.paid);
     const daysOverdue = Math.floor(
       (asOf.getTime() - e.dueDate.getTime()) / 86_400_000,
     );
@@ -177,12 +237,13 @@ export async function apAging(entityId: string | null = null, asOf: Date = new D
     buckets[bucket] = buckets[bucket].plus(outstanding);
 
     return {
+      kind: e.kind,
       id: e.id,
       description: e.description,
       supplierEn: e.supplier?.nameEn ?? null,
       supplierAr: e.supplier?.nameAr ?? null,
-      entityEn: e.entity.nameEn,
-      entityAr: e.entity.nameAr,
+      entityEn: e.entityEn,
+      entityAr: e.entityAr,
       dueDate: e.dueDate,
       outstanding: outstanding.toString(),
       daysOverdue,
@@ -190,10 +251,26 @@ export async function apAging(entityId: string | null = null, asOf: Date = new D
     };
   });
 
+  const total = Object.values(buckets).reduce((s, v) => s.plus(v), dec(0));
+
+  const [control] = await db.$queryRaw<{ balance: string }[]>`
+    SELECT COALESCE(SUM(l."credit") - SUM(l."debit"), 0)::text AS balance
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE e."status" = 'POSTED' AND a."code" = '2110'
+      AND (${entityId}::text IS NULL OR l."entityId" = ${entityId})
+  `;
+  const controlBalance = dec(control.balance);
+
   return {
     rows,
     buckets,
-    total: Object.values(buckets).reduce((s, v) => s.plus(v), dec(0)),
+    total,
+    /** Account 2110 on the ledger. */
+    controlBalance,
+    /** Ledger less open items: anything but zero needs explaining. */
+    unreconciled: controlBalance.minus(total),
   };
 }
 
@@ -212,15 +289,7 @@ export async function supplierStatements(
   entityId: string | null = null,
   asOf: Date = new Date(),
 ) {
-  const expenses = await db.expense.findMany({
-    where: {
-      status: { not: "PAID" },
-      supplierId: { not: null },
-      ...(entityId ? { entityId } : {}),
-    },
-    include: { supplier: true, entity: true, costCategory: true },
-    orderBy: { dueDate: "asc" },
-  });
+  const expenses = (await openPayables(entityId)).filter((e) => e.supplier != null);
 
   type Row = {
     supplierId: string;
@@ -234,6 +303,7 @@ export async function supplierStatements(
     notYetDue: Decimal;
     oldestDue: Date | null;
     invoices: {
+      kind: "EXPENSE" | "DELIVERY";
       id: string;
       description: string;
       entity: string;
@@ -251,7 +321,7 @@ export async function supplierStatements(
   for (const e of expenses) {
     if (!e.supplier) continue;
 
-    const owed = dec(e.amount).minus(dec(e.paidAmount));
+    const owed = e.amount.minus(e.paid);
     if (owed.lessThanOrEqualTo(0)) continue;
 
     const row =
@@ -280,12 +350,13 @@ export async function supplierStatements(
     if (!row.oldestDue || e.dueDate < row.oldestDue) row.oldestDue = e.dueDate;
 
     row.invoices.push({
+      kind: e.kind,
       id: e.id,
       description: e.description,
-      entity: e.entity.nameAr || e.entity.nameEn,
-      category: e.costCategory.nameAr || e.costCategory.nameEn,
-      amount: dec(e.amount).toString(),
-      paid: dec(e.paidAmount).toString(),
+      entity: e.entityAr || e.entityEn,
+      category: e.categoryAr || e.categoryEn,
+      amount: e.amount.toString(),
+      paid: e.paid.toString(),
       outstanding: owed.toString(),
       dueDate: e.dueDate,
       daysLate,

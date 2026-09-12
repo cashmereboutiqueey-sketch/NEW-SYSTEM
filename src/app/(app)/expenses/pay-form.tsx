@@ -2,7 +2,9 @@
 
 import { useActionState, useState } from "react";
 import { payExpenseAction } from "./actions";
+import { payGoodsReceiptAction } from "../purchasing/actions";
 import type { FormState } from "@/components/entity-form";
+import { RequestIdField } from "@/components/request-id";
 
 const empty: FormState = {};
 const small =
@@ -19,19 +21,28 @@ const small =
  * InstaPay, a company card and a manual transfer all leave the same bank
  * account, and telling them apart is the difference between a bank statement
  * that reconciles line by line and one that has to be guessed at.
+ *
+ * Also pays a delivery, given `goodsReceiptId` instead: the supplier is owed
+ * for goods received just as for an expense, and paying it must not mean
+ * raising an expense that books the same debt twice.
  */
 export function PayForm({
   ar,
   expenseId,
+  goodsReceiptId,
   description,
   outstanding,
 }: {
   ar: boolean;
-  expenseId: string;
+  expenseId?: string;
+  goodsReceiptId?: string;
   description: string;
   outstanding: number;
 }) {
-  const [state, action, pending] = useActionState(payExpenseAction, empty);
+  const [state, action, pending] = useActionState(
+    goodsReceiptId ? payGoodsReceiptAction : payExpenseAction,
+    empty,
+  );
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(outstanding.toFixed(2));
 
@@ -53,7 +64,12 @@ export function PayForm({
 
   return (
     <form action={action} className="min-w-[15rem] space-y-2">
-      <input type="hidden" name="expenseId" value={expenseId} />
+      <RequestIdField state={state} />
+      {goodsReceiptId ? (
+        <input type="hidden" name="goodsReceiptId" value={goodsReceiptId} />
+      ) : (
+        <input type="hidden" name="expenseId" value={expenseId} />
+      )}
       <input type="hidden" name="paidDate" value={today} />
 
       <p className="text-xs text-ink-600">

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
-import { createSale, SalesError } from "./sales";
+import { createSale } from "./sales";
 import {
   collectPayment,
   customerBalances,

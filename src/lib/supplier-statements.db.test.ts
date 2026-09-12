@@ -6,7 +6,6 @@ import { createExpense, payExpense } from "./expenses";
 import { approveExpense } from "./approvals";
 import { supplierStatements, supplierCommitments } from "./reports";
 import { createPurchaseOrder } from "./purchasing";
-import { dec } from "./money";
 
 /**
  * What each supplier is owed.
@@ -30,7 +29,6 @@ let ownerId: string;
 let approverId: string;
 let day: Date;
 
-const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   const factory = await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } });

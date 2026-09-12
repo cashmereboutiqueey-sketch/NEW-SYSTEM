@@ -1,8 +1,10 @@
 import "server-only";
 import { db } from "./db";
-import { postEntry, nextDocumentNumber } from "./ledger";
+import { postEntry } from "./ledger";
 import { dec, roundMoney, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
+import { recordTillCash } from "./till";
 
 /**
  * What customers owe, and collecting it.
@@ -239,123 +241,138 @@ export async function collectPayment(
   },
   ctx: AuditContext,
 ): Promise<{ collected: string; stillOwed: string; orderNumber: string }> {
-  const amount = roundMoney(dec(input.amount));
-  if (amount.lessThanOrEqualTo(0)) {
-    throw new ReceivableError("A collection has to be more than zero.");
-  }
-
-  const order = await db.salesOrder.findUnique({
-    where: { id: input.salesOrderId },
-    include: { payments: { select: { amount: true } }, customer: true },
-  });
-  if (!order) throw new ReceivableError("Order not found.");
-  if (order.status === "CANCELLED") {
-    throw new ReceivableError("This order was cancelled; there is nothing to collect.");
-  }
-
-  if (!order.customerId) {
-    // Every part-paid sale is made in a customer's name, so an order with no
-    // customer cannot have a balance to collect. Checked rather than assumed,
-    // because the ledger lines below post against the customer.
-    throw new ReceivableError("This order is not in anybody's name.");
-  }
-  const customerId = order.customerId;
-
-  if (!order.entityId) {
-    // Which company's books the money lands in. An order without one cannot
-    // be posted anywhere, and guessing would put cash in the wrong entity.
-    throw new ReceivableError("This order is not attached to a company.");
-  }
-  const entityId = order.entityId;
-
-  const owed = outstandingOnOrder(order);
-  if (owed.lessThanOrEqualTo(0)) {
-    throw new ReceivableError(`${order.orderNumber} is already paid in full.`);
-  }
-  if (amount.greaterThan(owed)) {
-    // Taking more than is owed would leave the receivables account negative
-    // and the books saying the shop owes the customer.
-    throw new ReceivableError(
-      `${order.orderNumber} only has ${owed.toFixed(2)} outstanding; ${amount.toFixed(2)} is too much.`,
-    );
-  }
-
-  const fundsCode = COLLECTION_ACCOUNT[input.method];
-  if (!fundsCode) throw new ReceivableError(`Cannot collect by ${input.method}.`);
-
-  return db.$transaction(async (tx) => {
-    await tx.salesPayment.create({
-      data: {
-        salesOrderId: order.id,
-        method: input.method,
-        amount: amount.toString(),
-        fee: "0",
-        status: "COLLECTED",
-        collectedAt: input.collectedOn,
-        reference: input.reference ?? null,
-      },
-    });
-
-    const stillOwed = roundMoney(owed.minus(amount));
-
-    const [funds, receivable] = await Promise.all([
-      tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
-      tx.account.findUniqueOrThrow({ where: { code: ACC.RECEIVABLE }, select: { id: true } }),
-    ]);
-
-    await postEntry(tx, {
-      entityId,
-      postingDate: input.collectedOn,
-      sourceType: "PAYMENT",
-      sourceId: order.id,
-      memo: `Collected ${amount.toFixed(2)} against ${order.orderNumber}`,
-      ctx,
-      lines: [
-        {
-          accountId: funds.id,
-          debit: amount,
-          entityId,
-          customerId,
-          description: `Payment on account ${order.orderNumber}`,
-        },
-        {
-          accountId: receivable.id,
-          credit: amount,
-          entityId,
-          customerId,
-          description: `Settles ${order.orderNumber}`,
-        },
-      ],
-    });
-
-    // Cleared in full: the cash-conversion cycle wants to know when the money
-    // actually arrived, not when the sale was made.
-    if (stillOwed.lessThanOrEqualTo(0)) {
-      await tx.salesOrder.update({
-        where: { id: order.id },
-        data: { collectedDate: input.collectedOn, dueDate: null },
-      });
+  return command("receivables.collectPayment", input, ctx, async () => {
+    const amount = roundMoney(dec(input.amount));
+    if (amount.lessThanOrEqualTo(0)) {
+      throw new ReceivableError("A collection has to be more than zero.");
     }
 
-    await writeAudit(tx, {
-      action: "PAYMENT_COLLECTED",
-      entityName: "SalesOrder",
-      entityId: order.id,
-      after: {
-        orderNumber: order.orderNumber,
-        customer: order.customer?.name ?? null,
-        method: input.method,
-        amount: amount.toString(),
-        stillOwed: stillOwed.toString(),
-      },
-      ctx,
+    const order = await db.salesOrder.findUnique({
+      where: { id: input.salesOrderId },
+      include: { payments: { select: { amount: true } }, customer: true },
     });
+    if (!order) throw new ReceivableError("Order not found.");
+    if (order.status === "CANCELLED") {
+      throw new ReceivableError("This order was cancelled; there is nothing to collect.");
+    }
 
-    return {
-      collected: amount.toString(),
-      stillOwed: stillOwed.toString(),
-      orderNumber: order.orderNumber,
-    };
+    if (!order.customerId) {
+      // Every part-paid sale is made in a customer's name, so an order with no
+      // customer cannot have a balance to collect. Checked rather than assumed,
+      // because the ledger lines below post against the customer.
+      throw new ReceivableError("This order is not in anybody's name.");
+    }
+    const customerId = order.customerId;
+
+    if (!order.entityId) {
+      // Which company's books the money lands in. An order without one cannot
+      // be posted anywhere, and guessing would put cash in the wrong entity.
+      throw new ReceivableError("This order is not attached to a company.");
+    }
+    const entityId = order.entityId;
+
+    const owed = outstandingOnOrder(order);
+    if (owed.lessThanOrEqualTo(0)) {
+      throw new ReceivableError(`${order.orderNumber} is already paid in full.`);
+    }
+    if (amount.greaterThan(owed)) {
+      // Taking more than is owed would leave the receivables account negative
+      // and the books saying the shop owes the customer.
+      throw new ReceivableError(
+        `${order.orderNumber} only has ${owed.toFixed(2)} outstanding; ${amount.toFixed(2)} is too much.`,
+      );
+    }
+
+    const fundsCode = COLLECTION_ACCOUNT[input.method];
+    if (!fundsCode) throw new ReceivableError(`Cannot collect by ${input.method}.`);
+
+    return db.$transaction(async (tx) => {
+      await tx.salesPayment.create({
+        data: {
+          salesOrderId: order.id,
+          method: input.method,
+          amount: amount.toString(),
+          fee: "0",
+          status: "COLLECTED",
+          collectedAt: input.collectedOn,
+          reference: input.reference ?? null,
+        },
+      });
+
+      const stillOwed = roundMoney(owed.minus(amount));
+
+      // Cash paid off a debt goes into the drawer open where the customer is
+      // standing now — not the till the goods were first sold on, which may
+      // have been counted and closed a month ago.
+      if (input.method === "CASH") {
+        await recordTillCash(tx, {
+          locationId: order.locationId,
+          kind: "COLLECTION",
+          amount,
+          reference: order.orderNumber,
+          occurredAt: input.collectedOn,
+        });
+      }
+
+      const [funds, receivable] = await Promise.all([
+        tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
+        tx.account.findUniqueOrThrow({ where: { code: ACC.RECEIVABLE }, select: { id: true } }),
+      ]);
+
+      await postEntry(tx, {
+        entityId,
+        postingDate: input.collectedOn,
+        sourceType: "PAYMENT",
+        sourceId: order.id,
+        memo: `Collected ${amount.toFixed(2)} against ${order.orderNumber}`,
+        ctx,
+        lines: [
+          {
+            accountId: funds.id,
+            debit: amount,
+            entityId,
+            customerId,
+            description: `Payment on account ${order.orderNumber}`,
+          },
+          {
+            accountId: receivable.id,
+            credit: amount,
+            entityId,
+            customerId,
+            description: `Settles ${order.orderNumber}`,
+          },
+        ],
+      });
+
+      // Cleared in full: the cash-conversion cycle wants to know when the money
+      // actually arrived, not when the sale was made.
+      if (stillOwed.lessThanOrEqualTo(0)) {
+        await tx.salesOrder.update({
+          where: { id: order.id },
+          data: { collectedDate: input.collectedOn, dueDate: null },
+        });
+      }
+
+      await writeAudit(tx, {
+        action: "PAYMENT_COLLECTED",
+        entityName: "SalesOrder",
+        entityId: order.id,
+        after: {
+          orderNumber: order.orderNumber,
+          customer: order.customer?.name ?? null,
+          method: input.method,
+          amount: amount.toString(),
+          stillOwed: stillOwed.toString(),
+        },
+        ctx,
+      });
+
+      return {
+        collected: amount.toString(),
+        stillOwed: stillOwed.toString(),
+        orderNumber: order.orderNumber,
+      };
+    });
   });
 }
 
@@ -364,38 +381,40 @@ export async function setCreditTerms(
   input: { customerId: string; creditLimit: string; creditDays: number },
   ctx: AuditContext,
 ): Promise<void> {
-  const limit = dec(input.creditLimit);
-  if (limit.lessThan(0)) throw new ReceivableError("A credit limit cannot be negative.");
-  if (input.creditDays < 0) throw new ReceivableError("Payment terms cannot be negative.");
+  return command("receivables.setCreditTerms", input, ctx, async () => {
+    const limit = dec(input.creditLimit);
+    if (limit.lessThan(0)) throw new ReceivableError("A credit limit cannot be negative.");
+    if (input.creditDays < 0) throw new ReceivableError("Payment terms cannot be negative.");
 
-  const customer = await db.customer.findUnique({ where: { id: input.customerId } });
-  if (!customer) throw new ReceivableError("Customer not found.");
+    const customer = await db.customer.findUnique({ where: { id: input.customerId } });
+    if (!customer) throw new ReceivableError("Customer not found.");
 
-  const owed = await outstandingForCustomer(input.customerId);
-  if (limit.lessThan(owed)) {
-    // Allowing it would put them instantly over their own limit, and every
-    // check downstream would have to special-case that.
-    throw new ReceivableError(
-      `${customer.name} already owes ${owed.toFixed(2)}; the limit cannot be set below that.`,
-    );
-  }
+    const owed = await outstandingForCustomer(input.customerId);
+    if (limit.lessThan(owed)) {
+      // Allowing it would put them instantly over their own limit, and every
+      // check downstream would have to special-case that.
+      throw new ReceivableError(
+        `${customer.name} already owes ${owed.toFixed(2)}; the limit cannot be set below that.`,
+      );
+    }
 
-  await db.$transaction(async (tx) => {
-    await tx.customer.update({
-      where: { id: input.customerId },
-      data: { creditLimit: limit.toString(), creditDays: input.creditDays },
-    });
+    await db.$transaction(async (tx) => {
+      await tx.customer.update({
+        where: { id: input.customerId },
+        data: { creditLimit: limit.toString(), creditDays: input.creditDays },
+      });
 
-    await writeAudit(tx, {
-      action: "CREDIT_TERMS_SET",
-      entityName: "Customer",
-      entityId: input.customerId,
-      before: {
-        creditLimit: dec(customer.creditLimit).toString(),
-        creditDays: customer.creditDays,
-      },
-      after: { creditLimit: limit.toString(), creditDays: input.creditDays },
-      ctx,
+      await writeAudit(tx, {
+        action: "CREDIT_TERMS_SET",
+        entityName: "Customer",
+        entityId: input.customerId,
+        before: {
+          creditLimit: dec(customer.creditLimit).toString(),
+          creditDays: customer.creditDays,
+        },
+        after: { creditLimit: limit.toString(), creditDays: input.creditDays },
+        ctx,
+      });
     });
   });
 }
