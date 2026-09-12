@@ -21,7 +21,8 @@
     "test:all": "npm run test && npm run test:db",
     "db:demo": "tsx --conditions=react-server prisma/demo.ts",
     "db:fresh": "prisma migrate deploy && prisma generate && npm run db:seed && npm run db:demo",
-    "walkthrough": "tsx --conditions=react-server scripts/walkthrough.ts"
+    "walkthrough": "tsx --conditions=react-server scripts/walkthrough.ts",
+    "lint": "eslint ."
   },
   "repository": {
     "type": "git",
@@ -41,7 +42,7 @@
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",
     "jose": "^6.2.8",
-    "next": "^15.5.23",
+    "next": "^15.5.25",
     "pg": "^8.22.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -58,12 +59,23 @@
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.5.4",
     "dotenv": "^17.4.2",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.25",
     "postcss": "^8.5.26",
     "prisma": "^7.9.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.9",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "postcss": "$postcss",
+    "sharp": "^0.35.4",
+    "nanoid": "^3.3.18",
+    "fast-uri": "^3.1.6",
+    "mysql2": "^3.24.4",
+    "deepmerge-ts": "^8.0.2"
   },
   "private": true,
   "type": "module"
