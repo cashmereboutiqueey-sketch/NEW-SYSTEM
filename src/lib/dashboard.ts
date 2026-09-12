@@ -3,6 +3,7 @@ import { db } from "./db";
 import { cashConversionCycle, gmroi } from "@/core/working-capital";
 import { agingProfile, type Lot } from "@/core/fifo";
 import { groupProfitAndLoss } from "./consolidation";
+import { apAging } from "./reports";
 import { dec, safeDiv } from "./money";
 
 /**
@@ -37,13 +38,13 @@ export async function ownerDashboard(fiscalPeriodId: string | null = null) {
     WHERE e."status" = 'POSTED' AND a."code" = '2110'
   `;
 
-  const overdue = await db.expense.findMany({
-    where: { status: { in: ["UNPAID", "PARTIALLY_PAID"] }, dueDate: { lt: new Date() } },
-    select: { amount: true, paidAmount: true },
-  });
-  const overdueTotal = overdue.reduce(
-    (s, e) => s.plus(dec(e.amount).minus(dec(e.paidAmount))), dec(0),
-  );
+  // Past due across every open supplier item — deliveries as well as
+  // expenses, which is where most of a factory's payables actually are.
+  const payablesAging = await apAging();
+  const overdueTotal = payablesAging.buckets.d1_30
+    .plus(payablesAging.buckets.d31_60)
+    .plus(payablesAging.buckets.d61_90)
+    .plus(payablesAging.buckets.d90plus);
 
   // --- the factory's minute rate --------------------------------------
   const rate = await db.minuteRatePeriod.findFirst({
@@ -53,30 +54,63 @@ export async function ownerDashboard(fiscalPeriodId: string | null = null) {
   });
 
   // --- stock ------------------------------------------------------------
-  const lots = await db.inventoryLot.findMany({
-    where: { remainingQty: { gt: 0 } },
-    select: {
-      id: true, state: true, entityId: true, receivedDate: true, sequence: true,
-      remainingQty: true, unitCost: true,
-    },
-  });
+  // Summed in the database rather than by loading every lot: the answer is
+  // three numbers, and the lot table grows with every receipt.
+  const stateRows = await db.$queryRaw<{ state: string; value: string }[]>`
+    SELECT "state"::text AS state,
+           COALESCE(SUM("remainingQty" * "unitCost"), 0)::text AS value
+    FROM "inventory_lots"
+    WHERE "remainingQty" > 0
+    GROUP BY "state"
+  `;
+  const stateValue = (state: string) =>
+    dec(stateRows.find((r) => r.state === state)?.value ?? 0);
 
-  const valueOf = (filter: (l: (typeof lots)[number]) => boolean) =>
-    lots.filter(filter).reduce(
-      (s, l) => s.plus(dec(l.remainingQty).times(dec(l.unitCost))), dec(0),
-    );
+  const rawValue = stateValue("RAW_MATERIAL");
+  // Returns held for repair are still finished goods on the books.
+  const fgValue = stateValue("FINISHED_GOODS").plus(stateValue("AWAITING_REPAIR"));
 
-  const rawValue = valueOf((l) => l.state === "RAW_MATERIAL");
-  const wipValue = valueOf((l) => l.state === "WIP");
-  const fgValue = valueOf((l) => l.state === "FINISHED_GOODS");
+  // Work in progress comes from the ledger. Issuing to a run posts the
+  // material into WIP without creating a lot for it — a half-sewn dress is
+  // not a thing on a shelf — so counting WIP lots showed nothing while the
+  // books carried every metre on the cutting table.
+  const [wipRow] = await db.$queryRaw<{ balance: string }[]>`
+    SELECT COALESCE(SUM(l."debit") - SUM(l."credit"), 0)::text AS balance
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE e."status" = 'POSTED' AND a."reportingCategory" = 'INVENTORY_WIP'
+  `;
+  const wipValue = dec(wipRow.balance);
+
+  // The same figure rebuilt run by run: material issued to each open order,
+  // less what its garments have relieved at standard. A closed run has had its
+  // remainder cleared to variance, so only open ones carry any. If this and the
+  // ledger disagree, something reached WIP without a run behind it.
+  const [openRunsRow] = await db.$queryRaw<{ value: string }[]>`
+    SELECT COALESCE(SUM(issued.value - COALESCE(po."actualQty", 0) * cs."materialCost"), 0)::text AS value
+    FROM "production_orders" po
+    JOIN "cost_snapshots" cs ON cs."id" = po."costSnapshotId"
+    JOIN (
+      SELECT "productionOrderId", SUM("actualQty" * "unitCost") AS value
+      FROM "material_issues"
+      GROUP BY "productionOrderId"
+    ) issued ON issued."productionOrderId" = po."id"
+    WHERE po."status" IN ('CONFIRMED', 'IN_PRODUCTION')
+  `;
+  const wipByRun = dec(openRunsRow.value);
+
   const stockValue = rawValue.plus(wipValue).plus(fgValue);
 
-  const brandFgLots: Lot[] = lots
-    .filter((l) => l.state === "FINISHED_GOODS" && l.entityId === brand.id)
-    .map((l) => ({
-      id: l.id, receivedDate: l.receivedDate, sequence: l.sequence,
-      remainingQty: l.remainingQty.toString(), unitCost: l.unitCost.toString(),
-    }));
+  const brandFgLots: Lot[] = (
+    await db.inventoryLot.findMany({
+      where: { remainingQty: { gt: 0 }, state: "FINISHED_GOODS", entityId: brand.id },
+      select: { id: true, receivedDate: true, sequence: true, remainingQty: true, unitCost: true },
+    })
+  ).map((l) => ({
+    id: l.id, receivedDate: l.receivedDate, sequence: l.sequence,
+    remainingQty: l.remainingQty.toString(), unitCost: l.unitCost.toString(),
+  }));
   const aging = agingProfile(brandFgLots, new Date());
   const deadStock = aging["90+"].value;
 
@@ -103,15 +137,39 @@ export async function ownerDashboard(fiscalPeriodId: string | null = null) {
   );
 
   // --- sales -------------------------------------------------------------
-  const orders = await db.salesOrder.findMany({
-    where: { status: { not: "CANCELLED" } },
-    select: { netAmount: true, cogsAmount: true, source: true, lines: { select: { quantity: true } } },
-  });
-  const salesRevenue = orders.reduce((s, o) => s.plus(dec(o.netAmount)), dec(0));
-  const salesCogs = orders.reduce((s, o) => s.plus(dec(o.cogsAmount)), dec(0));
-  const unitsSold = orders.reduce(
-    (s, o) => s + o.lines.reduce((t, l) => t + l.quantity, 0), 0,
-  );
+  // Net of returns, and taken from the ledger rather than the order totals.
+  // An order's total is what was sold on the day; a dress sold and then
+  // brought back was still counted there, at full revenue and full margin,
+  // after the money had gone back to the customer.
+  //
+  //   net sales = goods revenue − discounts − returns
+  //   cost      = brand cost of goods, less what returns put back
+  const [salesRow] = await db.$queryRaw<{ revenue: string; discounts: string; returns: string; cogs: string }[]>`
+    SELECT
+      COALESCE(SUM(CASE WHEN a."code" IN ('4110','4120','4130','4140','4150')
+                        THEN l."credit" - l."debit" END), 0)::text AS revenue,
+      COALESCE(SUM(CASE WHEN a."code" = '4200' THEN l."debit" - l."credit" END), 0)::text AS discounts,
+      COALESCE(SUM(CASE WHEN a."code" = '4210' THEN l."debit" - l."credit" END), 0)::text AS returns,
+      COALESCE(SUM(CASE WHEN a."code" = '5300' THEN l."debit" - l."credit" END), 0)::text AS cogs
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE e."status" = 'POSTED' AND a."code" IN ('4110','4120','4130','4140','4150','4200','4210','5300')
+  `;
+  const salesReturns = dec(salesRow.returns);
+  const salesRevenue = dec(salesRow.revenue).minus(dec(salesRow.discounts)).minus(salesReturns);
+  const salesCogs = dec(salesRow.cogs);
+
+  const [unitsRow] = await db.$queryRaw<{ orders: number; sold: string; returned: string }[]>`
+    SELECT
+      (SELECT COUNT(*)::int FROM "sales_orders" WHERE "status" <> 'CANCELLED') AS orders,
+      (SELECT COALESCE(SUM(sl."quantity"), 0)::text
+         FROM "sales_order_lines" sl
+         JOIN "sales_orders" so ON so."id" = sl."salesOrderId"
+        WHERE so."status" <> 'CANCELLED') AS sold,
+      (SELECT COALESCE(SUM("quantity"), 0)::text FROM "returns") AS returned
+  `;
+  const unitsSold = Number(unitsRow.sold) - Number(unitsRow.returned);
 
   const [marketingRow] = await db.$queryRaw<{ spend: string }[]>`
     SELECT COALESCE(SUM(l."debit") - SUM(l."credit"), 0)::text AS spend
@@ -140,7 +198,14 @@ export async function ownerDashboard(fiscalPeriodId: string | null = null) {
         }
       : null,
 
-    stock: { raw: rawValue, wip: wipValue, finishedGoods: fgValue, total: stockValue },
+    stock: {
+      raw: rawValue,
+      wip: wipValue,
+      /** WIP rebuilt from open runs; differs from `wip` only if something is wrong. */
+      wipByRun,
+      finishedGoods: fgValue,
+      total: stockValue,
+    },
     aging,
     deadStock,
 
@@ -152,8 +217,9 @@ export async function ownerDashboard(fiscalPeriodId: string | null = null) {
       cogs: salesCogs,
       grossMargin,
       grossMarginPct: safeDiv(grossMargin, salesRevenue),
+      returns: salesReturns,
       unitsSold,
-      orders: orders.length,
+      orders: unitsRow.orders,
     },
 
     marketing: {

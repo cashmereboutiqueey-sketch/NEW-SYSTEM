@@ -102,7 +102,7 @@ export async function postEntry(
       entryNumber,
       entityId: input.entityId,
       fiscalPeriodId,
-      status,
+      status: status === "POSTED" ? "DRAFT" : status,
       postingDate: input.postingDate,
       memo: input.memo ?? null,
       sourceType: input.sourceType,
@@ -129,6 +129,10 @@ export async function postEntry(
     },
     select: { id: true, entryNumber: true },
   });
+
+  if (status === "POSTED") {
+    await tx.journalEntry.update({ where: { id: entry.id }, data: { status: "POSTED" } });
+  }
 
   await writeAudit(tx, {
     action: status === "POSTED" ? "JOURNAL_POSTED" : "JOURNAL_DRAFTED",
@@ -199,7 +203,7 @@ export async function reverseEntry(
       entryNumber,
       entityId: original.entityId,
       fiscalPeriodId,
-      status: "POSTED",
+      status: "DRAFT",
       postingDate: input.postingDate,
       memo: `Reversal of ${original.entryNumber}`,
       sourceType: "ADJUSTMENT",
@@ -228,6 +232,8 @@ export async function reverseEntry(
     },
     select: { id: true, entryNumber: true },
   });
+
+  await tx.journalEntry.update({ where: { id: reversal.id }, data: { status: "POSTED" } });
 
   await writeAudit(tx, {
     action: "JOURNAL_REVERSED",

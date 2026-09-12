@@ -8,6 +8,7 @@ import {
   completeProductionOrderAction,
 } from "./actions";
 import type { FormState } from "@/components/entity-form";
+import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
 
 const initial: FormState = {};
@@ -203,6 +204,7 @@ export function IssueMaterialForm({
 
   return (
     <form action={formAction} className="space-y-3">
+      <RequestIdField state={state} />
       <input type="hidden" name="productionOrderId" value={productionOrderId} />
       <input type="hidden" name="entityId" value={entityId} />
 
@@ -294,18 +296,23 @@ export function IssueMaterialForm({
 type Output = { variantId: string; goodQty: number };
 
 /**
- * Closing a run.
+ * Receiving a run's output, and closing it.
  *
  * The output is entered as a size curve because that is how a run actually
  * comes off the line — thirty black mediums, twelve cream extra-larges. Every
  * garment costs the same whatever its size, so this decides how the output is
  * labelled and counted, never what it cost.
+ *
+ * A run can deliver in parts: with "close the run" unticked the garments go
+ * into stock and the order stays open for the rest.
  */
 export function CompleteOrderForm({
   locale,
   productionOrderId,
   entityId,
   plannedQty,
+  goodSoFar,
+  canApproveShortfall,
   today,
   locations,
   variants,
@@ -314,12 +321,17 @@ export function CompleteOrderForm({
   productionOrderId: string;
   entityId: string;
   plannedQty: number;
+  /** Good garments already received on earlier deliveries. */
+  goodSoFar: number;
+  /** Whether this person may let a run through on less material than it made. */
+  canApproveShortfall: boolean;
   today: string;
   locations: { id: string; label: string }[];
   variants: { id: string; sku: string; label: string }[];
 }) {
   const [state, formAction, pending] = useActionState(completeProductionOrderAction, initial);
   const [outputs, setOutputs] = useState<Output[]>([]);
+  const [close, setClose] = useState(true);
   const ar = locale === "ar";
 
   const setQty = (variantId: string, goodQty: number) =>
@@ -334,6 +346,7 @@ export function CompleteOrderForm({
 
   return (
     <form action={formAction} className="space-y-3">
+      <RequestIdField state={state} />
       <input type="hidden" name="productionOrderId" value={productionOrderId} />
       <input type="hidden" name="entityId" value={entityId} />
       <input type="hidden" name="outputs" value={JSON.stringify(outputs)} />
@@ -398,21 +411,62 @@ export function CompleteOrderForm({
           />
         </div>
 
+        <label className="flex items-center gap-2 self-center text-sm">
+          <input
+            type="checkbox" name="close" checked={close}
+            onChange={(e) => setClose(e.target.checked)}
+            className="h-4 w-4 rounded border-ink-300"
+          />
+          <span>{ar ? "اقفل الأمر بعد الاستلام ده" : "Close the run after this"}</span>
+        </label>
+
         <div className="ms-auto text-end">
           <p className="text-xs text-ink-500">{ar ? "إجمالي سليم" : "Good total"}</p>
-          <p className="num text-lg font-semibold">{good}</p>
+          <p className="num text-lg font-semibold">
+            {good}
+            {goodSoFar > 0 && (
+              <span className="ms-1 text-xs font-normal text-ink-500">
+                {ar ? `+ ${goodSoFar} قبل كده` : `+ ${goodSoFar} earlier`}
+              </span>
+            )}
+          </p>
         </div>
 
-        <button type="submit" disabled={pending || good === 0} className={button}>
-          {pending ? (ar ? "جارٍ…" : "Working…") : ar ? "اقفل الأمر" : "Close the run"}
+        <button
+          type="submit"
+          disabled={pending || (good === 0 && !(close && goodSoFar > 0))}
+          className={button}
+        >
+          {pending
+            ? (ar ? "جارٍ…" : "Working…")
+            : close
+              ? (ar ? "اقفل الأمر" : "Close the run")
+              : (ar ? "استلم في المخزن" : "Receive into stock")}
         </button>
       </div>
 
-      {good > 0 && good !== plannedQty && (
+      {canApproveShortfall && (
+        <div>
+          <label className={label} htmlFor={`sf-${productionOrderId}`}>
+            {ar ? "سبب القماش الناقص (لو فيه)" : "Why less material was issued (if it was)"}
+          </label>
+          <input
+            id={`sf-${productionOrderId}`} name="shortfallReason" type="text"
+            placeholder={
+              ar
+                ? "سيبها فاضية إلا لو السيستم رفض الاستلام بسبب نقص خامات"
+                : "Leave blank unless the receipt was refused for missing material"
+            }
+            className={`${field} w-full`}
+          />
+        </div>
+      )}
+
+      {close && good + goodSoFar > 0 && good + goodSoFar !== plannedQty && (
         <p className="text-sm text-ink-500">
           {ar
-            ? `الأمر كان لـ ${plannedQty} وخرج ${good}. الفرق بيتسجّل كما هو.`
-            : `The order was for ${plannedQty} and ${good} came off. The difference is recorded as it stands.`}
+            ? `الأمر كان لـ ${plannedQty} وخرج ${good + goodSoFar}. الفرق بيتسجّل كما هو.`
+            : `The order was for ${plannedQty} and ${good + goodSoFar} came off. The difference is recorded as it stands.`}
         </p>
       )}
 

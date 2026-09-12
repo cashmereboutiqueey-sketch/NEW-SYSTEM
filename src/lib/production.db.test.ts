@@ -14,6 +14,7 @@ import {
   ProductionError,
 } from "./production";
 import { dec } from "./money";
+import { ownerDashboard } from "./dashboard";
 
 /** The production order lifecycle, against a real database. */
 
@@ -50,6 +51,10 @@ beforeAll(async () => {
       bomLines: { some: { material: { type: "FABRIC" } } },
     },
     include: { bomLines: { include: { material: true } }, variants: true },
+    // Ordered, so every run works against the same bill. Without this the
+    // database may hand back a different style each time, and a fabric
+    // quantity that covered one is short for the next.
+    orderBy: { code: "asc" },
   });
   styleId = style.id;
   variantId = style.variants[0].id;
@@ -333,6 +338,13 @@ describe("issuing material", () => {
   });
 });
 
+/** What the bill says a run of this size takes, for tests that are not about
+ * issuing too little: a round number under standard now reads as a shortfall. */
+async function standardFabricFor(plannedQty: number) {
+  const line = await db.styleBomLine.findFirstOrThrow({ where: { styleId, materialId: fabricId } });
+  return dec(line.standardConsumption).times(plannedQty).toFixed(4);
+}
+
 /** Confirms an order and issues fabric against it, ready to be closed. */
 async function runOrder(plannedQty: number, fabricIssued: string) {
   const { productionOrderId } = await draftOrder(plannedQty);
@@ -376,7 +388,7 @@ async function runOrder(plannedQty: number, fabricIssued: string) {
 describe("completing an order", () => {
 
   it("receives garments at the frozen snapshot cost", async () => {
-    const productionOrderId = await runOrder(100, "200");
+    const productionOrderId = await runOrder(100, await standardFabricFor(100));
     const result = await completeProductionOrder(
       {
         productionOrderId, outputs: [{ variantId, goodQty: 96 }], rejectedQty: 4,
@@ -401,7 +413,7 @@ describe("completing an order", () => {
   });
 
   it("reports a favourable cost variance when fewer garments are made", async () => {
-    const productionOrderId = await runOrder(100, "200");
+    const productionOrderId = await runOrder(100, await standardFabricFor(100));
     const result = await completeProductionOrder(
       {
         productionOrderId, outputs: [{ variantId, goodQty: 90 }],
@@ -417,7 +429,7 @@ describe("completing an order", () => {
   });
 
   it("reports the fabric variance against plan", async () => {
-    const productionOrderId = await runOrder(100, "500");
+    const productionOrderId = await runOrder(100, await standardFabricFor(250));
     const result = await completeProductionOrder(
       {
         productionOrderId, outputs: [{ variantId, goodQty: 100 }],
@@ -439,7 +451,7 @@ describe("completing an order", () => {
   });
 
   it("keeps the ledger balanced through the whole lifecycle", async () => {
-    const productionOrderId = await runOrder(100, "200");
+    const productionOrderId = await runOrder(100, await standardFabricFor(100));
     await completeProductionOrder(
       {
         productionOrderId, outputs: [{ variantId, goodQty: 100 }],
@@ -459,7 +471,7 @@ describe("completing an order", () => {
   });
 
   it("refuses to complete twice", async () => {
-    const productionOrderId = await runOrder(100, "200");
+    const productionOrderId = await runOrder(100, await standardFabricFor(100));
     await completeProductionOrder(
       { productionOrderId, outputs: [{ variantId, goodQty: 100 }], locationId, entityId: factoryId, completedDate: day },
       ctx,
@@ -470,6 +482,17 @@ describe("completing an order", () => {
         ctx,
       ),
     ).rejects.toThrow(/already complete/i);
+  });
+
+  it("refuses to receive output from a cancelled order", async () => {
+    const productionOrderId = await runOrder(100, await standardFabricFor(100));
+    await db.productionOrder.update({ where: { id: productionOrderId }, data: { status: "CANCELLED" } });
+    await expect(
+      completeProductionOrder(
+        { productionOrderId, outputs: [{ variantId, goodQty: 10 }], locationId, entityId: factoryId, completedDate: day },
+        ctx,
+      ),
+    ).rejects.toThrow(/cancelled and cannot receive output/i);
   });
 
   it("refuses to complete an order that was never confirmed", async () => {
@@ -483,6 +506,246 @@ describe("completing an order", () => {
   });
 });
 
+/** WIP on the factory's books, from posted entries only. */
+async function wipBalance(): Promise<number> {
+  const [row] = await db.$queryRaw<{ balance: string }[]>`
+    SELECT COALESCE(SUM(l."debit") - SUM(l."credit"), 0)::text AS balance
+    FROM "journal_lines" l
+    JOIN "journal_entries" e ON e."id" = l."journalEntryId"
+    JOIN "accounts" a ON a."id" = l."accountId"
+    WHERE a."code" = '1320' AND e."status" = 'POSTED'
+  `;
+  return Number(row.balance);
+}
+
+/**
+ * Output has to have material behind it.
+ *
+ * The audit's case: plan a hundred, issue a token amount of each material,
+ * then declare a hundred made. The old check asked only whether each material
+ * had been issued at all, so the run closed, stock appeared, and the missing
+ * fabric was nowhere.
+ */
+describe("material behind the output", () => {
+  /** A confirmed order with only a token amount of every material issued. */
+  async function tokenRun(plannedQty = 100) {
+    const { productionOrderId } = await draftOrder(plannedQty);
+    await confirmProductionOrder({ productionOrderId, minuteRatePeriodId: rateperiodId }, ctx);
+    for (const line of await plannedMaterials(productionOrderId)) {
+      if (line.materialId !== fabricId) {
+        const material = await db.material.findUniqueOrThrow({ where: { id: line.materialId } });
+        await receiveMaterial(
+          {
+            materialId: line.materialId, locationId, entityId: factoryId,
+            quantity: "10", unitCost: material.basePrice.toString(), receivedDate: day,
+          },
+          ctx,
+        );
+      }
+      await issueForOrder(
+        {
+          productionOrderId, materialId: line.materialId, locationId, entityId: factoryId,
+          quantity: "1", issueDate: day, piecesCut: plannedQty,
+        },
+        ctx,
+      );
+    }
+    return productionOrderId;
+  }
+
+  it("refuses output the issued material could not have made", async () => {
+    const productionOrderId = await tokenRun();
+    await expect(
+      completeProductionOrder(
+        { productionOrderId, outputs: [{ variantId, goodQty: 100 }], locationId, entityId: factoryId, completedDate: day },
+        ctx,
+      ),
+    ).rejects.toThrow(/Not enough material was issued for 100 garments/i);
+
+    expect(await db.inventoryLot.count({ where: { variantId } })).toBe(0);
+  });
+
+  it("counts rejects against the material too", async () => {
+    // Exactly enough fabric for 100 at standard, then 100 good and 20
+    // rejected claimed.
+    const line = await db.styleBomLine.findFirstOrThrow({ where: { styleId, materialId: fabricId } });
+    const productionOrderId = await runOrder(100, dec(line.standardConsumption).times(100).toFixed(4));
+    await expect(
+      completeProductionOrder(
+        {
+          productionOrderId, outputs: [{ variantId, goodQty: 100 }], rejectedQty: 20,
+          locationId, entityId: factoryId, completedDate: day,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/for 120 garments/i);
+  });
+
+  it("lets an approved shortfall through and records why", async () => {
+    const productionOrderId = await tokenRun();
+    await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 100 }], locationId, entityId: factoryId,
+        completedDate: day, shortfallReason: "Fabric cut from run 2026-041's remnant, issued there",
+      },
+      ctx,
+    );
+
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { entityId: productionOrderId, action: "PRODUCTION_ORDER_COMPLETED" },
+    });
+    const after = audit.after as { shortfallReason: string; materialShortfalls: unknown[] };
+    expect(after.shortfallReason).toMatch(/remnant/);
+    expect(after.materialShortfalls.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A run that delivers in parts.
+ *
+ * 72 of 100 received is 72 in stock and 28 still owed, with the material for
+ * those 28 still sitting in work in progress. It used to close the order and
+ * clear that material to variance on the spot.
+ */
+describe("partial delivery", () => {
+  it("keeps the order open, and its remaining material in WIP", async () => {
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
+    const wipBefore = await wipBalance();
+
+    const first = await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 72 }], locationId, entityId: factoryId,
+        completedDate: day, close: false,
+      },
+      ctx,
+    );
+    expect(first.closed).toBe(false);
+
+    const order = await db.productionOrder.findUniqueOrThrow({
+      where: { id: productionOrderId }, include: { costSnapshot: true },
+    });
+    expect(order.status).toBe("IN_PRODUCTION");
+    expect(order.actualQty).toBe(72);
+
+    // Only the 72 were relieved; nothing went to variance.
+    const relieved = 72 * Number(order.costSnapshot!.materialCost);
+    expect(await wipBalance()).toBeCloseTo(wipBefore - relieved, 2);
+    expect(
+      await db.journalEntry.count({ where: { sourceId: productionOrderId, memo: { startsWith: "Material cost variance" } } }),
+    ).toBe(0);
+  });
+
+  it("shows the dashboard the WIP the books carry, traced to the open run", async () => {
+    // The audit's case: material issued to an unfinished run, no WIP lots at
+    // all, and a dashboard reading zero against a ledger carrying it.
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
+    await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 40 }], locationId, entityId: factoryId,
+        completedDate: day, close: false,
+      },
+      ctx,
+    );
+
+    const d = await ownerDashboard();
+    expect(Number(d.stock.wip)).toBeGreaterThan(0);
+    expect(Number(d.stock.wip)).toBeCloseTo(await wipBalance(), 2);
+    expect(Number(d.stock.wipByRun)).toBeCloseTo(Number(d.stock.wip), 2);
+  });
+
+  it("closes on the second delivery with the run's full totals and WIP cleared", async () => {
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
+    await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 72 }], locationId, entityId: factoryId,
+        completedDate: day, close: false,
+      },
+      ctx,
+    );
+    const second = await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 28 }], locationId, entityId: factoryId,
+        completedDate: day,
+      },
+      ctx,
+    );
+
+    expect(second.closed).toBe(true);
+    expect(second.totalGoodQty).toBe(100);
+    const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });
+    expect(order.status).toBe("COMPLETED");
+    expect(order.actualQty).toBe(100);
+    // The run finished, so nothing of it is left in work in progress.
+    expect(await wipBalance()).toBeCloseTo(0, 2);
+    expect(await onHandOf(variantId)).toBe(100);
+  });
+
+  it("closes a run short without new garments, clearing what was left", async () => {
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
+    await completeProductionOrder(
+      {
+        productionOrderId, outputs: [{ variantId, goodQty: 72 }], locationId, entityId: factoryId,
+        completedDate: day, close: false,
+      },
+      ctx,
+    );
+    await completeProductionOrder(
+      { productionOrderId, outputs: [], locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    );
+
+    const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });
+    expect(order.status).toBe("COMPLETED");
+    expect(order.actualQty).toBe(72);
+    expect(await wipBalance()).toBeCloseTo(0, 2);
+
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { entityId: productionOrderId, action: "PRODUCTION_ORDER_COMPLETED" },
+    });
+    expect((audit.after as { closedShort: number }).closedShort).toBe(28);
+  });
+});
+
+async function onHandOf(id: string): Promise<number> {
+  const lots = await db.inventoryLot.findMany({ where: { variantId: id } });
+  return lots.reduce((s, l) => s + Number(l.remainingQty), 0);
+}
+
+/**
+ * Confirming freezes the bill of materials a run is held to, not only its
+ * cost. Editing the style for next season must not change what this run is
+ * required to consume.
+ */
+describe("the frozen bill", () => {
+  it("ignores a material added to the style after confirmation", async () => {
+    const { productionOrderId } = await draftOrder(100);
+    await confirmProductionOrder({ productionOrderId, minuteRatePeriodId: rateperiodId }, ctx);
+    const before = await plannedMaterials(productionOrderId);
+
+    const inBill = new Set(before.map((l) => l.materialId));
+    const extra = await db.material.findFirstOrThrow({ where: { id: { notIn: [...inBill] } } });
+    const added = await db.styleBomLine.create({
+      data: { styleId, materialId: extra.id, standardConsumption: "2" },
+    });
+    try {
+      const after = await plannedMaterials(productionOrderId);
+      expect(after.map((l) => l.materialId).sort()).toEqual([...inBill].sort());
+
+      await expect(
+        issueForOrder(
+          {
+            productionOrderId, materialId: extra.id, locationId, entityId: factoryId,
+            quantity: "1", issueDate: day,
+          },
+          ctx,
+        ),
+      ).rejects.toThrow(/not in this style's bill of materials/i);
+    } finally {
+      await db.styleBomLine.delete({ where: { id: added.id } });
+    }
+  });
+});
+
 /**
  * A run of a dress is cut in a curve: so many mediums, so many larges. What
  * comes off the line has to be booked that way, because that is how it will be
@@ -490,7 +753,7 @@ describe("completing an order", () => {
  */
 describe("output as a size curve", () => {
   it("books a lot per SKU and totals them as the order's output", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     const curve = [40, 30, 20].slice(0, allVariantIds.length);
     const outputs = curve.map((goodQty, i) => ({ variantId: allVariantIds[i], goodQty }));
     const expected = outputs.reduce((s, o) => s + o.goodQty, 0);
@@ -515,7 +778,7 @@ describe("output as a size curve", () => {
   });
 
   it("costs every size the same, because the snapshot costs the style", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     const outputs = allVariantIds.slice(0, 2).map((variantId, i) => ({
       variantId, goodQty: i === 0 ? 60 : 30,
     }));
@@ -541,7 +804,7 @@ describe("output as a size curve", () => {
   });
 
   it("keeps the ledger balanced when output is split", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     await completeProductionOrder(
       {
         productionOrderId,
@@ -564,7 +827,7 @@ describe("output as a size curve", () => {
   });
 
   it("refuses the same SKU listed twice", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     await expect(
       completeProductionOrder(
         {
@@ -581,7 +844,7 @@ describe("output as a size curve", () => {
   });
 
   it("refuses a SKU belonging to another style", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     const stranger = await db.variant.findFirstOrThrow({
       where: { styleId: { not: styleId } },
     });
@@ -599,7 +862,7 @@ describe("output as a size curve", () => {
   });
 
   it("refuses fractions of a garment", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     await expect(
       completeProductionOrder(
         {
@@ -613,7 +876,7 @@ describe("output as a size curve", () => {
   });
 
   it("refuses an empty curve", async () => {
-    const productionOrderId = await runOrder(100, "300");
+    const productionOrderId = await runOrder(100, await standardFabricFor(150));
     await expect(
       completeProductionOrder(
         {

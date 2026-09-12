@@ -5,7 +5,7 @@ import { lineEfficiencyReport } from "@/lib/factory-floor";
 import { loggableRuns, activeLines } from "@/lib/stage-logs";
 import { StageForm } from "./stage-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
-import { formatNumber, formatPercent, dec, safeDiv } from "@/lib/money";
+import { formatNumber, formatPercent, safeDiv } from "@/lib/money";
 
 /**
  * كفاءة الخط — earned minutes over minutes paid for.

@@ -264,6 +264,8 @@ export default async function ProductionPage() {
                     productionOrderId={o.id}
                     entityId={factory.id}
                     plannedQty={o.plannedQty}
+                    goodSoFar={o.actualQty ?? 0}
+                    canApproveShortfall={mayConfirm}
                     today={today}
                     locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
                     variants={o.style.variants.map((v) => ({

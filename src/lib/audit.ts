@@ -16,6 +16,8 @@ import type { Prisma } from "@/generated/prisma/client";
 
 export type AuditContext = {
   userId: string | null;
+  /** Stable identity of a user's submission, retained across transport retries. */
+  requestId?: string;
   /** Free-text justification. Required for corrections and overrides. */
   reason?: string | null;
 };

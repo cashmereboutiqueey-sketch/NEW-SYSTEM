@@ -91,8 +91,21 @@ export default async function DashboardPage() {
           <StatTile
             label={ar ? "رأس المال في المخزون" : "Capital in stock"}
             value={formatMoney(d.stock.total, locale)}
-            tone={d.stock.total.greaterThan(0) ? "warn" : "neutral"}
-            hint={`${formatMoney(d.stock.raw, locale)} ${ar ? "خامات" : "raw"}`}
+            tone={
+              !d.stock.wip.minus(d.stock.wipByRun).abs().lessThan(0.01)
+                ? "bad"
+                : d.stock.total.greaterThan(0) ? "warn" : "neutral"
+            }
+            hint={
+              `${formatMoney(d.stock.raw, locale)} ${ar ? "خامات" : "raw"} · ` +
+              `${formatMoney(d.stock.wip, locale)} ${ar ? "تحت التشغيل" : "in WIP"}` +
+              // WIP on the books that no open run accounts for.
+              (d.stock.wip.minus(d.stock.wipByRun).abs().lessThan(0.01)
+                ? ""
+                : ar
+                  ? ` — ${formatMoney(d.stock.wip.minus(d.stock.wipByRun), locale)} مش متوزّع على أوامر مفتوحة`
+                  : ` — ${formatMoney(d.stock.wip.minus(d.stock.wipByRun), locale)} not traced to an open run`)
+            }
           />
         ))}
       </div>
@@ -197,9 +210,16 @@ export default async function DashboardPage() {
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {tile("/sales", (
           <StatTile
-            label={ar ? "إيراد المبيعات" : "Sales revenue"}
+            label={ar ? "صافي المبيعات" : "Net sales"}
             value={formatMoney(d.sales.revenue, locale)}
-            hint={`${formatNumber(d.sales.unitsSold, locale)} ${ar ? "قطعة" : "units"}`}
+            hint={
+              `${formatNumber(d.sales.unitsSold, locale)} ${ar ? "قطعة" : "units"}` +
+              (d.sales.returns.greaterThan(0)
+                ? ar
+                  ? ` · بعد ${formatMoney(d.sales.returns, locale)} مرتجعات`
+                  : ` · after ${formatMoney(d.sales.returns, locale)} of returns`
+                : "")
+            }
           />
         ))}
         {tile("/sales", (

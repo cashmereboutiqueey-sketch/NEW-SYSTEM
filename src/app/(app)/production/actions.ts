@@ -13,13 +13,15 @@ import { InventoryError } from "@/lib/inventory";
 import { CostingError } from "@/lib/costing";
 import { LedgerError } from "@/lib/ledger";
 import type { FormState } from "@/components/entity-form";
+import { formCommand, CommandError } from "@/lib/command";
 
 function toMessage(error: unknown): string {
   if (
     error instanceof ProductionError ||
     error instanceof InventoryError ||
     error instanceof CostingError ||
-    error instanceof LedgerError
+    error instanceof LedgerError ||
+    error instanceof CommandError
   ) {
     return error.message;
   }
@@ -96,19 +98,23 @@ export async function issueForOrderAction(
   try {
     const session = await authorize("production:record");
 
-    const result = await issueForOrder(
-      {
-        productionOrderId: String(formData.get("productionOrderId") ?? ""),
-        materialId: String(formData.get("materialId") ?? ""),
-        locationId: String(formData.get("locationId") ?? ""),
-        entityId: String(formData.get("entityId") ?? ""),
-        quantity: String(formData.get("quantity") ?? ""),
-        issueDate: new Date(String(formData.get("issueDate") ?? "")),
-        piecesCut: formData.get("piecesCut")
-          ? Number(formData.get("piecesCut"))
-          : undefined,
-      },
-      { userId: session.userId },
+    // A second press after a lost response returns this issue rather than
+    // taking the fabric off the shelf twice.
+    const result = await formCommand("production.issue", formData, { userId: session.userId }, () =>
+      issueForOrder(
+        {
+          productionOrderId: String(formData.get("productionOrderId") ?? ""),
+          materialId: String(formData.get("materialId") ?? ""),
+          locationId: String(formData.get("locationId") ?? ""),
+          entityId: String(formData.get("entityId") ?? ""),
+          quantity: String(formData.get("quantity") ?? ""),
+          issueDate: new Date(String(formData.get("issueDate") ?? "")),
+          piecesCut: formData.get("piecesCut")
+            ? Number(formData.get("piecesCut"))
+            : undefined,
+        },
+        { userId: session.userId },
+      ),
     );
 
     revalidatePath("/production");
@@ -136,23 +142,43 @@ export async function completeProductionOrderAction(
     const session = await authorize("production:record");
 
     const outputs = JSON.parse(String(formData.get("outputs") ?? "[]"));
+    const close = formData.get("close") != null;
 
-    const result = await completeProductionOrder(
-      {
-        productionOrderId: String(formData.get("productionOrderId") ?? ""),
-        outputs,
-        rejectedQty: Number(formData.get("rejectedQty") ?? 0),
-        locationId: String(formData.get("locationId") ?? ""),
-        entityId: String(formData.get("entityId") ?? ""),
-        completedDate: new Date(String(formData.get("completedDate") ?? "")),
-        actualTotalMinutes: (formData.get("actualTotalMinutes") as string) || undefined,
-      },
-      { userId: session.userId },
+    // Letting a run through on less material than it made is an approved
+    // variance, not a floor decision: it takes the right to confirm costs.
+    const shortfallReason = String(formData.get("shortfallReason") ?? "").trim() || null;
+    if (shortfallReason) await authorize("production:confirm_cost");
+
+    // A second press after a lost response returns this completion rather
+    // than putting the same run into stock twice.
+    const result = await formCommand("production.complete", formData, { userId: session.userId }, () =>
+      completeProductionOrder(
+        {
+          productionOrderId: String(formData.get("productionOrderId") ?? ""),
+          outputs,
+          rejectedQty: Number(formData.get("rejectedQty") ?? 0),
+          locationId: String(formData.get("locationId") ?? ""),
+          entityId: String(formData.get("entityId") ?? ""),
+          completedDate: new Date(String(formData.get("completedDate") ?? "")),
+          actualTotalMinutes: (formData.get("actualTotalMinutes") as string) || undefined,
+          close,
+          shortfallReason,
+        },
+        { userId: session.userId },
+      ),
     );
 
     revalidatePath("/production");
     revalidatePath("/inventory");
     revalidatePath("/transfers");
+
+    if (!result.closed) {
+      return {
+        success:
+          `${result.goodQty} garments into stock on ${result.orderNumber}, ` +
+          `${result.totalGoodQty} so far. The order stays open for the rest.`,
+      };
+    }
 
     const fabric = Number(result.fabricVariance);
     return {

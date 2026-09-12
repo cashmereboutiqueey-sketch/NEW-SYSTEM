@@ -64,7 +64,13 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
-/** Writes an entry and its lines in one transaction, as a caller would. */
+/**
+ * Writes an entry and its lines in one transaction, as a caller would.
+ *
+ * A posted entry is written as a draft, given its lines, then posted — the
+ * only order the database accepts, because lines cannot be added to an entry
+ * that is already posted.
+ */
 async function postEntry(opts: {
   status: "DRAFT" | "PENDING_REVIEW" | "POSTED";
   fiscalPeriodId?: string;
@@ -77,24 +83,36 @@ async function postEntry(opts: {
         entryNumber,
         entityId: factoryId,
         fiscalPeriodId: opts.fiscalPeriodId ?? openPeriodId,
-        status: opts.status,
+        status: opts.status === "POSTED" ? "DRAFT" : opts.status,
         postingDate: new Date(),
       },
     });
-    for (const [i, l] of opts.lines.entries()) {
-      await tx.journalLine.create({
-        data: {
-          journalEntryId: entry.id,
-          lineNumber: i + 1,
-          accountId: l.accountId,
-          debit: l.debit ?? "0",
-          credit: l.credit ?? "0",
-          entityId: factoryId,
-        },
-      });
+    await addLines(tx, entry.id, opts.lines);
+    if (opts.status === "POSTED") {
+      return tx.journalEntry.update({ where: { id: entry.id }, data: { status: "POSTED" } });
     }
     return entry;
   });
+}
+
+async function addLines(
+  tx: Pick<typeof db, "journalLine">,
+  journalEntryId: string,
+  lines: { accountId: string; debit?: string; credit?: string }[],
+  firstLineNumber = 1,
+) {
+  for (const [i, l] of lines.entries()) {
+    await tx.journalLine.create({
+      data: {
+        journalEntryId,
+        lineNumber: firstLineNumber + i,
+        accountId: l.accountId,
+        debit: l.debit ?? "0",
+        credit: l.credit ?? "0",
+        entityId: factoryId,
+      },
+    });
+  }
 }
 
 describe("debit = credit", () => {
@@ -222,6 +240,35 @@ describe("posted entries are immutable", () => {
     );
   });
 
+  it("refuses to add lines to a posted entry, even a balanced pair", async () => {
+    // The gap the audit found: updates and deletes were refused, inserts were
+    // not, and a balanced pair passes the balance check. Books could be
+    // rewritten after the fact and still add up.
+    const entry = await postEntry({
+      status: "POSTED",
+      lines: [
+        { accountId: debitAccountId, debit: "1000" },
+        { accountId: creditAccountId, credit: "1000" },
+      ],
+    });
+
+    await expect(
+      db.$transaction((tx) =>
+        addLines(
+          tx,
+          entry.id,
+          [
+            { accountId: debitAccountId, debit: "750" },
+            { accountId: creditAccountId, credit: "750" },
+          ],
+          3,
+        ),
+      ),
+    ).rejects.toThrow(/Cannot append lines to a posted journal/i);
+
+    expect(await db.journalLine.count({ where: { journalEntryId: entry.id } })).toBe(2);
+  });
+
   it("allows a draft to be edited and deleted", async () => {
     const entry = await postEntry({
       status: "DRAFT",
@@ -253,7 +300,7 @@ describe("posted entries are immutable", () => {
           entryNumber: nextRef(),
           entityId: factoryId,
           fiscalPeriodId: openPeriodId,
-          status: "POSTED",
+          status: "DRAFT",
           postingDate: new Date(),
           reversesEntryId: original.id,
           reversalReason: "Posted against the wrong supplier",
@@ -272,7 +319,7 @@ describe("posted entries are immutable", () => {
           debit: "2500", credit: "0", entityId: factoryId,
         },
       });
-      return entry;
+      return tx.journalEntry.update({ where: { id: entry.id }, data: { status: "POSTED" } });
     });
 
     const originalAfter = await db.journalEntry.findUniqueOrThrow({

@@ -148,17 +148,22 @@ describe("cost pool comes from the ledger", () => {
     // Reverse it the way a correction would.
     const entry = await db.journalEntry.findFirstOrThrow({ where: { sourceType: "EXPENSE" } });
     const lines = await db.journalLine.findMany({ where: { journalEntryId: entry.id } });
-    await db.journalEntry.create({
-      data: {
-        entryNumber: "JE-REV-TEST", entityId: factoryId, fiscalPeriodId: periodId,
-        status: "POSTED", postingDate: periodStart, sourceType: "ADJUSTMENT",
-        lines: {
-          create: lines.map((l, i) => ({
-            lineNumber: i + 1, accountId: l.accountId,
-            debit: l.credit, credit: l.debit, entityId: l.entityId,
-          })),
+    // Drafted with its lines, then posted: lines cannot be added to an entry
+    // that is already posted.
+    await db.$transaction(async (tx) => {
+      const reversal = await tx.journalEntry.create({
+        data: {
+          entryNumber: "JE-REV-TEST", entityId: factoryId, fiscalPeriodId: periodId,
+          status: "DRAFT", postingDate: periodStart, sourceType: "ADJUSTMENT",
+          lines: {
+            create: lines.map((l, i) => ({
+              lineNumber: i + 1, accountId: l.accountId,
+              debit: l.credit, credit: l.debit, entityId: l.entityId,
+            })),
+          },
         },
-      },
+      });
+      await tx.journalEntry.update({ where: { id: reversal.id }, data: { status: "POSTED" } });
     });
 
     const poolAfter = await readCostPool(factoryId, periodId);
