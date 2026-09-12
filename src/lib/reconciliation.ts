@@ -4,6 +4,7 @@ import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { dec, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
+import { command } from "./command";
 
 /**
  * Proving the books against what the bank and the couriers actually did.
@@ -156,150 +157,152 @@ export async function recordSettlement(
   cleared: number;
   journalEntryNumber: string;
 }> {
-  if (input.paymentIds.length === 0) {
-    throw new ReconciliationError("Tick the orders this remittance covers.");
-  }
-
-  const netReceived = dec(input.netReceived);
-  if (netReceived.lessThan(0)) {
-    throw new ReconciliationError("A remittance cannot be negative.");
-  }
-
-  return db.$transaction(async (tx) => {
-    const payments = await tx.salesPayment.findMany({
-      where: { id: { in: input.paymentIds } },
-      include: { settlementLine: true, salesOrder: true },
-    });
-
-    if (payments.length !== input.paymentIds.length) {
-      throw new ReconciliationError("One of those payments no longer exists.");
+  return command("reconciliation.recordSettlement", input, ctx, async () => {
+    if (input.paymentIds.length === 0) {
+      throw new ReconciliationError("Tick the orders this remittance covers.");
     }
 
-    const alreadySettled = payments.filter((p) => p.settlementLine !== null);
-    if (alreadySettled.length > 0) {
-      throw new ReconciliationError(
-        `${alreadySettled.length} of these were already settled. Clearing them twice would credit the bank for money that only arrived once.`,
-      );
+    const netReceived = dec(input.netReceived);
+    if (netReceived.lessThan(0)) {
+      throw new ReconciliationError("A remittance cannot be negative.");
     }
 
-    const notPending = payments.filter((p) => p.status !== "PENDING");
-    if (notPending.length > 0) {
-      throw new ReconciliationError(
-        "Some of those payments are not outstanding — they were already collected.",
-      );
-    }
-
-    const expected = payments.reduce(
-      (s, p) => s.plus(dec(p.amount).minus(dec(p.fee))),
-      dec(0),
-    );
-    const variance = netReceived.minus(expected);
-
-    if (!variance.isZero() && !input.varianceNote?.trim()) {
-      throw new ReconciliationError(
-        `The remittance is ${variance.abs().toFixed(2)} ${variance.lessThan(0) ? "short of" : "over"} what these orders were owed. Say why, or untick the orders that were not paid for.`,
-      );
-    }
-
-    const settlementNumber = await nextDocumentNumber(tx, "STL", input.settlementDate);
-
-    const lines: Parameters<typeof postEntry>[1]["lines"] = [
-      {
-        accountId: await accountId(tx, ACC.BANK),
-        debit: netReceived,
-        entityId: input.entityId,
-        description: `Remittance ${settlementNumber}`,
-      },
-      {
-        accountId: await accountId(tx, clearingAccount(input.provider)),
-        credit: expected,
-        entityId: input.entityId,
-        description: `Cleared ${payments.length} payment(s) ${settlementNumber}`,
-      },
-    ];
-
-    if (variance.lessThan(0)) {
-      // They paid short: the gap is an extra charge they took.
-      lines.push({
-        accountId: await accountId(tx, ACC.PAYMENT_FEES),
-        debit: variance.abs(),
-        entityId: input.entityId,
-        description: `Short on ${settlementNumber}: ${input.varianceNote}`,
+    return db.$transaction(async (tx) => {
+      const payments = await tx.salesPayment.findMany({
+        where: { id: { in: input.paymentIds } },
+        include: { settlementLine: true, salesOrder: true },
       });
-    } else if (variance.greaterThan(0)) {
-      // They paid over: a refunded charge, credited back against fees.
-      lines.push({
-        accountId: await accountId(tx, ACC.PAYMENT_FEES),
-        credit: variance,
-        entityId: input.entityId,
-        description: `Over on ${settlementNumber}: ${input.varianceNote}`,
-      });
-    }
 
-    const journal = await postEntry(tx, {
-      entityId: input.entityId,
-      postingDate: input.settlementDate,
-      sourceType: "PAYMENT",
-      sourceId: settlementNumber,
-      memo: `${input.provider === "COURIER" ? "Courier" : "Gateway"} remittance ${settlementNumber}`,
-      ctx,
-      lines,
-    });
+      if (payments.length !== input.paymentIds.length) {
+        throw new ReconciliationError("One of those payments no longer exists.");
+      }
 
-    const settlement = await tx.settlement.create({
-      data: {
-        settlementNumber,
-        provider: input.provider,
-        channelId: input.channelId ?? null,
-        entityId: input.entityId,
-        reference: input.reference ?? null,
-        settlementDate: input.settlementDate,
-        expectedAmount: expected.toString(),
-        netReceived: netReceived.toString(),
-        variance: variance.toString(),
-        varianceNote: input.varianceNote ?? null,
-        status: "POSTED",
-        journalEntryId: journal.id,
-        postedAt: new Date(),
-        createdByUserId: ctx.userId,
-        lines: {
-          create: payments.map((p) => ({
-            salesPaymentId: p.id,
-            expectedAmount: dec(p.amount).minus(dec(p.fee)).toString(),
-          })),
+      const alreadySettled = payments.filter((p) => p.settlementLine !== null);
+      if (alreadySettled.length > 0) {
+        throw new ReconciliationError(
+          `${alreadySettled.length} of these were already settled. Clearing them twice would credit the bank for money that only arrived once.`,
+        );
+      }
+
+      const notPending = payments.filter((p) => p.status !== "PENDING");
+      if (notPending.length > 0) {
+        throw new ReconciliationError(
+          "Some of those payments are not outstanding — they were already collected.",
+        );
+      }
+
+      const expected = payments.reduce(
+        (s, p) => s.plus(dec(p.amount).minus(dec(p.fee))),
+        dec(0),
+      );
+      const variance = netReceived.minus(expected);
+
+      if (!variance.isZero() && !input.varianceNote?.trim()) {
+        throw new ReconciliationError(
+          `The remittance is ${variance.abs().toFixed(2)} ${variance.lessThan(0) ? "short of" : "over"} what these orders were owed. Say why, or untick the orders that were not paid for.`,
+        );
+      }
+
+      const settlementNumber = await nextDocumentNumber(tx, "STL", input.settlementDate);
+
+      const lines: Parameters<typeof postEntry>[1]["lines"] = [
+        {
+          accountId: await accountId(tx, ACC.BANK),
+          debit: netReceived,
+          entityId: input.entityId,
+          description: `Remittance ${settlementNumber}`,
         },
-      },
-    });
+        {
+          accountId: await accountId(tx, clearingAccount(input.provider)),
+          credit: expected,
+          entityId: input.entityId,
+          description: `Cleared ${payments.length} payment(s) ${settlementNumber}`,
+        },
+      ];
 
-    await tx.salesPayment.updateMany({
-      where: { id: { in: payments.map((p) => p.id) } },
-      data: { status: "COLLECTED", collectedAt: input.settlementDate },
-    });
+      if (variance.lessThan(0)) {
+        // They paid short: the gap is an extra charge they took.
+        lines.push({
+          accountId: await accountId(tx, ACC.PAYMENT_FEES),
+          debit: variance.abs(),
+          entityId: input.entityId,
+          description: `Short on ${settlementNumber}: ${input.varianceNote}`,
+        });
+      } else if (variance.greaterThan(0)) {
+        // They paid over: a refunded charge, credited back against fees.
+        lines.push({
+          accountId: await accountId(tx, ACC.PAYMENT_FEES),
+          credit: variance,
+          entityId: input.entityId,
+          description: `Over on ${settlementNumber}: ${input.varianceNote}`,
+        });
+      }
 
-    await writeAudit(tx, {
-      action: "SETTLEMENT_RECORDED",
-      entityName: "Settlement",
-      entityId: settlement.id,
-      after: {
+      const journal = await postEntry(tx, {
+        entityId: input.entityId,
+        postingDate: input.settlementDate,
+        sourceType: "PAYMENT",
+        sourceId: settlementNumber,
+        memo: `${input.provider === "COURIER" ? "Courier" : "Gateway"} remittance ${settlementNumber}`,
+        ctx,
+        lines,
+      });
+
+      const settlement = await tx.settlement.create({
+        data: {
+          settlementNumber,
+          provider: input.provider,
+          channelId: input.channelId ?? null,
+          entityId: input.entityId,
+          reference: input.reference ?? null,
+          settlementDate: input.settlementDate,
+          expectedAmount: expected.toString(),
+          netReceived: netReceived.toString(),
+          variance: variance.toString(),
+          varianceNote: input.varianceNote ?? null,
+          status: "POSTED",
+          journalEntryId: journal.id,
+          postedAt: new Date(),
+          createdByUserId: ctx.userId,
+          lines: {
+            create: payments.map((p) => ({
+              salesPaymentId: p.id,
+              expectedAmount: dec(p.amount).minus(dec(p.fee)).toString(),
+            })),
+          },
+        },
+      });
+
+      await tx.salesPayment.updateMany({
+        where: { id: { in: payments.map((p) => p.id) } },
+        data: { status: "COLLECTED", collectedAt: input.settlementDate },
+      });
+
+      await writeAudit(tx, {
+        action: "SETTLEMENT_RECORDED",
+        entityName: "Settlement",
+        entityId: settlement.id,
+        after: {
+          settlementNumber,
+          provider: input.provider,
+          cleared: payments.length,
+          expected: expected.toString(),
+          netReceived: netReceived.toString(),
+          variance: variance.toString(),
+          varianceNote: input.varianceNote ?? null,
+        },
+        ctx,
+      });
+
+      return {
         settlementNumber,
-        provider: input.provider,
-        cleared: payments.length,
         expected: expected.toString(),
         netReceived: netReceived.toString(),
         variance: variance.toString(),
-        varianceNote: input.varianceNote ?? null,
-      },
-      ctx,
+        cleared: payments.length,
+        journalEntryNumber: journal.entryNumber,
+      };
     });
-
-    return {
-      settlementNumber,
-      expected: expected.toString(),
-      netReceived: netReceived.toString(),
-      variance: variance.toString(),
-      cleared: payments.length,
-      journalEntryNumber: journal.entryNumber,
-    };
   });
 }
 
@@ -350,49 +353,51 @@ export async function importStatement(
   },
   ctx: AuditContext,
 ): Promise<{ statementId: string; imported: number; matched: number }> {
-  if (input.lines.length === 0) {
-    throw new ReconciliationError("A statement with no lines has nothing to reconcile.");
-  }
+  return command("reconciliation.importStatement", input, ctx, async () => {
+    if (input.lines.length === 0) {
+      throw new ReconciliationError("A statement with no lines has nothing to reconcile.");
+    }
 
-  const statement = await db.bankStatement.create({
-    data: {
-      accountCode: input.accountCode,
-      entityId: input.entityId,
-      statementDate: input.statementDate,
-      openingBalance: dec(input.openingBalance).toString(),
-      closingBalance: dec(input.closingBalance).toString(),
-      reference: input.reference ?? null,
-      createdByUserId: ctx.userId,
-      lines: {
-        create: input.lines.map((l) => ({
-          valueDate: l.valueDate,
-          description: l.description,
-          reference: l.reference ?? null,
-          amount: dec(l.amount).toString(),
-        })),
-      },
-    },
-    include: { lines: true },
-  });
-
-  const matched = await autoMatch(statement.id);
-
-  await db.$transaction(async (tx) => {
-    await writeAudit(tx, {
-      action: "BANK_STATEMENT_IMPORTED",
-      entityName: "BankStatement",
-      entityId: statement.id,
-      after: {
+    const statement = await db.bankStatement.create({
+      data: {
         accountCode: input.accountCode,
-        lines: input.lines.length,
-        matched,
-        closingBalance: input.closingBalance,
+        entityId: input.entityId,
+        statementDate: input.statementDate,
+        openingBalance: dec(input.openingBalance).toString(),
+        closingBalance: dec(input.closingBalance).toString(),
+        reference: input.reference ?? null,
+        createdByUserId: ctx.userId,
+        lines: {
+          create: input.lines.map((l) => ({
+            valueDate: l.valueDate,
+            description: l.description,
+            reference: l.reference ?? null,
+            amount: dec(l.amount).toString(),
+          })),
+        },
       },
-      ctx,
+      include: { lines: true },
     });
-  });
 
-  return { statementId: statement.id, imported: statement.lines.length, matched };
+    const matched = await autoMatch(statement.id);
+
+    await db.$transaction(async (tx) => {
+      await writeAudit(tx, {
+        action: "BANK_STATEMENT_IMPORTED",
+        entityName: "BankStatement",
+        entityId: statement.id,
+        after: {
+          accountCode: input.accountCode,
+          lines: input.lines.length,
+          matched,
+          closingBalance: input.closingBalance,
+        },
+        ctx,
+      });
+    });
+
+    return { statementId: statement.id, imported: statement.lines.length, matched };
+  });
 }
 
 /** Matches unmatched statement lines against unclaimed journal lines. */
@@ -417,6 +422,9 @@ export async function autoMatch(statementId: string, windowDays = 5): Promise<nu
     const candidates = await db.journalLine.findMany({
       where: {
         accountId: account.id,
+        // The statement's own company only: the same bank account code is
+        // used by both entities.
+        entityId: statement.entityId,
         bankStatementLine: null,
         journalEntry: { status: "POSTED", postingDate: { gte: from, lte: to } },
         ...(amount.greaterThan(0)
@@ -536,38 +544,57 @@ export async function matchLine(
   input: { bankStatementLineId: string; journalLineId: string },
   ctx: AuditContext,
 ): Promise<void> {
-  const [line, journalLine] = await Promise.all([
-    db.bankStatementLine.findUnique({ where: { id: input.bankStatementLineId } }),
-    db.journalLine.findUnique({
-      where: { id: input.journalLineId },
-      include: { bankStatementLine: true },
-    }),
-  ]);
-  if (!line) throw new ReconciliationError("That statement line no longer exists.");
-  if (!journalLine) throw new ReconciliationError("That ledger line no longer exists.");
-  if (journalLine.bankStatementLine) {
-    throw new ReconciliationError("That ledger line is already matched to another statement line.");
-  }
-
-  const bankAmount = dec(line.amount);
-  const ledgerAmount = dec(journalLine.debit).minus(dec(journalLine.credit));
-  if (!bankAmount.toDecimalPlaces(2).equals(ledgerAmount.toDecimalPlaces(2))) {
-    throw new ReconciliationError(
-      `Those do not agree: the statement says ${bankAmount.toFixed(2)} and the ledger says ${ledgerAmount.toFixed(2)}.`,
-    );
-  }
-
-  await db.$transaction(async (tx) => {
-    await tx.bankStatementLine.update({
-      where: { id: line.id },
-      data: { status: "MATCHED", matchedJournalLineId: journalLine.id },
+  return command("reconciliation.matchLine", input, ctx, async () => {
+    const line = await db.bankStatementLine.findUnique({
+      where: { id: input.bankStatementLineId },
+      include: { bankStatement: true },
     });
-    await writeAudit(tx, {
-      action: "BANK_LINE_MATCHED",
-      entityName: "BankStatementLine",
-      entityId: line.id,
-      after: { journalLineId: journalLine.id, amount: bankAmount.toString() },
-      ctx,
+    const journalLine = await db.journalLine.findUnique({
+      where: { id: input.journalLineId },
+      include: { bankStatementLine: true, account: true, journalEntry: true },
+    });
+    if (!line) throw new ReconciliationError("That statement line no longer exists.");
+    if (!journalLine) throw new ReconciliationError("That ledger line no longer exists.");
+    if (journalLine.bankStatementLine) {
+      throw new ReconciliationError("That ledger line is already matched to another statement line.");
+    }
+
+    // A matching amount is not a match. The ledger line has to be on the
+    // account this statement is for, in the books of the company whose
+    // statement it is, and actually posted — otherwise a statement can read
+    // as reconciled against somebody else's cash or an entry still in draft.
+    if (journalLine.account.code !== line.bankStatement.accountCode) {
+      throw new ReconciliationError(
+        `That ledger line is on account ${journalLine.account.code}, not ${line.bankStatement.accountCode}, which this statement is for.`,
+      );
+    }
+    if (journalLine.entityId !== line.bankStatement.entityId) {
+      throw new ReconciliationError("That ledger line is in another company's books.");
+    }
+    if (journalLine.journalEntry.status !== "POSTED") {
+      throw new ReconciliationError("That ledger line is not posted yet; only posted entries reconcile.");
+    }
+
+    const bankAmount = dec(line.amount);
+    const ledgerAmount = dec(journalLine.debit).minus(dec(journalLine.credit));
+    if (!bankAmount.toDecimalPlaces(2).equals(ledgerAmount.toDecimalPlaces(2))) {
+      throw new ReconciliationError(
+        `Those do not agree: the statement says ${bankAmount.toFixed(2)} and the ledger says ${ledgerAmount.toFixed(2)}.`,
+      );
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.bankStatementLine.update({
+        where: { id: line.id },
+        data: { status: "MATCHED", matchedJournalLineId: journalLine.id },
+      });
+      await writeAudit(tx, {
+        action: "BANK_LINE_MATCHED",
+        entityName: "BankStatementLine",
+        entityId: line.id,
+        after: { journalLineId: journalLine.id, amount: bankAmount.toString() },
+        ctx,
+      });
     });
   });
 }
@@ -583,26 +610,28 @@ export async function explainLine(
   input: { bankStatementLineId: string; note: string },
   ctx: AuditContext,
 ): Promise<void> {
-  if (!input.note.trim()) {
-    throw new ReconciliationError("Say what the line is, or it is not explained.");
-  }
+  return command("reconciliation.explainLine", input, ctx, async () => {
+    if (!input.note.trim()) {
+      throw new ReconciliationError("Say what the line is, or it is not explained.");
+    }
 
-  const line = await db.bankStatementLine.findUnique({
-    where: { id: input.bankStatementLineId },
-  });
-  if (!line) throw new ReconciliationError("That statement line no longer exists.");
-
-  await db.$transaction(async (tx) => {
-    await tx.bankStatementLine.update({
-      where: { id: line.id },
-      data: { status: "EXPLAINED", note: input.note.trim() },
+    const line = await db.bankStatementLine.findUnique({
+      where: { id: input.bankStatementLineId },
     });
-    await writeAudit(tx, {
-      action: "BANK_LINE_EXPLAINED",
-      entityName: "BankStatementLine",
-      entityId: line.id,
-      after: { note: input.note.trim(), amount: line.amount.toString() },
-      ctx,
+    if (!line) throw new ReconciliationError("That statement line no longer exists.");
+
+    await db.$transaction(async (tx) => {
+      await tx.bankStatementLine.update({
+        where: { id: line.id },
+        data: { status: "EXPLAINED", note: input.note.trim() },
+      });
+      await writeAudit(tx, {
+        action: "BANK_LINE_EXPLAINED",
+        entityName: "BankStatementLine",
+        entityId: line.id,
+        after: { note: input.note.trim(), amount: line.amount.toString() },
+        ctx,
+      });
     });
   });
 }
