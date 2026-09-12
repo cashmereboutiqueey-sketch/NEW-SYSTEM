@@ -4,7 +4,7 @@ import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
-import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
+import { formatMoney, formatNumber } from "@/lib/money";
 import { campaignResults } from "@/lib/marketing";
 import { dec } from "@/lib/money";
 import { createCampaignAction, recordSpendAction } from "./actions";

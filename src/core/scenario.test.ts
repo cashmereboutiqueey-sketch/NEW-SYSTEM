@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { simulate, compare, type Baseline } from "./scenario";
-import { dec } from "@/lib/money";
 
 /**
  * The simulator has to agree with the rest of the system, or it is a second

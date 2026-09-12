@@ -3,7 +3,7 @@ import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { cashCycle } from "@/lib/analytics";
 import { PageHeader, Card, DataTable, StatTile } from "@/components/ui";
-import { formatMoney, formatNumber, dec } from "@/lib/money";
+import { formatMoney, formatNumber } from "@/lib/money";
 
 /**
  * دورة الكاش — the days between paying for fabric and being paid for the garment.

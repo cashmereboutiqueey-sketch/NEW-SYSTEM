@@ -24,7 +24,7 @@ function order(over: Partial<CustomerOrder> = {}): CustomerOrder {
 
 describe("RFM", () => {
   it("scores a recent, frequent, high-spending customer highly", () => {
-    const orders = Array.from({ length: 9 }, (_, i) =>
+    const orders = Array.from({ length: 9 }, () =>
       order({ orderDate: d("2026-07-20"), netAmount: "3000" }),
     );
     const score = rfm(orders, asOf);

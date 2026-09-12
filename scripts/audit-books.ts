@@ -12,7 +12,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { dec } from "../src/lib/money";
-import { postEntry, reverseEntry } from "../src/lib/ledger";
+import { reverseEntry } from "../src/lib/ledger";
 import { createExpense } from "../src/lib/expenses";
 
 const problems: string[] = [];

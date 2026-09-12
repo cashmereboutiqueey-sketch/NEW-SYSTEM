@@ -32,7 +32,6 @@ const db = new PrismaClient({
 });
 
 const GOOD = "a-fine-password-9";
-const ctx = { userId: null as string | null, reason: null };
 
 let ownerId: string;
 

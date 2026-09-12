@@ -114,6 +114,9 @@ export default function Error({
         >
           حمّل من الأول
         </button>
+        {/* A whole-page load, not a client navigation: whatever broke may
+            have taken the router with it. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
           href="/"
           className="rounded-lg border border-ink-300 px-4 py-2 text-sm text-ink-700"

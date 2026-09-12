@@ -5,6 +5,8 @@
  * it says "or is not yours to see" — telling somebody a record exists but is
  * forbidden is itself a small leak, so the two cases look the same.
  */
+import Link from "next/link";
+
 export default function NotFound() {
   return (
     <div className="mx-auto max-w-lg py-16 text-center" dir="rtl">
@@ -17,12 +19,12 @@ export default function NotFound() {
         What you are looking for has either gone, or is not yours to see.
       </p>
 
-      <a
+      <Link
         href="/"
         className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white"
       >
         الرئيسية
-      </a>
+      </Link>
     </div>
   );
 }

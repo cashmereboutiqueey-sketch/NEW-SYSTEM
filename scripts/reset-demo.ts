@@ -17,18 +17,9 @@
  */
 import "dotenv/config";
 import { db } from "../src/lib/db";
+import { refuseUnlessScratchDatabase } from "./scratch-database";
 
-const url = process.env.DATABASE_URL ?? "";
-const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
-
-if (!isLocal && process.env.ALLOW_REMOTE_RESET !== "yes") {
-  console.error(
-    "DATABASE_URL does not point at localhost. This deletes every transaction;\n" +
-      "if that is genuinely what you want on a remote database, set ALLOW_REMOTE_RESET=yes.",
-  );
-  await db.$disconnect();
-  process.exit(1);
-}
+await refuseUnlessScratchDatabase("deletes every transaction");
 
 // Posted journals are immutable by trigger — which is exactly right, and the
 // reason this cannot be a plain series of deletes. The triggers come off for
@@ -55,6 +46,7 @@ try {
   await clear("payments", () => db.salesPayment.deleteMany({}));
   await clear("order lines", () => db.salesOrderLine.deleteMany({}));
   await clear("orders", () => db.salesOrder.deleteMany({}));
+  await clear("till cash", () => db.tillCashEvent.deleteMany({}));
   await clear("till sessions", () => db.posSession.deleteMany({}));
   await clear("movements", () => db.inventoryMovement.deleteMany({}));
   await clear("lots", () => db.inventoryLot.deleteMany({}));

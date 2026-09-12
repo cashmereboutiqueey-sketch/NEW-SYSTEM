@@ -285,9 +285,6 @@ else warn(`pages with no link to them: ${unreachable.join(", ")}`);
 
 console.log("\n── permissions");
 
-const unchecked = PERMISSIONS.filter(
-  (p) => !new RegExp(`["'\`]${p.replace(":", "\\:")}["'\`]`).test(appOnly.replace(/permissions\.ts[\s\S]*?$/, "")),
-);
 const reallyUnchecked = PERMISSIONS.filter((p) => {
   // Counted only where it is enforced, not where the list itself is declared.
   const enforced = code.filter(

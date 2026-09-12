@@ -6,7 +6,7 @@ import { capacityPicture } from "@/lib/factory-floor";
 import { configurablePeriods } from "@/lib/capacity";
 import { CapacityForm } from "./capacity-form";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
-import { formatMoney, formatNumber, formatPercent, dec } from "@/lib/money";
+import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 
 /**
  * الطاقة الإنتاجية — how many minutes the factory has, and what they cost.

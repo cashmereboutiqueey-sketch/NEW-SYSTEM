@@ -6,7 +6,7 @@ import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
 import { formatMoney, formatNumber } from "@/lib/money";
 import { dec } from "@/lib/money";
-import { createEmployeeAction, setEmploymentStatusAction } from "./actions";
+import { createEmployeeAction } from "./actions";
 
 /**
  * الموظفون والأجور — HR and payroll.

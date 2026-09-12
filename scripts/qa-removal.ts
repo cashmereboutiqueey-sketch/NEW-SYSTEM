@@ -37,13 +37,6 @@ const libText = files(join(ROOT, "src", "lib"), /\.ts$/)
 
 const schema = readFileSync(join(ROOT, "prisma", "schema.prisma"), "utf8");
 
-const models = [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)].map((m) => ({
-  name: m[1],
-  body: m[2],
-}));
-
-const client = (n: string) => n.charAt(0).toLowerCase() + n.slice(1);
-
 /** Posted to the ledger, so the correction is a reversal rather than a removal. */
 const REVERSED = new Set([
   "journalEntry", "journalLine", "inventoryMovement", "auditLog", "costSnapshot",

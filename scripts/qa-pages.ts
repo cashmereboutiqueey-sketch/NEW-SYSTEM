@@ -24,8 +24,6 @@ import { sessionFor, retireQaUsers } from "./qa-session";
 const BASE = process.argv[2] ?? "http://localhost:3100";
 
 const problems: string[] = [];
-const notes: string[] = [];
-
 /**
  * One real account per role, because the role is read from the account and a
  * cookie cannot claim one of its own.

@@ -44,8 +44,6 @@ function files(dir: string, match: RegExp, acc: string[] = []): string[] {
 
 const appFiles = files(APP, /\.tsx?$/);
 const libFiles = files(LIB, /\.ts$/).filter((f) => !f.endsWith(".test.ts"));
-const appText = appFiles.map((f) => readFileSync(f, "utf8")).join("\n");
-
 /* ───────────────────────── 1. every action has a caller ─────────────────── */
 
 console.log("── server actions");

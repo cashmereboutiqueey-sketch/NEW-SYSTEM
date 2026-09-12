@@ -3,8 +3,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { setCollectionActive, setVariantActive, ProductError } from "./products";
-import { setClientActive, CMTError } from "./cmt";
-import { setConsignorActive, createConsignor, ConsignmentError } from "./consignment";
+import { setClientActive } from "./cmt";
+import { setConsignorActive, createConsignor } from "./consignment";
 import { setCampaignStatus } from "./marketing";
 
 /**
@@ -150,7 +150,6 @@ describe("retiring a CMT client", () => {
   });
 
   it("refuses while their work is still in the factory", async () => {
-    const style = await db.style.findFirstOrThrow();
     const order = await db.cMTOrder.create({
       data: {
         orderNumber: `CMT-RET-${tag}`,

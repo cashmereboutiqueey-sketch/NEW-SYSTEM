@@ -13,6 +13,12 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { dec } from "../src/lib/money";
+import { refuseUnlessScratchDatabase } from "./scratch-database";
+
+await refuseUnlessScratchDatabase(
+  "writes tens of thousands of invented customers, orders and journals",
+  "ALLOW_REMOTE_VOLUME_TEST",
+);
 
 const CUSTOMERS = Number(process.env.AUDIT_CUSTOMERS ?? 10_000);
 const ORDERS = Number(process.env.AUDIT_ORDERS ?? 10_000);
@@ -143,14 +149,15 @@ if (existingJournals < JOURNALS) {
         entryNumber: `VOL-JE-${n}`,
         entityId: brand.id,
         fiscalPeriodId: period.id,
-        status: "POSTED" as const,
+        status: "DRAFT" as const,
         postingDate: new Date(period.startDate),
         sourceType: "MANUAL" as const,
       };
     });
     // Entries and their lines go in together: the balance check is a deferred
     // constraint trigger, so a batch of entries committed without lines is
-    // rejected at commit — correctly.
+    // rejected at commit — correctly. They are written as drafts and posted
+    // once their lines exist, because lines cannot be added to a posted entry.
     await db.$transaction(async (tx) => {
       await tx.journalEntry.createMany({ data: entries, skipDuplicates: true });
       await tx.journalLine.createMany({
@@ -165,6 +172,10 @@ if (existingJournals < JOURNALS) {
           },
         ]),
         skipDuplicates: true,
+      });
+      await tx.journalEntry.updateMany({
+        where: { id: { in: entries.map((e) => e.id) }, status: "DRAFT" },
+        data: { status: "POSTED" },
       });
     }, { timeout: 60_000 });
   }

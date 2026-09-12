@@ -1,4 +1,3 @@
-import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";

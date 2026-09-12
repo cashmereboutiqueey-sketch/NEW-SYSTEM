@@ -12,7 +12,7 @@
 import "dotenv/config";
 import { SignJWT } from "jose";
 import { db } from "../src/lib/db";
-import { ROLES, type Role } from "../src/core/permissions";
+import { type Role } from "../src/core/permissions";
 import { sessionFor, retireQaUsers } from "./qa-session";
 
 const BASE = process.argv[2] ?? "http://localhost:3100";

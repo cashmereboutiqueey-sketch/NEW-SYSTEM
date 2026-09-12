@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getPrefs } from "@/lib/session";
 import { db } from "@/lib/db";
@@ -50,9 +50,9 @@ export default async function ChangePasswordPage() {
 
         {!forced && (
           <p className="mt-6 text-center text-sm">
-            <a href="/" className="text-ink-500 underline">
+            <Link href="/" className="text-ink-500 underline">
               {ar ? "رجوع" : "Back"}
-            </a>
+            </Link>
           </p>
         )}
       </div>
