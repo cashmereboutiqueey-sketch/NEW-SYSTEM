@@ -87,3 +87,36 @@ PostgreSQL instance.
   project — are left untouched.
 - Nothing in the application depends on Docker; `DATABASE_URL` can point at any
   PostgreSQL 16+ instance.
+
+---
+
+## D-004 — What registering for VAT will actually require
+
+**Decided:** 2026-09-12 by the owner. **Status:** Active. **Relates to:** D-001.
+
+The business expects to register for VAT in the near future. D-001 stands until
+it does: no VAT is charged and none is recovered.
+
+Recorded here because the switch on the VAT screen is **not** the whole job. It
+records the registration and feeds the VAT report; it does not yet make the
+books VAT-correct, because sales, purchases and expenses post their full amounts
+without splitting tax out. Turning it on alone would produce a VAT return that
+does not agree with the ledger.
+
+**What has to be built before the switch means anything** — none of it is done:
+
+1. Whether a price is tax-inclusive or tax-exclusive, per channel. Shopify
+   prices are what the customer pays; a wholesale quote may be net of tax.
+2. Splitting the tax out at the point of posting: output VAT to `2300` on sales,
+   input VAT to `1450` on purchases and expenses, at the rate in force on the
+   document's own date.
+3. The rate each document posted at, stored **on the document**, so a later rate
+   change never restates a past sale.
+4. Returns and credit notes reversing the tax they originally carried.
+5. Rounding stated once and applied everywhere, so the return and the ledger
+   agree to the piastre.
+6. Exemptions and zero-rated lines, if any apply.
+7. The VAT report reconciled against `2300` and `1450` before it is filed.
+
+**Until then:** the VAT screen says the figures are not live, and the report is
+a preview of a future obligation rather than a return that can be filed.

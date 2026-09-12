@@ -61,8 +61,8 @@ export default async function TaxPage({
         <div className="mb-5 rounded-lg border border-ink-200 bg-ink-50 p-3 text-sm">
           <strong>{ar ? "مفيش ضريبة بتتحسب دلوقتي." : "No VAT is being charged."}</strong>{" "}
           {ar
-            ? "ده مقصود: النشاط مش مسجّل في ضريبة القيمة المضافة، والنظام مش بيحسب ضريبة مش مستحقة عليك. النسب تحت جاهزة، والحسابين ١٤٥٠ و٢٣٠٠ موجودين ومستنيين — أول ما تتسجل، فعّل السويتش."
-            : "That is deliberate: the business is not VAT-registered, and the system does not charge tax it does not owe. The rates below are ready and accounts 1450 and 2300 are waiting — turn the switch on once you register."}
+            ? "ده مقصود: النشاط مش مسجّل في ضريبة القيمة المضافة، والنظام مش بيحسب ضريبة مش مستحقة عليك. النسب تحت جاهزة، والحسابين ١٤٥٠ و٢٣٠٠ موجودين ومستنيين. لكن خد بالك: السويتش لوحده مش كفاية — البيع والشرا لسه مش بيفصلوا الضريبة في القيود، فلازم الشغل ده يتعمل الأول (docs/DECISIONS.md — D-004)."
+            : "That is deliberate: the business is not VAT-registered, and the system does not charge tax it does not owe. The rates below are ready and accounts 1450 and 2300 are waiting. Note though: the switch alone is not enough — sales and purchases do not yet split tax out when they post, so that work comes first (docs/DECISIONS.md, D-004)."}
         </div>
       )}
 
