@@ -45,7 +45,17 @@ const nextConfig: NextConfig = {
 
   experimental: {
     serverActions: {
-      bodySizeLimit: "2mb",
+      /**
+       * Above what src/lib/images.ts accepts (5MB), with room for the form.
+       *
+       * This was 2mb while the image rules allowed 5MB, so a photograph between
+       * the two was stopped here, before the code that explains the limit, and
+       * the page fell over with the generic error instead. The photo form now
+       * shrinks large pictures in the browser, but this ceiling must never sit
+       * below the rule it guards — a refusal that reaches the user as a sentence
+       * is a limit; one that reaches them as a crash is a bug.
+       */
+      bodySizeLimit: "6mb",
     },
   },
 };
