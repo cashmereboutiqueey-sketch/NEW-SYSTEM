@@ -23,6 +23,11 @@ backups/
 # Uploaded product photographs (backed up with the database, not in git)
 data/uploads/
 
+# Commercial terms and anything else that is the business's own: the rates
+# agreed with the courier, for one. This remote is public, so they are loaded
+# into the database from here by a script and never committed.
+data/private/
+
 # The SKU plan and its rollback: generated against a live Shopify catalogue,
 # and the rollback names real variant ids. Regenerate rather than commit.
 shopify-sku-plan.csv

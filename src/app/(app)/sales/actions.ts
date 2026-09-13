@@ -80,8 +80,14 @@ export async function createModeratorSaleAction(
           customerId: (formData.get("customerId") as string) || null,
           orderDate: new Date(String(formData.get("orderDate") ?? "")),
           shippingAmount: shipping,
-          city: (formData.get("city") as string) || null,
           notes: (formData.get("notes") as string) || null,
+          destination: {
+            recipientName: (formData.get("recipientName") as string) || null,
+            phone: (formData.get("shippingPhone") as string) || null,
+            secondPhone: (formData.get("secondPhone") as string) || null,
+            courierZoneId: (formData.get("courierZoneId") as string) || null,
+            addressLine: (formData.get("addressLine") as string) || null,
+          },
           lines: priced,
           payments: [
             {

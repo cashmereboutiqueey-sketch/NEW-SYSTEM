@@ -8,6 +8,7 @@ import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { dec, safeDiv } from "@/lib/money";
 import { ModeratorOrderForm } from "./moderator-form";
+import { courierZones } from "@/lib/shipping";
 
 /**
  * Brand sales.
@@ -28,7 +29,7 @@ export default async function SalesPage() {
   const mayOrder = can(session.role, "sales_order:create");
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 
-  const [orders, sessions, customers, channels, brandLocations] = await Promise.all([
+  const [orders, sessions, customers, channels, brandLocations, zones] = await Promise.all([
     db.salesOrder.findMany({
       include: {
         customer: true,
@@ -58,6 +59,7 @@ export default async function SalesPage() {
       where: { isActive: true, entityId: brand.id },
       orderBy: { sortOrder: "asc" },
     }),
+    courierZones(),
   ]);
 
   // Only what the brand actually holds, so an order cannot promise a garment
@@ -194,6 +196,7 @@ export default async function SalesPage() {
             </p>
           ) : (
             <ModeratorOrderForm
+              zones={zones}
               locale={locale}
               entityId={brand.id}
               today={new Date().toISOString().slice(0, 10)}

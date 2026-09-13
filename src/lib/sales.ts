@@ -119,6 +119,20 @@ export const createSaleSchema = z.object({
   shippingAmount: z.coerce.number().min(0).default(0),
   city: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  /**
+   * Where the parcel goes, for anything a courier delivers. The area is the
+   * courier's own (a zone), because a region typed freehand is a row their
+   * import rejects; the governorate is taken from the zone rather than typed.
+   */
+  destination: z
+    .object({
+      recipientName: z.string().trim().max(120).nullable().optional(),
+      phone: z.string().trim().max(40).nullable().optional(),
+      secondPhone: z.string().trim().max(40).nullable().optional(),
+      courierZoneId: z.string().min(1).nullable().optional(),
+      addressLine: z.string().trim().max(500).nullable().optional(),
+    })
+    .optional(),
   lines: z
     .array(
       z.object({
@@ -183,6 +197,15 @@ export async function createSale(
       throw new SalesError("Combine repeated variants into one sale line before submitting.");
     }
     const salesOrderId = randomUUID();
+
+    // The zone decides the governorate and the region the courier sees, so it
+    // is read here rather than trusted from the form.
+    const zone = data.destination?.courierZoneId
+      ? await db.courierZone.findUnique({ where: { id: data.destination.courierZoneId } })
+      : null;
+    if (data.destination?.courierZoneId && (!zone || !zone.isActive)) {
+      throw new SalesError("That delivery area is not one the courier serves. Choose it again.");
+    }
 
     if (data.payments.some((p) => p.method === "STORE_CREDIT")) {
       throw new SalesError("Store credit must be applied through a funded credit transaction.");
@@ -395,8 +418,14 @@ export async function createSale(
           shippingAmount: shipping.toString(),
           paymentFee: totalFees.toString(),
           cogsAmount: totalCogs.toString(),
-          city: data.city ?? null,
+          city: zone?.region ?? data.city ?? null,
           notes: data.notes ?? null,
+          recipientName: data.destination?.recipientName || null,
+          shippingPhone: data.destination?.phone || null,
+          secondPhone: data.destination?.secondPhone || null,
+          governorate: zone?.governorate ?? null,
+          addressLine: data.destination?.addressLine || null,
+          courierZoneId: zone?.id ?? null,
           lines: {
             create: lines.map((l) => {
               const unitCost = dec(

@@ -60,7 +60,21 @@ export type ShopifyOrder = {
     email?: string | null;
     phone?: string | null;
   } | null;
-  shipping_address?: { city?: string | null } | null;
+  /**
+   * Where Shopify says the parcel goes. Only the city used to be kept, which
+   * left somebody retyping the street from the Shopify admin into the
+   * courier's portal for every website order.
+   */
+  shipping_address?: {
+    name?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    address1?: string | null;
+    address2?: string | null;
+    city?: string | null;
+    province?: string | null;
+    phone?: string | null;
+  } | null;
   financial_status?: string;
   cancelled_at?: string | null;
   line_items: {
@@ -74,6 +88,52 @@ export type ShopifyOrder = {
     title?: string;
   }[];
 };
+
+/** Arabic and English place names, made comparable. */
+function placeKey(text: string | null | undefined): string {
+  return (text ?? "")
+    .replace(/[\u064B-\u0652]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/**
+ * The delivery details a website order carries, in the shape a sale keeps.
+ *
+ * The courier's area is matched by name only when exactly one of its areas
+ * has that name. Shopify's city is typed by the customer — "Nasr City",
+ * "مدينه نصر", "nasr" — and a wrong guess sends a parcel to the wrong branch.
+ * An order that does not match is left without an area and listed on the
+ * shipping screen for somebody to choose one.
+ */
+async function destinationOf(order: ShopifyOrder) {
+  const a = order.shipping_address;
+  if (!a) return undefined;
+
+  const name = a.name || [a.first_name, a.last_name].filter(Boolean).join(" ") || null;
+  const addressLine = [a.address1, a.address2].filter(Boolean).join("، ") || null;
+
+  let courierZoneId: string | null = null;
+  const city = placeKey(a.city);
+  if (city) {
+    const zones = await db.courierZone.findMany({
+      where: { isActive: true },
+      select: { id: true, region: true },
+    });
+    const matches = zones.filter((z) => placeKey(z.region) === city);
+    if (matches.length === 1) courierZoneId = matches[0].id;
+  }
+
+  return {
+    recipientName: name,
+    phone: a.phone || order.customer?.phone || null,
+    courierZoneId,
+    addressLine,
+  };
+}
 
 /**
  * Verifies a webhook came from Shopify.
@@ -447,6 +507,7 @@ export async function importOrders(
           customerId,
           orderDate: new Date(order.created_at),
           city: order.shipping_address?.city ?? null,
+          destination: await destinationOf(order),
           shippingAmount: Number(shipping),
           lines,
           // Website payment is confirmed by the gateway, not by us. It is

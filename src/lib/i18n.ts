@@ -49,6 +49,7 @@ export const dictionary = {
   consignment: { ar: "بضاعة الأمانة", en: "Consignment" },
   users: { ar: "المستخدمون", en: "Users" },
   reconciliation: { ar: "التسويات", en: "Reconciliation" },
+  shipping: { ar: "الشحن", en: "Shipping" },
   journal: { ar: "دفتر اليومية", en: "Journal" },
   auditTrail: { ar: "سجل التدقيق", en: "Audit trail" },
   chartOfAccounts: { ar: "شجرة الحسابات", en: "Chart of accounts" },

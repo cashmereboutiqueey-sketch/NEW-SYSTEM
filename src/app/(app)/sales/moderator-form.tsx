@@ -41,6 +41,7 @@ export function ModeratorOrderForm({
   entityId,
   canDiscount,
   today,
+  zones,
 }: {
   locale: Locale;
   products: Product[];
@@ -50,6 +51,8 @@ export function ModeratorOrderForm({
   entityId: string;
   canDiscount: boolean;
   today: string;
+  /** The courier's areas, by governorate, with what it charges to reach each. */
+  zones: { governorate: string; regions: { id: string; region: string; price: string }[] }[];
 }) {
   const [state, formAction, pending] = useActionState(createModeratorSaleAction, initial);
   const [lines, setLines] = useState<Line[]>([]);
@@ -57,7 +60,14 @@ export function ModeratorOrderForm({
   const [discountPct, setDiscountPct] = useState(0);
   const [shipping, setShipping] = useState(0);
   const [method, setMethod] = useState("COD");
+  const [customerId, setCustomerId] = useState("");
+  const [governorate, setGovernorate] = useState("");
+  const [zoneId, setZoneId] = useState("");
   const ar = locale === "ar";
+
+  const customer = customers.find((c) => c.id === customerId);
+  const regions = zones.find((z) => z.governorate === governorate)?.regions ?? [];
+  const zone = regions.find((r) => r.id === zoneId);
 
   const byId = useMemo(() => new Map(products.map((p) => [p.variantId, p])), [products]);
 
@@ -194,7 +204,10 @@ export function ModeratorOrderForm({
       <div className="grid gap-3 sm:grid-cols-4">
         <div>
           <label className={label} htmlFor="mod-customer">{ar ? "العميلة" : "Customer"}</label>
-          <select id="mod-customer" name="customerId" className={`${field} w-full`}>
+          <select
+            id="mod-customer" name="customerId" className={`${field} w-full`}
+            value={customerId} onChange={(e) => setCustomerId(e.target.value)}
+          >
             <option value="">{ar ? "بدون عميل" : "No customer"}</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
@@ -224,11 +237,79 @@ export function ModeratorOrderForm({
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-4">
-        <div>
-          <label className={label} htmlFor="mod-city">{ar ? "المدينة" : "City"}</label>
-          <input id="mod-city" name="city" type="text" className={`${field} w-full`} />
+      {/* ------------------------------------------------------------ delivery */}
+      <fieldset className="rounded-xl border border-ink-100 p-3">
+        <legend className="px-1 text-xs font-medium text-ink-600">
+          {ar ? "التوصيل — بيطلع في شيت MG زي ما هو" : "Delivery — goes onto the MG sheet as written"}
+        </legend>
+        <div className="grid gap-3 sm:grid-cols-4">
+          <div>
+            <label className={label} htmlFor="mod-recipient">{ar ? "اسم المستلم" : "Recipient"}</label>
+            <input
+              id="mod-recipient" name="recipientName" type="text" className={`${field} w-full`}
+              placeholder={customer?.name ?? ""}
+            />
+          </div>
+          <div>
+            <label className={label} htmlFor="mod-phone">{ar ? "التليفون" : "Phone"}</label>
+            <input
+              id="mod-phone" name="shippingPhone" type="tel" dir="ltr" className={`${field} num w-full`}
+              placeholder={customer?.phone ?? "01xxxxxxxxx"}
+            />
+          </div>
+          <div>
+            <label className={label} htmlFor="mod-phone2">{ar ? "تليفون تاني" : "Second phone"}</label>
+            <input id="mod-phone2" name="secondPhone" type="tel" dir="ltr" className={`${field} num w-full`} />
+          </div>
+          <div>
+            <label className={label} htmlFor="mod-gov">{ar ? "المحافظة" : "Governorate"}</label>
+            <select
+              id="mod-gov" className={`${field} w-full`} value={governorate}
+              onChange={(e) => {
+                setGovernorate(e.target.value);
+                setZoneId("");
+              }}
+            >
+              <option value="">{ar ? "اختار" : "Choose"}</option>
+              {zones.map((z) => (
+                <option key={z.governorate} value={z.governorate}>{z.governorate}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={label} htmlFor="mod-zone">{ar ? "المنطقة" : "Area"}</label>
+            <select
+              id="mod-zone" name="courierZoneId" className={`${field} w-full`} value={zoneId}
+              disabled={!governorate}
+              onChange={(e) => {
+                setZoneId(e.target.value);
+                const picked = regions.find((r) => r.id === e.target.value);
+                // The courier's price as a starting point, never over one typed.
+                if (picked && !shipping) setShipping(Number(picked.price));
+              }}
+            >
+              <option value="">{ar ? "اختار" : "Choose"}</option>
+              {regions.map((r) => (
+                <option key={r.id} value={r.id}>{r.region}</option>
+              ))}
+            </select>
+            {zone && (
+              <p className="mt-1 text-xs text-ink-500">
+                {ar ? `MG بتاخد ${Number(zone.price)} جنيه` : `MG charges ${Number(zone.price)}`}
+              </p>
+            )}
+          </div>
+          <div className="sm:col-span-3">
+            <label className={label} htmlFor="mod-address">{ar ? "العنوان بالتفصيل" : "Full address"}</label>
+            <input
+              id="mod-address" name="addressLine" type="text" className={`${field} w-full`}
+              placeholder={ar ? "الشارع، رقم العمارة، الدور، الشقة، علامة مميزة" : "Street, building, floor, flat, landmark"}
+            />
+          </div>
         </div>
+      </fieldset>
+
+      <div className="grid gap-3 sm:grid-cols-4">
         <div>
           <label className={label} htmlFor="mod-ship">{ar ? "الشحن" : "Shipping"}</label>
           <input

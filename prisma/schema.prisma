@@ -101,6 +101,7 @@ model User {
   purchaseOrdersRaised   PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
   purchaseOrdersApproved PurchaseOrder[] @relation("PurchaseOrderApprovedBy")
   salesOrders      SalesOrder[]   @relation("SalesOrderCreatedBy")
+  shipmentBatches  ShipmentBatch[]
   settlements    Settlement[]
   bankStatements BankStatement[]
 
@@ -2639,12 +2640,27 @@ model SalesOrder {
 
   city           String?
   notes          String?
+
+  /// Where the parcel goes, as the courier needs it. The customer's own record
+  /// holds who they are; this holds where this one order is delivered, which
+  /// is often a sister's flat or an office rather than their home.
+  recipientName  String?
+  shippingPhone  String?
+  secondPhone    String?
+  governorate    String?
+  addressLine    String?
+  /// The courier's own name for the area, with what it charges to reach it. A
+  /// region typed freehand is a parcel their import rejects.
+  courierZoneId  String?
+  courierZone    CourierZone? @relation(fields: [courierZoneId], references: [id], onDelete: SetNull)
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  lines    SalesOrderLine[]
-  returns  Return[]
-  payments SalesPayment[]
+  lines     SalesOrderLine[]
+  returns   Return[]
+  payments  SalesPayment[]
+  shipments Shipment[]
 
   @@unique([source, externalId])
   @@index([channelId, orderDate])
@@ -3427,4 +3443,104 @@ model BankStatementLine {
 
   @@index([bankStatementId, status])
   @@map("bank_statement_lines")
+}
+
+// ===========================================================================
+// SHIPPING — handing parcels to the courier and hearing back
+//
+// The courier has no API. It takes a daily Excel sheet in its own template and
+// reports back through its portal, which exports its orders report as Excel.
+// So a shipment is a row on a sheet this system produced, and its status is
+// whatever the courier's latest report said about that row.
+// ===========================================================================
+
+/// An area a courier delivers to, under the courier's own spelling, and what
+/// it charges. Loaded from the courier's price list by a script: the rates are
+/// commercial terms and the repository is public, so they are never committed.
+model CourierZone {
+  id          String   @id @default(cuid())
+  courier     String
+  governorate String
+  region      String
+  price       Decimal  @db.Decimal(18, 4)
+  /// The courier's branch that serves this area. Its import takes one branch
+  /// per file, so a day's parcels are split by this.
+  branch      String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  salesOrders SalesOrder[]
+
+  @@unique([courier, governorate, region])
+  @@index([courier, governorate])
+  @@map("courier_zones")
+}
+
+/// One day's sheet for one branch of the courier.
+model ShipmentBatch {
+  id              String   @id @default(cuid())
+  batchNumber     String   @unique
+  courier         String
+  branch          String
+  createdByUserId String?
+  createdBy       User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  shipments Shipment[]
+
+  @@index([courier, createdAt])
+  @@map("shipment_batches")
+}
+
+enum ShipmentStatus {
+  /// On a sheet handed to the courier; not yet reported on.
+  SENT
+  /// Picked up, or out for delivery.
+  IN_TRANSIT
+  /// Delivered and paid in full.
+  DELIVERED
+  /// Delivered with part returned, a changed price or an exchange. Stock and
+  /// money are not moved on the strength of that: a person looks.
+  NEEDS_REVIEW
+  /// On its way back.
+  RETURNED
+  /// Failed, refused, or the customer disappeared when the driver arrived.
+  FAILED
+  POSTPONED
+}
+
+/// A parcel handed to the courier for one order.
+model Shipment {
+  id           String         @id @default(cuid())
+  salesOrderId String
+  salesOrder   SalesOrder     @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  batchId      String
+  batch        ShipmentBatch  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  courier      String
+  branch       String
+  /// What went in the sheet's shipment-number column: the order number, which
+  /// is how the courier's report is matched back.
+  reference    String
+  /// What the driver collects: goods and shipping, less anything already paid.
+  codAmount    Decimal        @db.Decimal(18, 4)
+
+  status        ShipmentStatus @default(SENT)
+  /// Exactly what the courier's report said, in the courier's words.
+  courierStatus String?
+  collectedAmount Decimal?     @db.Decimal(18, 4)
+  courierFee      Decimal?     @db.Decimal(18, 4)
+  dueToUs         Decimal?     @db.Decimal(18, 4)
+  remittedToUs    Decimal?     @db.Decimal(18, 4)
+  attempts        Int?
+  followUp        String?
+  lastReportAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([salesOrderId])
+  @@index([courier, reference])
+  @@index([status])
+  @@map("shipments")
 }

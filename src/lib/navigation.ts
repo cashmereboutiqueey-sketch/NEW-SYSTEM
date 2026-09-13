@@ -103,6 +103,8 @@ export const navigation: NavSection[] = [
       { key: "pos", href: "/pos", phase: 6, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true },
       { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true },
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true },
+      // The courier has no API: sheets out in its template, its report back in.
+      { key: "shipping", href: "/shipping", phase: 6, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true },
       { key: "consignment", href: "/consignment", phase: 6, scopes: ["BRAND", "GROUP"], icon: "layers", shipped: true },
       { key: "returns", href: "/returns", phase: 6, scopes: ["BRAND", "GROUP"], icon: "refresh", shipped: true },
