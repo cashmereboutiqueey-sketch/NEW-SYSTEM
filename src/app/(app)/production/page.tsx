@@ -3,7 +3,7 @@ import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { t } from "@/lib/i18n";
-import { plannedMaterials } from "@/lib/production";
+import { plannedMaterials, billForOrder } from "@/lib/production";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { variance } from "@/core/production";
@@ -79,6 +79,7 @@ export default async function ProductionPage() {
   const openWork = await Promise.all(
     inFlight.map(async (o) => {
       const planned = await plannedMaterials(o.id);
+      const bill = await billForOrder(o.id);
       const stock = await db.inventoryLot.groupBy({
         by: ["materialId"],
         where: {
@@ -108,6 +109,7 @@ export default async function ProductionPage() {
             name: m ? (ar ? m.nameAr : m.nameEn) : p.materialCode,
             uom: m?.uom.code ?? "",
             planned: p.requiredQty.toFixed(2),
+            perGarment: bill.find((b) => b.materialId === p.materialId)?.perGarment ?? "0",
             issued: issued.toFixed(2),
             onHand: dec(
               stock.find((s) => s.materialId === p.materialId)?._sum.remainingQty ?? 0,
@@ -265,6 +267,8 @@ export default async function ProductionPage() {
                     entityId={factory.id}
                     plannedQty={o.plannedQty}
                     goodSoFar={o.actualQty ?? 0}
+                    rejectedSoFar={o.rejectedQty}
+                    materials={materials}
                     canApproveShortfall={mayConfirm}
                     today={today}
                     locations={locations.map((l) => ({ id: l.id, label: name(l) }))}

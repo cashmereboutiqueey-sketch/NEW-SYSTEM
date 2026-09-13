@@ -305,6 +305,14 @@ type Output = { variantId: string; goodQty: number };
  *
  * A run can deliver in parts: with "close the run" unticked the garments go
  * into stock and the order stays open for the rest.
+ *
+ * Material still owed to the garments being received is issued from here, in
+ * the same command as the receipt. Issuing used to be a separate form above
+ * this one, and a run received without it was refused with "not enough
+ * material was issued" — correct, and a dead end for anyone who cuts first
+ * and records afterwards, which on a small floor is everyone. The quantity
+ * offered is what the frozen standard needs; it can be changed to what was
+ * really used, and a real shortfall still needs its reason.
  */
 export function CompleteOrderForm({
   locale,
@@ -312,6 +320,8 @@ export function CompleteOrderForm({
   entityId,
   plannedQty,
   goodSoFar,
+  rejectedSoFar,
+  materials,
   canApproveShortfall,
   today,
   locations,
@@ -323,6 +333,15 @@ export function CompleteOrderForm({
   plannedQty: number;
   /** Good garments already received on earlier deliveries. */
   goodSoFar: number;
+  /** Rejects already recorded on earlier deliveries; they consumed fabric too. */
+  rejectedSoFar: number;
+  materials: {
+    id: string; code: string; name: string; uom: string;
+    /** Waste-free standard per garment, from the run's frozen bill. */
+    perGarment: string;
+    issued: string;
+    onHand: string;
+  }[];
   /** Whether this person may let a run through on less material than it made. */
   canApproveShortfall: boolean;
   today: string;
@@ -332,6 +351,9 @@ export function CompleteOrderForm({
   const [state, formAction, pending] = useActionState(completeProductionOrderAction, initial);
   const [outputs, setOutputs] = useState<Output[]>([]);
   const [close, setClose] = useState(true);
+  const [rejected, setRejected] = useState(0);
+  // Only what the person typed; everything else follows the output as it changes.
+  const [edited, setEdited] = useState<Record<string, string>>({});
   const ar = locale === "ar";
 
   const setQty = (variantId: string, goodQty: number) =>
@@ -344,12 +366,28 @@ export function CompleteOrderForm({
   const qtyOf = (variantId: string) =>
     outputs.find((o) => o.variantId === variantId)?.goodQty ?? "";
 
+  // Everything the run will have made once this receipt is in, rejects
+  // included — the same count the server checks issued material against.
+  const made = goodSoFar + good + rejectedSoFar + rejected;
+  const lines = materials.map((m) => {
+    const needed = Number(m.perGarment) * made;
+    // Rounded up to the hundredth, so the offer is never a hair short of what
+    // the check requires.
+    const missing = Math.max(0, Math.ceil((needed - Number(m.issued)) * 100 - 1e-6) / 100);
+    const value = edited[m.id] ?? (missing > 0 ? missing.toFixed(2) : "");
+    return { ...m, needed, missing, value };
+  });
+  const toIssue = lines
+    .filter((l) => Number(l.value) > 0)
+    .map((l) => ({ materialId: l.id, quantity: l.value }));
+
   return (
     <form action={formAction} className="space-y-3">
       <RequestIdField state={state} />
       <input type="hidden" name="productionOrderId" value={productionOrderId} />
       <input type="hidden" name="entityId" value={entityId} />
       <input type="hidden" name="outputs" value={JSON.stringify(outputs)} />
+      <input type="hidden" name="issueNow" value={JSON.stringify(toIssue)} />
 
       <div>
         <p className={label}>{ar ? "الخارج من الخط، لكل مقاس" : "Off the line, by SKU"}</p>
@@ -380,7 +418,9 @@ export function CompleteOrderForm({
           </label>
           <input
             id={`rej-${productionOrderId}`} name="rejectedQty" type="number" step="1" min="0"
-            defaultValue={0} dir="ltr" className={`${field} num w-24`}
+            value={rejected}
+            onChange={(e) => setRejected(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+            dir="ltr" className={`${field} num w-24`}
           />
         </div>
         <div>
@@ -444,6 +484,57 @@ export function CompleteOrderForm({
               : (ar ? "استلم في المخزن" : "Receive into stock")}
         </button>
       </div>
+
+      {made > 0 && lines.some((l) => l.needed > 0) && (
+        <div className="rounded-lg border border-ink-200 p-3">
+          <p className={label}>
+            {ar ? "الخامات للقطع دي — بتتصرف مع الاستلام" : "Material for these garments — issued with the receipt"}
+          </p>
+          <div className="space-y-2">
+            {lines.map((l) => (
+              <div key={l.id} className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="min-w-40">
+                  <code dir="ltr" className="text-xs text-ink-500">{l.code}</code>
+                  <span className="ms-2 text-ink-600">{l.name}</span>
+                </span>
+                <span className="text-xs text-ink-500">
+                  {ar ? "اتصرف" : "issued"} <span className="num">{l.issued}</span>
+                  {" / "}
+                  {ar ? "المعيار" : "standard"} <span className="num">{l.needed.toFixed(2)}</span> {l.uom}
+                </span>
+                <label className="flex items-center gap-2">
+                  <span className="text-xs text-ink-600">{ar ? "اصرف دلوقتي" : "Issue now"}</span>
+                  <input
+                    type="number" step="0.01" min="0" value={l.value}
+                    onChange={(e) => setEdited((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                    dir="ltr" className={`${field} num w-28`}
+                  />
+                </label>
+                {Number(l.value) > Number(l.onHand) && (
+                  <span className="text-xs text-warn">
+                    {ar ? `المخزن فيه ${l.onHand} بس` : `only ${l.onHand} on hand`}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          {toIssue.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-xs text-ink-600" htmlFor={`il-${productionOrderId}`}>
+                {ar ? "من مخزن" : "From"}
+              </label>
+              <select id={`il-${productionOrderId}`} name="issueLocationId" className={`${field} min-w-44`}>
+                {locations.map((loc) => <option key={loc.id} value={loc.id}>{loc.label}</option>)}
+              </select>
+              <p className="text-xs text-ink-500">
+                {ar
+                  ? "الصرف والاستلام بيتموا مع بعض، أو مايتمش ولا واحد. لو القماش الفعلي كان أقل، اكتب الرقم الحقيقي."
+                  : "Issue and receipt happen together or not at all. If less was really used, enter the real figure."}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {canApproveShortfall && (
         <div>

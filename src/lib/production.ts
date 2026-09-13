@@ -250,6 +250,21 @@ async function billOf(order: { costSnapshotId: string | null; styleId: string })
   }));
 }
 
+/**
+ * Waste-free consumption per garment, from the bill the run is held to.
+ *
+ * The same figures the receipt checks issued material against, so a screen
+ * that offers to issue what is missing offers exactly what would pass.
+ */
+export async function billForOrder(productionOrderId: string) {
+  const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });
+  return (await billOf(order)).map((l) => ({
+    materialId: l.materialId,
+    materialCode: l.materialCode,
+    perGarment: l.standardConsumption.toString(),
+  }));
+}
+
 /** What the bill says this run should consume, per material, waste included. */
 export async function plannedMaterials(productionOrderId: string) {
   const order = await db.productionOrder.findUniqueOrThrow({ where: { id: productionOrderId } });

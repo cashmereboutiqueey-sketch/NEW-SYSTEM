@@ -149,24 +149,56 @@ export async function completeProductionOrderAction(
     const shortfallReason = String(formData.get("shortfallReason") ?? "").trim() || null;
     if (shortfallReason) await authorize("production:confirm_cost");
 
+    const productionOrderId = String(formData.get("productionOrderId") ?? "");
+    const entityId = String(formData.get("entityId") ?? "");
+    const completedDate = new Date(String(formData.get("completedDate") ?? ""));
+
+    // Material the form offered to issue with this receipt.
+    const issueNow = (JSON.parse(String(formData.get("issueNow") ?? "[]")) as {
+      materialId: string;
+      quantity: string;
+    }[]).filter((i) => Number(i.quantity) > 0);
+    const issueLocationId = String(formData.get("issueLocationId") ?? "");
+    if (issueNow.length > 0 && !issueLocationId) {
+      return { error: "Choose the store the material is issued from." };
+    }
+
     // A second press after a lost response returns this completion rather
     // than putting the same run into stock twice.
-    const result = await formCommand("production.complete", formData, { userId: session.userId }, () =>
-      completeProductionOrder(
+    //
+    // The issues and the receipt are one command. Commands called inside
+    // another join its transaction, so if the receipt is refused — still
+    // short, a wrong SKU, a closed period — the material goes back on the
+    // shelf with it rather than sitting issued to a run that received nothing.
+    const result = await formCommand("production.complete", formData, { userId: session.userId }, async () => {
+      for (const issue of issueNow) {
+        await issueForOrder(
+          {
+            productionOrderId,
+            materialId: issue.materialId,
+            locationId: issueLocationId,
+            entityId,
+            quantity: issue.quantity,
+            issueDate: completedDate,
+          },
+          { userId: session.userId },
+        );
+      }
+      return completeProductionOrder(
         {
-          productionOrderId: String(formData.get("productionOrderId") ?? ""),
+          productionOrderId,
           outputs,
           rejectedQty: Number(formData.get("rejectedQty") ?? 0),
           locationId: String(formData.get("locationId") ?? ""),
-          entityId: String(formData.get("entityId") ?? ""),
-          completedDate: new Date(String(formData.get("completedDate") ?? "")),
+          entityId,
+          completedDate,
           actualTotalMinutes: (formData.get("actualTotalMinutes") as string) || undefined,
           close,
           shortfallReason,
         },
         { userId: session.userId },
-      ),
-    );
+      );
+    });
 
     revalidatePath("/production");
     revalidatePath("/inventory");

@@ -15,6 +15,7 @@ import {
 } from "./production";
 import { dec } from "./money";
 import { ownerDashboard } from "./dashboard";
+import { command } from "./command";
 
 /** The production order lifecycle, against a real database. */
 
@@ -563,6 +564,87 @@ describe("material behind the output", () => {
     ).rejects.toThrow(/Not enough material was issued for 100 garments/i);
 
     expect(await db.inventoryLot.count({ where: { variantId } })).toBe(0);
+  });
+
+  it("puts material issued with a refused receipt back on the shelf", async () => {
+    // What the close-the-run form does: issue what it offers, then receive,
+    // as one command. Offer too little and the receipt is refused — and the
+    // issue it made must not survive, or the fabric sits issued to a run that
+    // received nothing.
+    const productionOrderId = await tokenRun();
+    const issuesBefore = await db.materialIssue.count({ where: { productionOrderId } });
+    const fabricLotsBefore = await db.inventoryLot.aggregate({
+      where: { materialId: fabricId, state: "RAW_MATERIAL" },
+      _sum: { remainingQty: true },
+    });
+
+    await expect(
+      command("test.issueThenComplete", {}, ctx, async () => {
+        await issueForOrder(
+          {
+            productionOrderId, materialId: fabricId, locationId, entityId: factoryId,
+            quantity: "1", issueDate: day,
+          },
+          ctx,
+        );
+        return completeProductionOrder(
+          { productionOrderId, outputs: [{ variantId, goodQty: 100 }], locationId, entityId: factoryId, completedDate: day },
+          ctx,
+        );
+      }),
+    ).rejects.toThrow(/Not enough material was issued/i);
+
+    expect(await db.materialIssue.count({ where: { productionOrderId } })).toBe(issuesBefore);
+    const fabricLotsAfter = await db.inventoryLot.aggregate({
+      where: { materialId: fabricId, state: "RAW_MATERIAL" },
+      _sum: { remainingQty: true },
+    });
+    expect(String(fabricLotsAfter._sum.remainingQty)).toBe(String(fabricLotsBefore._sum.remainingQty));
+    expect(await db.inventoryLot.count({ where: { variantId } })).toBe(0);
+  });
+
+  it("issues and receives in one command when the offer covers the standard", async () => {
+    const productionOrderId = await tokenRun(4);
+    const bill = await plannedMaterials(productionOrderId);
+    // Enough of every material on the shelf for the top-up to succeed.
+    for (const l of await db.styleBomLine.findMany({ where: { styleId }, include: { material: true } })) {
+      await receiveMaterial(
+        {
+          materialId: l.materialId, locationId, entityId: factoryId,
+          quantity: dec(l.standardConsumption).times(4).plus(5).toFixed(4),
+          unitCost: l.material.basePrice.toString(), receivedDate: day,
+        },
+        ctx,
+      );
+    }
+
+    const result = await command("test.issueThenComplete", {}, ctx, async () => {
+      // Every material topped up to the standard for four, as the form offers.
+      for (const l of await db.styleBomLine.findMany({ where: { styleId } })) {
+        const issued = await db.materialIssue.aggregate({
+          where: { productionOrderId, materialId: l.materialId },
+          _sum: { actualQty: true },
+        });
+        const missing = dec(l.standardConsumption).times(4).minus(dec(issued._sum.actualQty ?? 0));
+        if (missing.greaterThan(0)) {
+          await issueForOrder(
+            {
+              productionOrderId, materialId: l.materialId, locationId, entityId: factoryId,
+              quantity: missing.toFixed(4), issueDate: day,
+            },
+            ctx,
+          );
+        }
+      }
+      return completeProductionOrder(
+        { productionOrderId, outputs: [{ variantId, goodQty: 4 }], locationId, entityId: factoryId, completedDate: day },
+        ctx,
+      );
+    });
+
+    expect(bill.length).toBeGreaterThan(0);
+    expect(result.closed).toBe(true);
+    expect(await db.inventoryLot.count({ where: { variantId, state: "FINISHED_GOODS" } })).toBeGreaterThan(0);
   });
 
   it("counts rejects against the material too", async () => {
