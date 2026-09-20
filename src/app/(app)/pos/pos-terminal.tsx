@@ -9,6 +9,7 @@ import {
 } from "./actions";
 import { isWellFormedSerial, normaliseTypedSerial } from "@/core/serial";
 import { RequestIdField } from "@/components/request-id";
+import { CameraScanner } from "@/components/camera-scanner";
 import type { Locale } from "@/lib/i18n";
 
 type Product = {
@@ -469,8 +470,19 @@ export function PosTerminal({
   async function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== "Enter") return;
     e.preventDefault();
+    await handleScanned(query);
+  }
 
-    const typed = normaliseTypedSerial(query);
+  /**
+   * One path for anything read off a tag, however it was read.
+   *
+   * The gun types and presses Enter; the camera hands over a string. Below
+   * this line neither is distinguishable from the other, so a phone at a
+   * bazaar and a laptop in the showroom put the same garment in the basket by
+   * the same rules.
+   */
+  async function handleScanned(text: string) {
+    const typed = normaliseTypedSerial(text);
     if (isWellFormedSerial(typed)) {
       setScanning(true);
       setScanError(null);
@@ -498,6 +510,19 @@ export function PosTerminal({
       return;
     }
 
+    // Not a garment tag: treat it as something typed. A consigned piece is
+    // found by its item code this way, and so is a supplier's own barcode.
+    setQuery(text);
+    const matches = products.filter(
+      (p) =>
+        p.sku.toLowerCase() === text.trim().toLowerCase() ||
+        p.barcode?.toLowerCase() === text.trim().toLowerCase(),
+    );
+    if (matches.length === 1) {
+      add(matches[0]);
+      setQuery("");
+      return;
+    }
     if (filtered.length === 1) add(filtered[0]);
   }
 
@@ -509,15 +534,21 @@ export function PosTerminal({
     <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
       {/* ---------------------------------------------------------- catalogue */}
       <div>
-        <input
-          ref={searchRef}
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onSearchKey}
-          placeholder={ar ? "امسح الليبل أو ابحث بالكود أو الاسم…" : "Scan a tag, or search by SKU or name…"}
-          className={`${field} mb-3 w-full`}
-        />
+        <div className="mb-3 flex items-start gap-2">
+          <input
+            ref={searchRef}
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onSearchKey}
+            placeholder={ar ? "امسح الليبل أو ابحث بالكود أو الاسم…" : "Scan a tag, or search by SKU or name…"}
+            className={`${field} w-full`}
+          />
+          {/* Where there is no scanner on a cable. Renders nothing at all on a
+              browser without a barcode reader, rather than offering a button
+              that cannot work. */}
+          <CameraScanner ar={ar} onScan={(value) => void handleScanned(value)} />
+        </div>
 
         {scanning && (
           <p className="mb-3 text-sm text-ink-400">{ar ? "بيقرا…" : "Reading…"}</p>
