@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getPrefs } from "@/lib/session";
 import { t } from "@/lib/i18n";
 import { Sidebar } from "@/components/sidebar";
+import { MobileMenu } from "@/components/mobile-menu";
 import { EntitySwitcher } from "@/components/entity-switcher";
 import { LocaleToggle } from "@/components/locale-toggle";
 import { Icon } from "@/components/icon";
@@ -29,12 +30,15 @@ export default async function AppLayout({
 
   return (
     <div className="app-shell flex h-screen overflow-hidden bg-cream">
-      <Sidebar locale={locale} scope={scope} />
+      <div className="hidden md:flex">
+        <Sidebar locale={locale} scope={scope} />
+      </div>
 
       <div className="app-column flex min-w-0 flex-1 flex-col">
         {/* app-header is what print.css hides. Without it the person signed in
             prints across the top of every garment label and invoice. */}
-        <header className="app-header flex items-center gap-3 border-b border-ink-200 bg-panel px-5 py-3">
+        <header className="app-header flex flex-wrap items-center gap-3 border-b border-ink-200 bg-panel px-3 py-3 md:px-5">
+          <MobileMenu locale={locale} scope={scope} />
           <EntitySwitcher current={scope} locale={locale} />
 
           <div className="ms-auto flex items-center gap-3">
@@ -58,7 +62,7 @@ export default async function AppLayout({
           </div>
         </header>
 
-        <main className="app-main flex-1 overflow-y-auto p-5">{children}</main>
+        <main className="app-main flex-1 overflow-y-auto p-3 md:p-5">{children}</main>
       </div>
     </div>
   );
