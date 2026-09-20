@@ -253,6 +253,48 @@ export async function labelsForProductionOrder(
 }
 
 /**
+ * Labels for goods held on somebody else's behalf.
+ *
+ * Consigned pieces are not made here: they have no SKU, no garment unit and no
+ * serial, because nothing in this building produced them. What they do have is
+ * an item code, which is what the till searches on — so the barcode carries
+ * that, and a scanner finds the piece the same way a cashier typing the code
+ * would.
+ *
+ * One label per piece still on the rail. Sold and returned pieces are not
+ * reprinted: a live code on a garment that has left is a scan nobody can
+ * explain later.
+ */
+export async function labelsForConsignor(consignorId: string): Promise<LabelData[]> {
+  const items = await db.consignmentItem.findMany({
+    where: { consignorId },
+    include: { consignor: true },
+    orderBy: { itemCode: "asc" },
+  });
+
+  const labels: LabelData[] = [];
+  for (const item of items) {
+    const remaining = item.quantityReceived - item.quantitySold - item.quantityReturned;
+    for (let i = 0; i < remaining; i += 1) {
+      labels.push({
+        serial: item.itemCode,
+        sku: item.itemCode,
+        nameEn: item.description,
+        nameAr: item.description,
+        // The owner's name rather than a colour code: on a rail of other
+        // people's goods, whose it is matters more than the shade, and the
+        // label has one line for it either way.
+        colourEn: item.colour ?? item.consignor.name,
+        colourAr: item.colour ?? item.consignor.name,
+        size: item.size ?? "",
+        price: item.retailPrice.toString(),
+      });
+    }
+  }
+  return labels;
+}
+
+/**
  * Labels for a style, for reprinting a tag that fell off or got soaked.
  *
  * Only garments that still exist and are still somewhere: reprinting the tag

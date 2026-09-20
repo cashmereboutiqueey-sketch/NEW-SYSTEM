@@ -220,6 +220,7 @@ export default async function ConsignmentPage() {
               ar ? "إجمالي البيع" : "Sold for",
               ar ? "عمولتك" : "You earned",
               ar ? "مستحق ليه" : "Owed to them",
+              ar ? "تساكي" : "Labels",
               "",
             ]}
             empty={ar ? "مفيش أصحاب بضاعة" : "No consignors"}
@@ -234,6 +235,22 @@ export default async function ConsignmentPage() {
                 <span key="o" className="num font-semibold text-bad">{formatMoney(p.owed)}</span>
               ) : (
                 <span key="o" className="text-ink-300">—</span>
+              ),
+              p.itemsOnRail > 0 ? (
+                // Only while something of theirs is still on the rail: a tag
+                // printed for a piece already sold is a live code on a garment
+                // that has left the shop.
+                <a
+                  key="l"
+                  href={`/print/labels/consignment/${p.id}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="rounded-lg border border-ink-200 px-2 py-1 text-xs text-ink-700"
+                >
+                  {ar ? "اطبع" : "Print"}
+                </a>
+              ) : (
+                <span key="l" className="text-ink-300">—</span>
               ),
               mayPay && dec(p.owed).greaterThan(0) ? (
                 <SettleForm
