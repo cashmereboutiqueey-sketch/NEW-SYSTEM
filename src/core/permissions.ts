@@ -76,6 +76,22 @@ export const PERMISSIONS = [
   "payroll:approve",
   "salary:view",
 
+  // --- attendance -------------------------------------------------------
+  /// Who was on the floor, and when. Deliberately separate from salary: a
+  /// line supervisor needs to know who is late and must never see what they
+  /// are paid.
+  "attendance:view",
+  /// Loading a device file.
+  "attendance:import",
+  /// Working the exception queue: accepting days, linking unknown badges.
+  "attendance:review",
+  /// Changing what a day says, which always leaves the punches alone.
+  "attendance:correct",
+  /// Agreeing that hours beyond the shift are to be paid.
+  "overtime:approve",
+  /// Sealing a month so payroll has something that cannot move under it.
+  "attendance:lock",
+
   // --- alerts and planning ----------------------------------------------
   "alert:view",
   "alert:acknowledge",
@@ -157,6 +173,9 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     // instruction, because it is the one approval whose cost never appears on
     // an invoice anybody else checks.
     "payroll:approve",
+    // Seals the month the payroll will be built from, having not been the one
+    // editing the days inside it.
+    "attendance:view", "attendance:lock",
     "period:close",
     "audit:view",
     "report:factory", "report:brand", "report:group",
@@ -172,7 +191,12 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "alert:view", "alert:acknowledge",
     "cmt_quote:view", "cmt_quote:create",
     "report:factory",
-    // No payroll, no salary, no journal posting.
+    // Who turned up, and who is late. A supervisor plans the line around
+    // that and cannot plan around what they cannot see.
+    "attendance:view",
+    // No payroll, no salary, no journal posting — and no attendance
+    // correction: the person whose line benefits from the hours is not the
+    // person who decides what the hours were.
   ],
 
   WAREHOUSE: [
@@ -215,6 +239,14 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
 
   HR: [
     "employee:view", "payroll:prepare", "salary:view",
+    // Runs attendance end to end: loads the device file, works the
+    // exceptions, corrects days, agrees overtime and seals the month.
+    "attendance:view", "attendance:import", "attendance:review",
+    "attendance:correct", "overtime:approve",
+    // Not attendance:lock. Whoever spent the month correcting days does not
+    // also get to declare them final: sealing belongs with the party that
+    // has to rely on the figures, which is the same party that approves the
+    // payroll built from them.
     // Prepares payroll; approval belongs to finance.
   ],
 
@@ -264,6 +296,8 @@ export const SEGREGATED_DUTIES: ReadonlyArray<[Permission, Permission]> = [
   ["purchase_order:create", "purchase_order:approve"],
   ["inventory:adjust", "inventory:approve_adjustment"],
   ["payroll:prepare", "payroll:approve"],
+  // Whoever changed a day is not the person who seals the month it is in.
+  ["attendance:correct", "attendance:lock"],
   ["journal:create", "period:close"],
 ];
 

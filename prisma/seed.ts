@@ -759,6 +759,33 @@ async function main() {
   const uomPC = await db.unitOfMeasure.findUniqueOrThrow({ where: { code: "PC" } });
   console.log(`  reference: ${colors.length} colours, ${sizes.length} sizes, ${uoms.length} units`);
 
+  /*
+   * Two working patterns to start from: the floor and the night line.
+   *
+   * Master data, not a demonstration — every business needs at least one shift
+   * before a single day of attendance means anything, and a shop with nobody
+   * on nights simply never assigns the second one. Sunday to Thursday, because
+   * that is the week here, with Friday off.
+   */
+  const shifts = [
+    {
+      code: "SHIFT-DAY", nameEn: "Day shift", nameAr: "الوردية الصباحية",
+      startMinute: 9 * 60, endMinute: 17 * 60, crossesMidnight: false,
+      workingDays: [0, 1, 2, 3, 4, 6], breakMinutes: 30, breakPaid: false,
+      graceMinutes: 10, overtimeAfterMinutes: 450,
+    },
+    {
+      code: "SHIFT-NIGHT", nameEn: "Night shift", nameAr: "الوردية الليلية",
+      startMinute: 20 * 60, endMinute: 4 * 60, crossesMidnight: true,
+      workingDays: [0, 1, 2, 3, 4, 6], breakMinutes: 30, breakPaid: true,
+      graceMinutes: 10, overtimeAfterMinutes: 480,
+    },
+  ];
+  for (const shift of shifts) {
+    await db.shift.upsert({ where: { code: shift.code }, update: {}, create: shift });
+  }
+  console.log(`  shifts: ${shifts.length}`);
+
   // -------------------------------------------------------------------------
   // Cost categories
   //

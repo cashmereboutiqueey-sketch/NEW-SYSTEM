@@ -101,6 +101,9 @@ async function present(employeeId: string, dayOffset: number, minutes = 480) {
       overtimeMinutes: "0",
       isAbsent: false,
       isLeave: false,
+      // What the helper has always meant. Payroll now reads only settled days,
+      // and a day with no status is one nobody has vouched for.
+      status: "PRESENT",
     },
   });
 }

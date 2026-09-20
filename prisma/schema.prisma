@@ -109,6 +109,9 @@ model User {
   consignmentSales     ConsignmentSale[]     @relation("ConsignmentSoldBy")
   consignorSettlements ConsignorSettlement[] @relation("ConsignorSettlementPaidBy")
   @@map("users")
+  attendanceImports        AttendanceImport[]
+  attendanceAdjustmentsRequested AttendanceAdjustment[] @relation("AttendanceAdjustmentRequestedBy")
+  attendanceAdjustmentsApproved  AttendanceAdjustment[] @relation("AttendanceAdjustmentApprovedBy")
 }
 
 /// Append-only record of who changed what. Never mutate historical records —
@@ -213,6 +216,7 @@ model Entity {
   consignmentSales     ConsignmentSale[]
   consignorSettlements ConsignorSettlement[]
   @@map("entities")
+  attendancePeriods AttendancePeriod[]
 }
 
 enum PeriodStatus {
@@ -686,6 +690,7 @@ model ProductionLine {
   reworkRecords    ReworkRecord[]
 
   @@map("production_lines")
+  shifts Shift[]
 }
 
 model Operator {
@@ -2238,6 +2243,7 @@ model Employee {
 
   operator       Operator?
   salaryHistory  SalaryHistory[]
+  shiftAssignments EmployeeShift[]
   punches        BiometricPunch[]
   attendance     AttendanceDay[]
   payrollLines   PayrollLine[]
@@ -2312,12 +2318,251 @@ model AttendanceDay {
   adjustmentReason String?
   approvedByUserId String?
 
+  /// The shift this day was judged against, copied at derivation. A later
+  /// change of schedule must not re-interpret a day already decided.
+  shiftId   String?
+  shift     Shift?  @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  status AttendanceStatus @default(NEEDS_REVIEW)
+
+  /// What the shift asked for, and what the punches show against it. Kept
+  /// rather than recomputed, because the rule may change and the day may not.
+  scheduledMinutes Decimal @default(0) @db.Decimal(18, 4)
+  breakMinutes     Decimal @default(0) @db.Decimal(18, 4)
+  lateMinutes      Decimal @default(0) @db.Decimal(18, 4)
+  earlyLeaveMinutes Decimal @default(0) @db.Decimal(18, 4)
+  /// Worked beyond the threshold, before anybody agreed to pay for it. Visible
+  /// always, paid only once approved into overtimeMinutes.
+  overtimeCandidateMinutes Decimal @default(0) @db.Decimal(18, 4)
+  overtimeApprovedByUserId String?
+  overtimeApprovedAt       DateTime?
+
+  /// Set when a person has looked at the day and accepted it. Re-derivation
+  /// leaves reviewed days alone.
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+
+  /// Sealed with its period. Changing it afterwards is an adjustment, not an
+  /// edit, and takes the lock capability.
+  lockedAt   DateTime?
+
+  adjustments AttendanceAdjustment[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([employeeId, workDate])
   @@index([workDate])
+  @@index([status, workDate])
   @@map("attendance_days")
+}
+
+/// What the day amounts to, once the punches have been read against a shift.
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  EARLY_LEAVE
+  /// One punch, or an odd number of them. Never absence, never a deduction.
+  INCOMPLETE
+  ABSENT
+  LEAVE
+  /// Not a working day under this shift.
+  OFF
+  NEEDS_REVIEW
+}
+
+/// A working pattern, reusable across people.
+///
+/// A shift is a rule rather than a property of an employee: the same pattern
+/// governs a whole line, and one person moving to nights should not rewrite
+/// what the others are judged against.
+model Shift {
+  id       String @id @default(cuid())
+  code     String @unique
+  nameEn   String
+  nameAr   String
+
+  /// Minutes from midnight, in Cairo. Stored as minutes rather than a time so
+  /// the arithmetic never crosses a daylight boundary by accident.
+  startMinute Int
+  endMinute   Int
+  /// Declared, not inferred. A shift whose end equals its start is a
+  /// twenty-four hour shift, and guessing between that and an overnight one
+  /// silently halves or doubles a day.
+  crossesMidnight Boolean @default(false)
+
+  /// 0 = Sunday through 6 = Saturday. The week here starts on Sunday, and
+  /// Friday is the usual day off.
+  workingDays Int[]
+
+  breakMinutes Int     @default(0)
+  breakPaid    Boolean @default(false)
+  /// Minutes after the start that are not counted late.
+  graceMinutes Int     @default(0)
+  /// Worked minutes beyond this become overtime candidates.
+  overtimeAfterMinutes Int @default(480)
+
+  /// Where it applies, when it applies to a part of the business only.
+  department String?
+  lineId     String?
+  line       ProductionLine? @relation(fields: [lineId], references: [id], onDelete: SetNull)
+
+  isActive Boolean @default(true)
+
+  assignments EmployeeShift[]
+  days        AttendanceDay[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("shifts")
+}
+
+/// Which shift somebody works, from when.
+///
+/// Dated rather than a column on the employee, so last month keeps being
+/// judged against the shift it was actually worked under.
+model EmployeeShift {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shiftId    String
+  shift      Shift    @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  effectiveFrom DateTime  @db.Date
+  effectiveTo   DateTime? @db.Date
+
+  createdAt DateTime @default(now())
+
+  @@index([employeeId, effectiveFrom])
+  @@map("employee_shifts")
+}
+
+enum AttendanceImportStatus {
+  /// Parsed and counted; nothing written yet.
+  PREVIEWED
+  COMMITTED
+  CANCELLED
+}
+
+/// One device file, and what became of it.
+///
+/// Keeps the question "where did this punch come from" answerable: who
+/// imported it, when, from which device and file, under which column mapping,
+/// and which rows were refused and why.
+model AttendanceImport {
+  id        String @id @default(cuid())
+  deviceId  String
+  filename  String
+  /// The column mapping used, so a file read wrongly can be explained rather
+  /// than argued about.
+  mapping   Json
+  /// Of the file previewed. Committing checks it, so what was counted and
+  /// shown is necessarily what gets written — a second, different file cannot
+  /// be slipped in behind a preview somebody already approved.
+  fileHash  String
+  status    AttendanceImportStatus @default(PREVIEWED)
+
+  totalRows     Int @default(0)
+  validRows     Int @default(0)
+  importedRows  Int @default(0)
+  duplicateRows Int @default(0)
+  unknownBadges Int @default(0)
+  invalidRows   Int @default(0)
+
+  /// The span the file covers, for spotting a file loaded for the wrong month.
+  rangeFrom DateTime?
+  rangeTo   DateTime?
+
+  importedByUserId String?
+  importedBy       User?   @relation(fields: [importedByUserId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+  committedAt      DateTime?
+
+  rows AttendanceImportRow[]
+
+  @@index([createdAt])
+  @@map("attendance_imports")
+}
+
+/// A row the import could not take, kept with the reason.
+model AttendanceImportRow {
+  id       String @id @default(cuid())
+  importId String
+  import   AttendanceImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  rowNumber Int
+  raw       Json
+  reason    String
+
+  @@index([importId])
+  @@map("attendance_import_rows")
+}
+
+enum AttendanceAdjustmentKind {
+  CORRECTION
+  OVERTIME_APPROVAL
+  OVERTIME_REJECTION
+  LEAVE
+  ABSENCE
+  REVIEW
+  /// Made after the period was locked. Deliberately its own kind: it is the
+  /// one a later audit looks for first.
+  POST_LOCK
+}
+
+/// Append-only history of a day. The day holds what is true now; these hold
+/// how it got there, and who said so.
+model AttendanceAdjustment {
+  id      String @id @default(cuid())
+  dayId   String
+  day     AttendanceDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+
+  kind    AttendanceAdjustmentKind
+  reason  String
+  before  Json?
+  after   Json?
+
+  requestedByUserId String?
+  requestedBy       User?   @relation("AttendanceAdjustmentRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  approvedByUserId  String?
+  approvedBy        User?   @relation("AttendanceAdjustmentApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([dayId, createdAt])
+  @@map("attendance_adjustments")
+}
+
+enum AttendancePeriodStatus {
+  OPEN
+  REVIEWED
+  LOCKED
+}
+
+/// A month of attendance for one entity, and how far it has been settled.
+///
+/// Payroll reads this, not the days: preparing a run against a period still
+/// open is preparing it against figures somebody is still arguing with.
+model AttendancePeriod {
+  id       String @id @default(cuid())
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  year     Int
+  month    Int
+
+  status AttendancePeriodStatus @default(OPEN)
+
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  lockedByUserId   String?
+  lockedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([entityId, year, month])
+  @@map("attendance_periods")
 }
 
 enum PayrollRunStatus {

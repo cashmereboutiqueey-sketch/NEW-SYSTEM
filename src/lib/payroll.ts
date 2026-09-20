@@ -8,6 +8,7 @@ import type { DraftLine } from "@/core/ledger";
 import { violatesSeparationOfDuties } from "@/core/permissions";
 import { dec, type Decimal } from "./money";
 import { command } from "./command";
+import { unresolvedCount } from "./attendance";
 
 /**
  * Payroll.
@@ -154,6 +155,10 @@ export async function deriveAttendance(
         firstIn: derived.firstIn,
         lastOut: derived.lastOut,
         workedMinutes: derived.workedMinutes.toString(),
+        // Said plainly rather than left to the default: a day the device
+        // accounted for in full is present, and one missing its other half is
+        // incomplete — which is not absence and never reduces pay.
+        status: derived.incomplete ? "INCOMPLETE" : "PRESENT",
         source: "BIOMETRIC",
         // An unpaired punch is not absence — it is a missing clock-out, and
         // it must be resolved by a person before it affects pay.
@@ -211,6 +216,17 @@ export async function adjustAttendance(
         source: "MANUAL" as const,
         adjustmentReason: input.reason,
         approvedByUserId: ctx.userId,
+        // A day somebody has corrected is a day somebody has settled, and it
+        // says so. Without this it would keep whatever status it was derived
+        // with — and payroll, which reads only settled days, would skip the
+        // very correction that was made to put it right.
+        status: (input.isLeave ?? before?.isLeave)
+          ? ("LEAVE" as const)
+          : (input.isAbsent ?? before?.isAbsent)
+            ? ("ABSENT" as const)
+            : ("PRESENT" as const),
+        reviewedByUserId: ctx.userId,
+        reviewedAt: new Date(),
       };
 
       await tx.attendanceDay.upsert({
@@ -334,6 +350,49 @@ export async function preparePayrollRun(
     /** Anything a person's pay could not be worked out from, said out loud. */
     const warnings: string[] = [];
 
+    /*
+     * Payroll is prepared from settled attendance, or not at all.
+     *
+     * The month has an attendance period from the moment anybody derives a day
+     * in it, and that row is what turns the discipline on. While it is open and
+     * something is still unresolved, preparation is refused outright — a run
+     * built over days nobody has looked at pays a number that is still being
+     * argued about, and the argument arrives after the money has gone.
+     *
+     * A month with no period row at all belongs to before this existed, or to a
+     * business not yet using it. That warns rather than blocks: retroactively
+     * freezing payroll out of months already worked would be a rule applied to
+     * people who never had the chance to follow it.
+     */
+    const attendancePeriod = await db.attendancePeriod.findUnique({
+      where: {
+        entityId_year_month: { entityId: input.entityId, year: period.year, month: period.month },
+      },
+    });
+    const unresolved = await unresolvedCount(input.entityId, period.year, period.month);
+    const openExceptions = unresolved.needsReview + unresolved.incomplete;
+
+    if (attendancePeriod && attendancePeriod.status !== "LOCKED") {
+      if (openExceptions > 0) {
+        throw new PayrollError(
+          `${openExceptions} attendance day(s) in this month still need review. ` +
+            `Settle them in Attendance, then lock the month before preparing payroll.`,
+        );
+      }
+      warnings.push(
+        "Attendance for this month is reviewed but not locked. Lock it so the figures cannot move under the run.",
+      );
+    } else if (!attendancePeriod) {
+      warnings.push(
+        "No attendance period exists for this month, so nothing has been reviewed or locked for it.",
+      );
+    }
+    if (unresolved.overtimePending > 0) {
+      warnings.push(
+        `${unresolved.overtimePending} day(s) have overtime worked but not approved. Unapproved overtime is not paid.`,
+      );
+    }
+
     return db.$transaction(async (tx) => {
       const runNumber = existing?.runNumber ?? (await nextDocumentNumber(tx, "PAY", period.startDate));
 
@@ -361,10 +420,14 @@ export async function preparePayrollRun(
       // Everybody's attendance for the month in one query rather than one per
       // person, and each cost centre's account looked up once: a payroll run
       // holds a transaction open, and the queries inside it hold it longer.
+      // Settled days only. A day still marked INCOMPLETE or NEEDS_REVIEW is
+      // one nobody has vouched for, and paying from it either pays hours that
+      // may not have happened or docks hours that did.
       const attendance = await tx.attendanceDay.findMany({
         where: {
           employeeId: { in: employees.map((e) => e.id) },
           workDate: { gte: period.startDate, lte: period.endDate },
+          status: { notIn: ["INCOMPLETE", "NEEDS_REVIEW"] },
         },
       });
       const daysByEmployee = new Map<string, typeof attendance>();

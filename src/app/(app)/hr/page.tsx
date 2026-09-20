@@ -4,7 +4,9 @@ import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
-import { formatMoney, formatNumber } from "@/lib/money";
+import Link from "next/link";
+import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
+import { cairoParts } from "@/core/attendance";
 import { dec } from "@/lib/money";
 import { createEmployeeAction } from "./actions";
 
@@ -43,11 +45,58 @@ export default async function HrPage() {
       take: 12,
     }),
     db.biometricPunch.count({ where: { employeeId: null } }),
-    db.attendanceDay.count({ where: { adjustmentReason: { contains: "Missing clock-out" } } }),
+    // Anything a person still has to settle, by its own status rather than by
+    // matching words in a note.
+    db.attendanceDay.count({ where: { status: { in: ["NEEDS_REVIEW", "INCOMPLETE"] } } }),
     db.entity.findMany({ orderBy: { kind: "asc" } }),
     db.costCenter.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
     db.productionLine.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
   ]);
+
+  /*
+   * Today, and the month so far.
+   *
+   * The dashboard answers two questions a manager actually asks: who is on the
+   * floor right now, and what is waiting for me. Everything here is countable
+   * from the days themselves — no figure is a salary, so a line supervisor can
+   * read it without seeing anybody's pay.
+   */
+  const today = cairoParts(new Date()).dateKey;
+  const todayDate = new Date(`${today}T00:00:00.000Z`);
+  const monthStart = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+
+  const [todayDays, monthDays, overtimePending, lastImport] = await Promise.all([
+    db.attendanceDay.groupBy({
+      by: ["status"],
+      where: { workDate: todayDate },
+      _count: { _all: true },
+    }),
+    db.attendanceDay.findMany({
+      where: { workDate: { gte: monthStart, lte: todayDate } },
+      select: { status: true, overtimeMinutes: true, scheduledMinutes: true },
+    }),
+    db.attendanceDay.count({
+      where: { overtimeCandidateMinutes: { gt: 0 }, overtimeApprovedAt: null },
+    }),
+    db.attendanceImport.findFirst({
+      orderBy: { createdAt: "desc" },
+      include: { importedBy: { select: { name: true } } },
+    }),
+  ]);
+
+  const todayCount = (status: string) =>
+    todayDays.find((d) => d.status === status)?._count._all ?? 0;
+
+  // Days somebody was expected and turned up, over days somebody was expected.
+  const expected = monthDays.filter((d) => d.status !== "OFF" && d.status !== "LEAVE").length;
+  const attended = monthDays.filter(
+    (d) => d.status === "PRESENT" || d.status === "LATE" || d.status === "EARLY_LEAVE",
+  ).length;
+  const attendanceRate = expected > 0 ? attended / expected : null;
+  const approvedOvertimeHours = monthDays.reduce(
+    (sum, d) => sum + Number(d.overtimeMinutes) / 60,
+    0,
+  );
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
   const payroll = employees.reduce((s, e) => s.plus(dec(e.baseSalary)), dec(0));
@@ -98,6 +147,85 @@ export default async function HrPage() {
           hint={ar ? "بصمة انصراف ناقصة" : "Missing clock-out"}
         />
       </div>
+
+      <Card
+        className="mb-4"
+        title={ar ? "النهارده" : "Today"}
+        description={
+          ar
+            ? `${today} — كل رقم هنا يوصّلك للي محتاج تصرف فيه`
+            : `${today} — every figure here leads to what needs doing about it`
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Link href={`/hr/attendance?from=${today}&to=${today}&status=PRESENT`}>
+            <StatTile
+              label={ar ? "حاضر" : "Present"}
+              value={formatNumber(todayCount("PRESENT") + todayCount("EARLY_LEAVE"), locale)}
+              tone="good"
+            />
+          </Link>
+          <Link href={`/hr/attendance?from=${today}&to=${today}&status=LATE`}>
+            <StatTile
+              label={ar ? "متأخر" : "Late"}
+              value={formatNumber(todayCount("LATE"), locale)}
+              tone={todayCount("LATE") > 0 ? "warn" : "neutral"}
+            />
+          </Link>
+          <Link href={`/hr/attendance?from=${today}&to=${today}&status=ABSENT`}>
+            <StatTile
+              label={ar ? "غياب" : "Absent"}
+              value={formatNumber(todayCount("ABSENT"), locale)}
+              tone={todayCount("ABSENT") > 0 ? "bad" : "good"}
+            />
+          </Link>
+          <Link href={`/hr/attendance?from=${today}&to=${today}&status=INCOMPLETE`}>
+            <StatTile
+              label={ar ? "بصمة ناقصة" : "Incomplete"}
+              value={formatNumber(todayCount("INCOMPLETE"), locale)}
+              tone={todayCount("INCOMPLETE") > 0 ? "bad" : "good"}
+              hint={ar ? "مش غياب" : "not absence"}
+            />
+          </Link>
+        </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Link href="/hr/attendance">
+            <StatTile
+              label={ar ? "مستني مراجعة" : "Pending review"}
+              value={formatNumber(needsReview, locale)}
+              tone={needsReview > 0 ? "bad" : "good"}
+            />
+          </Link>
+          <Link href="/hr/attendance">
+            <StatTile
+              label={ar ? "إضافي مستني موافقة" : "Overtime pending"}
+              value={formatNumber(overtimePending, locale)}
+              tone={overtimePending > 0 ? "warn" : "neutral"}
+            />
+          </Link>
+          <StatTile
+            label={ar ? "نسبة الحضور للشهر" : "Attendance this month"}
+            value={attendanceRate == null ? "—" : formatPercent(attendanceRate, locale)}
+            hint={ar ? "من الأيام المجدولة" : "of scheduled days"}
+          />
+          <StatTile
+            label={ar ? "إضافي معتمد" : "Approved overtime"}
+            value={`${formatNumber(Math.round(approvedOvertimeHours * 10) / 10, locale)} ${ar ? "ساعة" : "h"}`}
+            hint={ar ? "الشهر ده" : "this month"}
+          />
+        </div>
+
+        <p className="mt-3 text-xs text-ink-500">
+          {lastImport
+            ? ar
+              ? `آخر استيراد: ${lastImport.filename} من ${lastImport.deviceId}، ${lastImport.createdAt.toISOString().slice(0, 10)}، بواسطة ${lastImport.importedBy?.name ?? "—"} — ${lastImport.status === "COMMITTED" ? "تم" : "لسه في المراجعة"}.`
+              : `Last import: ${lastImport.filename} from ${lastImport.deviceId} on ${lastImport.createdAt.toISOString().slice(0, 10)} by ${lastImport.importedBy?.name ?? "—"} — ${lastImport.status === "COMMITTED" ? "imported" : "still previewed"}.`
+            : ar
+              ? "مفيش ملف بصمات اتحمّل لسه."
+              : "No device file has been loaded yet."}
+        </p>
+      </Card>
 
       {(unmatchedPunches > 0 || needsReview > 0) && (
         <Card className="mb-4">

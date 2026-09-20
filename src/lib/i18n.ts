@@ -127,6 +127,7 @@ export const dictionary = {
   // --- production ---
   production: { ar: "الإنتاج", en: "Production" },
   productionOrder: { ar: "أمر الإنتاج", en: "Production order" },
+  attendance: { ar: "الحضور", en: "Attendance" },
   cuttingTicket: { ar: "تذكرة القص", en: "Cutting ticket" },
   planned: { ar: "المخطط", en: "Planned" },
   actual: { ar: "الفعلي", en: "Actual" },
