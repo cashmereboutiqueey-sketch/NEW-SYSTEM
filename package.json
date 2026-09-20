@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/copy-zxing-wasm.mjs",
     "build": "node scripts/next-production.mjs build",
     "start": "node scripts/next-production.mjs start",
     "db:migrate": "prisma migrate dev",
@@ -38,6 +39,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
+    "barcode-detector": "^3.2.2",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",

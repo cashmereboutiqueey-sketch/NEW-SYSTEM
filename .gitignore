@@ -41,3 +41,4 @@ Caddyfile.local
 # server they are on, and this remote is public — so it is kept out of the
 # repository entirely rather than trusted to nobody pushing it.
 CASHMERE_ERP_FULL_AUDIT.md
+public/zxing/

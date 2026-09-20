@@ -14,19 +14,26 @@ import { useEffect, useRef, useState } from "react";
  * downstream knows the difference: the same serial lookup, the same search,
  * the same basket.
  *
- * Uses the browser's own barcode reader rather than a library. It is built
- * into Chrome on Android, which is the phone in a shop in Cairo; where it is
- * missing — Safari on an iPhone, today — the button does not appear at all,
- * because a button that cannot work is worse than no button.
+ * The browser's own reader is used where there is one: Chrome on Android has
+ * it, and it is fast and costs nothing to load. Where there is none — every
+ * iPhone, because Apple requires all iOS browsers to use WebKit and WebKit
+ * has no barcode reader, so Chrome there is Safari underneath — a WebAssembly
+ * reader is fetched instead, and only then. An Android phone never downloads
+ * it; an iPhone downloads it once, when the camera button is first pressed.
+ *
+ * Its binary is served from this site rather than a CDN, so a shop on a poor
+ * line does not lose scanning because somebody else's server is slow.
  */
 
 type BarcodeDetectorLike = {
   detect: (source: CanvasImageSource) => Promise<{ rawValue: string }[]>;
 };
 
+type DetectorOptions = { formats?: readonly string[] };
+
 declare global {
   interface Window {
-    BarcodeDetector?: new (options?: { formats?: string[] }) => BarcodeDetectorLike;
+    BarcodeDetector?: new (options?: DetectorOptions) => BarcodeDetectorLike;
   }
 }
 
@@ -41,15 +48,13 @@ export function CameraScanner({
   const [supported, setSupported] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // A camera is the only thing that cannot be supplied: the reader can be.
   useEffect(() => {
-    setSupported(
-      typeof window !== "undefined" &&
-        typeof window.BarcodeDetector === "function" &&
-        !!navigator.mediaDevices?.getUserMedia,
-    );
+    setSupported(!!navigator.mediaDevices?.getUserMedia);
   }, []);
 
   useEffect(() => {
@@ -73,11 +78,30 @@ export function CameraScanner({
           await videoRef.current.play();
         }
 
-        const detector = new window.BarcodeDetector!({
-          // What the shop's own tags carry, plus the codes printed on bought-in
-          // goods, so a supplier's barcode is read as readily as ours.
-          formats: ["code_128", "code_39", "ean_13", "ean_8", "qr_code"],
-        });
+        // What the shop's own tags carry, plus the codes printed on bought-in
+        // goods, so a supplier's barcode is read as readily as ours.
+        // `as const`, because the WebAssembly reader types its formats as a
+        // union of the codes it knows rather than plain strings.
+        const formats = ["code_128", "code_39", "ean_13", "ean_8", "qr_code"] as const;
+
+        let detector: BarcodeDetectorLike;
+        if (typeof window.BarcodeDetector === "function") {
+          detector = new window.BarcodeDetector({ formats });
+        } else {
+          setLoading(true);
+          // Imported here and nowhere else, so the reader is downloaded by the
+          // phones that need it at the moment they need it, and by no others.
+          const { BarcodeDetector, setZXingModuleOverrides } = await import(
+            "barcode-detector/ponyfill"
+          );
+          setZXingModuleOverrides({
+            locateFile: (file: string, prefix: string) =>
+              file.endsWith(".wasm") ? "/zxing/zxing_reader.wasm" : prefix + file,
+          });
+          detector = new BarcodeDetector({ formats: [...formats] });
+          if (cancelled) return;
+          setLoading(false);
+        }
 
         const read = async () => {
           if (cancelled || !videoRef.current) return;
@@ -143,7 +167,13 @@ export function CameraScanner({
           <div className="pointer-events-none absolute inset-x-8 top-1/3 h-28 rounded-lg border-2 border-white/80" />
           <div className="flex items-center justify-between gap-3 p-4">
             <p className="text-sm text-white/80">
-              {ar ? "صوّب على الباركود" : "Point at the barcode"}
+              {loading
+                ? ar
+                  ? "بنجهّز القارئ…"
+                  : "Getting the reader ready…"
+                : ar
+                  ? "صوّب على الباركود"
+                  : "Point at the barcode"}
             </p>
             <button
               type="button"
