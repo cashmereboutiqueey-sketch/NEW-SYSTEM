@@ -25,7 +25,13 @@ export type PosState = {
   error?: string;
   success?: string;
   /** Echoed back so the terminal can show a receipt after a sale. */
-  receipt?: { orderNumber: string; total: string; change: string };
+  receipt?: {
+    orderNumber: string;
+    total: string;
+    change: string;
+    /** The sale itself, so the till can offer to print it. */
+    salesOrderId?: string;
+  };
 };
 
 /** What is genuinely left of a consigned item, checked before anything moves. */
@@ -344,6 +350,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
         }
 
         let orderNumber: string | null = null;
+        let salesOrderId: string | null = null;
         if (cart.length > 0) {
           const sale = await createSale(
             {
@@ -372,6 +379,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
             { userId: session.userId },
           );
           orderNumber = sale.orderNumber;
+          salesOrderId = sale.salesOrderId;
         }
 
         const consignedSales: string[] = [];
@@ -393,7 +401,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
           commission = commission.plus(sale.commission);
         }
 
-        return { orderNumber, consignedSales, commission: commission.toFixed(2) };
+        return { orderNumber, salesOrderId, consignedSales, commission: commission.toFixed(2) };
       },
     );
 
@@ -410,6 +418,9 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
           : `Sale ${reference} recorded.`,
       receipt: {
         orderNumber: reference,
+        // Absent for a basket of nothing but consigned goods: those are the
+        // owner's sales, not the shop's, and have no receipt of this kind.
+        salesOrderId: result.salesOrderId ?? undefined,
         total: total.toFixed(2),
         change: change.toFixed(2),
       },

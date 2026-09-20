@@ -1127,15 +1127,39 @@ export function PosTerminal({
             </p>
           )}
           {state.receipt && (
-            <p role="status" className="mb-2 rounded-lg bg-good/10 px-3 py-2 text-sm text-good">
-              {ar ? "تم البيع" : "Sold"} — {state.receipt.orderNumber}
-              {Number(state.receipt.change) > 0 && (
-                <>
-                  {" · "}
-                  {ar ? "الباقي" : "change"} <span className="num">{state.receipt.change}</span>
-                </>
+            <div
+              role="status"
+              className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-good/10 px-3 py-2 text-sm text-good"
+            >
+              <span>
+                {ar ? "تم البيع" : "Sold"} — {state.receipt.orderNumber}
+                {Number(state.receipt.change) > 0 && (
+                  <>
+                    {" · "}
+                    {ar ? "الباقي" : "change"} <span className="num">{state.receipt.change}</span>
+                  </>
+                )}
+              </span>
+              {state.receipt.salesOrderId && (
+                /*
+                 * A new tab, and it opens its own print dialogue.
+                 *
+                 * The till must stay where it is — the next customer is already
+                 * at the counter, and navigating away would lose the session
+                 * the cashier is serving from. Printing from the tab the click
+                 * opened keeps the dialogue attached to something the cashier
+                 * did, which is the only way a browser allows it.
+                 */
+                <a
+                  href={`/print/receipt/${state.receipt.salesOrderId}?print=1`}
+                  target="_blank"
+                  rel="noopener"
+                  className="ms-auto rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  {ar ? "اطبع الفاتورة" : "Print the receipt"}
+                </a>
               )}
-            </p>
+            </div>
           )}
 
           <button
