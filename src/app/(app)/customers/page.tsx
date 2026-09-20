@@ -8,6 +8,8 @@ import { EntityForm } from "@/components/entity-form";
 import { can } from "@/core/permissions";
 import { createCustomerAction } from "./actions";
 import { MergeForm } from "./merge-form";
+import { CreditForm } from "./credit-form";
+import { db } from "@/lib/db";
 import { dec } from "@/lib/money";
 
 /**
@@ -36,6 +38,18 @@ export default async function CustomersPage() {
     .map((p) => ({ id: p.id, name: p.name, phone: p.phone ?? null, orders: p.orders }));
 
   const mayAdd = can(session.role, "sales_order:create");
+  const mayCredit = can(session.role, "sales_order:credit");
+
+  // Only where credit can be granted: the list is small and the figures are
+  // not everybody's business.
+  const creditable = mayCredit
+    ? await db.customer.findMany({
+        where: { mergedIntoId: null },
+        select: { id: true, code: true, name: true, creditLimit: true, creditDays: true },
+        orderBy: { name: "asc" },
+        take: 200,
+      })
+    : [];
   // Merging rewrites who owns an order history, so it sits with the elevated
   // export capability rather than with everyday order entry.
   const mayMerge = can(session.role, "customer:export");
@@ -240,6 +254,47 @@ export default async function CustomersPage() {
               { kind: "text", name: "notes", labelEn: "Notes", labelAr: "ملاحظات", span: 3 },
             ]}
           />
+        </Card>
+      )}
+
+      {mayCredit && creditable.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "حد الائتمان" : "Credit limit"}
+          description={
+            ar
+              ? "العميل مايقدرش يدفع جزء من الحساب غير لو ليه حد هنا — الافتراضي صفر، يعني كاش كامل"
+              : "A customer cannot pay part of a sale without a limit here — the default is zero, meaning cash in full"
+          }
+        >
+          <CreditForm
+            locale={locale}
+            customers={creditable.map((c) => ({
+              id: c.id,
+              label: `${c.name} · ${c.code}`,
+              creditLimit: Number(c.creditLimit).toFixed(2),
+              creditDays: c.creditDays,
+            }))}
+          />
+
+          {creditable.some((c) => Number(c.creditLimit) > 0) && (
+            <div className="mt-4">
+              <DataTable
+                headers={[
+                  ar ? "العميل" : "Customer",
+                  ar ? "أقصى مبلغ عليه" : "May owe up to",
+                  ar ? "مدة السداد" : "Days to pay",
+                ]}
+                rows={creditable
+                  .filter((c) => Number(c.creditLimit) > 0)
+                  .map((c) => [
+                    <span key={`${c.id}-n`}>{c.name}</span>,
+                    <span key={`${c.id}-l`} className="num">{formatMoney(c.creditLimit, locale)}</span>,
+                    <span key={`${c.id}-d`} className="num">{formatNumber(c.creditDays, locale)}</span>,
+                  ])}
+              />
+            </div>
+          )}
         </Card>
       )}
 

@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { createCustomer, MasterDataError } from "@/lib/master-data";
+import { createCustomer, setCustomerCredit, MasterDataError } from "@/lib/master-data";
 import { mergeCustomers, CrmError } from "@/lib/crm";
+import { can } from "@/core/permissions";
 import type { FormState } from "@/components/entity-form";
 
 function toMessage(error: unknown): string {
@@ -40,6 +41,14 @@ export async function createCustomerAction(
         // than becoming a no.
         marketingConsent: consentRaw === "on" ? true : null,
         notes: (formData.get("notes") as string) || null,
+        // Only where the person adding them may give credit at all; a cashier
+        // filling in a walk-in cannot set a limit for them.
+        ...(can(session.role, "sales_order:credit")
+          ? {
+              creditLimit: Number(formData.get("creditLimit") ?? 0) || 0,
+              creditDays: Number(formData.get("creditDays") ?? 0) || 0,
+            }
+          : {}),
       } as never,
       { userId: session.userId },
     );
@@ -76,6 +85,38 @@ export async function mergeCustomersAction(
 
     revalidatePath("/customers");
     return { success: `Merged. ${result.ordersMoved} order(s) moved to the surviving record.` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function setCustomerCreditAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    // Granting credit is the right that governs it, not the right to edit a
+    // customer's details.
+    const session = await authorize("sales_order:credit");
+
+    const customer = await setCustomerCredit(
+      {
+        customerId: String(formData.get("customerId") ?? ""),
+        creditLimit: String(formData.get("creditLimit") ?? "0"),
+        creditDays: String(formData.get("creditDays") ?? "0"),
+      },
+      { userId: session.userId },
+    );
+
+    revalidatePath("/customers");
+    revalidatePath("/pos");
+    revalidatePath("/receivables");
+
+    return {
+      success:
+        `${customer.name} may now owe up to ${Number(customer.creditLimit).toFixed(2)}, ` +
+        `due in ${customer.creditDays} day(s).`,
+    };
   } catch (error) {
     return { error: toMessage(error) };
   }

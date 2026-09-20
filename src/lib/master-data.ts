@@ -307,6 +307,16 @@ export const customerSchema = z.object({
     .optional(),
   marketingConsent: z.boolean().nullable().optional(),
   notes: z.string().nullable().optional(),
+  /**
+   * What this customer may owe at once, and for how long.
+   *
+   * Zero is the default and the right one: credit is something granted to a
+   * particular person, not a property of being a customer. But it was also
+   * unreachable — nothing in the application could set it — so a part payment
+   * was refused for every customer alive, and the rule read as a fault.
+   */
+  creditLimit: z.coerce.number().min(0, "A credit limit cannot be negative.").optional(),
+  creditDays: z.coerce.number().int().min(0, "Credit days cannot be negative.").optional(),
 });
 
 export type CustomerInput = z.input<typeof customerSchema>;
@@ -335,6 +345,8 @@ export async function createCustomer(input: CustomerInput, ctx: AuditContext) {
         channelId: data.channelId ?? null,
         acquiredVia: data.acquiredVia ?? null,
         notes: data.notes ?? null,
+        ...(data.creditLimit != null ? { creditLimit: dec(data.creditLimit).toFixed(4) } : {}),
+        ...(data.creditDays != null ? { creditDays: data.creditDays } : {}),
         phoneNormalised,
         emailNormalised: normaliseEmail(data.email),
         ...(data.marketingConsent != null
@@ -818,4 +830,51 @@ export async function updateCostCategory(
       input.includeInMinuteRate !== undefined &&
       input.includeInMinuteRate !== before.includeInMinuteRate,
   };
+}
+
+/**
+ * What a customer may owe, and for how long.
+ *
+ * Separate from the rest of their record on purpose: a name or a phone is
+ * housekeeping, and this is money the shop agrees to be out of pocket. It
+ * takes the right to give credit, and both figures are written to the trail
+ * with what they were before, because "who let them owe that much" is the
+ * question asked when a debt goes bad.
+ */
+export async function setCustomerCredit(
+  input: { customerId: string; creditLimit: number | string; creditDays: number | string },
+  ctx: AuditContext,
+) {
+  const limit = dec(input.creditLimit);
+  const days = Number(input.creditDays);
+  if (!limit.isFinite() || limit.isNegative()) {
+    throw new MasterDataError("A credit limit cannot be negative.");
+  }
+  if (!Number.isInteger(days) || days < 0) {
+    throw new MasterDataError("Credit days are whole days, and cannot be negative.");
+  }
+
+  const before = await db.customer.findUnique({
+    where: { id: input.customerId },
+    select: { name: true, creditLimit: true, creditDays: true },
+  });
+  if (!before) throw new MasterDataError("Customer not found.");
+
+  return db.$transaction(async (tx) => {
+    const customer = await tx.customer.update({
+      where: { id: input.customerId },
+      data: { creditLimit: limit.toFixed(4), creditDays: days },
+    });
+
+    await writeAudit(tx, {
+      action: "CUSTOMER_CREDIT_SET",
+      entityName: "Customer",
+      entityId: customer.id,
+      before: { creditLimit: before.creditLimit.toString(), creditDays: before.creditDays },
+      after: { creditLimit: limit.toFixed(4), creditDays: days },
+      ctx,
+    });
+
+    return customer;
+  });
 }

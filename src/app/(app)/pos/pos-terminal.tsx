@@ -106,7 +106,12 @@ export function PosTerminal({
   isExhibition: boolean;
   /** Goods held for other people, sellable here and owned by nobody here. */
   consigned: ConsignedProduct[];
-  customers: { id: string; name: string; phone: string | null }[];
+  customers: {
+    id: string; name: string; phone: string | null;
+    /** What they may owe at once, and what they owe already. */
+    creditLimit?: number;
+    alreadyOwed?: number;
+  }[];
 }) {
   const ar = locale === "ar";
   const [state, formAction, pending] = useActionState(checkoutAction, initial);
@@ -375,7 +380,22 @@ export function PosTerminal({
   const owed = money(total - collectedNow);
   // A debt has to have a name on it, so the sale is blocked here rather than
   // letting the server refuse it after the cashier has taken the money.
-  const creditBlocked = owed > 0 && !customerId;
+  /*
+   * What this sale would leave on their account, against what they are allowed.
+   *
+   * Checked here as well as on the server, because the server's refusal arrives
+   * after the cashier has pressed sell with the customer standing there. The
+   * numbers are the ones the refusal would use, so the till and the ledger tell
+   * the same story — and a customer added at the counter has no limit yet,
+   * which is why an absent figure counts as nil rather than as no rule.
+   */
+  const chosenCustomer = people.find((c) => c.id === customerId);
+  const alreadyOwed = chosenCustomer?.alreadyOwed ?? 0;
+  const creditLimit = chosenCustomer?.creditLimit ?? 0;
+  const wouldOwe = money(alreadyOwed + owed);
+  const overLimit = owed > 0 && !!chosenCustomer && wouldOwe > money(creditLimit);
+
+  const creditBlocked = (owed > 0 && !customerId) || overLimit;
 
   // The cart is cleared only once a sale has actually been recorded. Clearing
   // it on click would throw away the customer's basket whenever a checkout
@@ -1098,6 +1118,22 @@ export function PosTerminal({
                       {ar
                         ? "لازم تختار العميل — الدين من غير اسم محدش يقدر يطالب بيه."
                         : "Choose the customer: a debt with no name cannot be chased."}
+                    </p>
+                  )}
+
+                  {overLimit && chosenCustomer && (
+                    <p className="mt-2 rounded-lg bg-bad/10 px-3 py-2 text-xs text-bad">
+                      {ar
+                        ? `${chosenCustomer.name} هيبقى عليه ${wouldOwe.toFixed(2)}${alreadyOwed > 0 ? ` (منهم ${alreadyOwed.toFixed(2)} من قبل)` : ""}، وحده ${creditLimit.toFixed(2)}. ارفع الحد من صفحة العملاء أو خُد المبلغ كامل.`
+                        : `${chosenCustomer.name} would owe ${wouldOwe.toFixed(2)}${alreadyOwed > 0 ? ` (${alreadyOwed.toFixed(2)} of it from before)` : ""}, over their ${creditLimit.toFixed(2)} limit. Raise it on the customers page, or take the full amount.`}
+                    </p>
+                  )}
+
+                  {owed > 0 && chosenCustomer && !overLimit && (
+                    <p className="mt-2 text-xs text-ink-500">
+                      {ar
+                        ? `هيبقى عليه ${wouldOwe.toFixed(2)} من حد ${creditLimit.toFixed(2)}.`
+                        : `Leaves ${wouldOwe.toFixed(2)} owing against a ${creditLimit.toFixed(2)} limit.`}
                     </p>
                   )}
                 </div>

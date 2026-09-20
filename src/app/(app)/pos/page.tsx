@@ -62,11 +62,37 @@ export default async function PosPage({
     db.salesChannel.findFirstOrThrow(),
     db.customer.findMany({
       where: { mergedIntoId: null, isActive: true },
-      select: { id: true, name: true, phone: true },
+      // The limit comes with them: the till refuses a part payment that would
+      // pass it, and finding that out after pressing sell, with the customer
+      // at the counter, is finding out too late.
+      select: { id: true, name: true, phone: true, creditLimit: true },
       orderBy: { name: "asc" },
       take: 200,
     }),
   ]);
+
+  // What each of them owes already: every uncancelled order with what has
+  // been paid against it, reduced by customer. The same arithmetic the credit
+  // check runs, so the till cannot promise what the ledger will refuse.
+  const openOrders = await db.salesOrder.findMany({
+    where: { customerId: { in: customers.map((c) => c.id) }, status: { not: "CANCELLED" } },
+    select: {
+      customerId: true,
+      netAmount: true,
+      shippingAmount: true,
+      payments: { select: { amount: true } },
+    },
+  });
+  const owedByCustomer = new Map<string, number>();
+  for (const order of openOrders) {
+    if (!order.customerId) continue;
+    const billed = Number(order.netAmount) + Number(order.shippingAmount ?? 0);
+    const paid = order.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    owedByCustomer.set(
+      order.customerId,
+      (owedByCustomer.get(order.customerId) ?? 0) + Math.max(0, billed - paid),
+    );
+  }
 
   if (!till) {
     return (
@@ -201,7 +227,13 @@ export default async function PosPage({
           mayGiveCredit={can(session.role, "sales_order:credit")}
           isExhibition={till.location.kind === "EXHIBITION"}
           consigned={consigned}
-          customers={customers}
+          customers={customers.map((c) => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+            creditLimit: Number(c.creditLimit),
+            alreadyOwed: owedByCustomer.get(c.id) ?? 0,
+          }))}
         />
       </div>
       )}
