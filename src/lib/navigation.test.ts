@@ -130,6 +130,7 @@ describe("what each role is shown", () => {
         "/exhibitions",    // bazaars
         "/goods-in",       // what arrived from the factory, to be counted
         "/inventory",      // what is here and how much, never what it is worth
+        "/moderator",      // the order desk; they already take custom orders
         "/pos",
         "/receivables",    // who owes, so part payment can be judged
         "/returns",

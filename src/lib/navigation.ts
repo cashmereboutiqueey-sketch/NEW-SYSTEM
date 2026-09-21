@@ -117,6 +117,9 @@ export const navigation: NavSection[] = [
       { key: "pos", href: "/pos", phase: 6, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true, needs: ["pos:operate", "pos:close_shift"] },
       { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "inventory:view" },
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true, needs: "sales_order:view" },
+      // One desk for an order that arrived as a message: sold off the shelf
+      // where it exists, and put on the line where the cloth allows it.
+      { key: "moderator", href: "/moderator", phase: 7, scopes: ["BRAND", "GROUP"], icon: "globe", shipped: true, needs: "sales_order:create" },
       // The courier has no API: sheets out in its template, its report back in.
       { key: "shipping", href: "/shipping", phase: 6, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "sales_order:view" },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true, needs: "customer:view" },
