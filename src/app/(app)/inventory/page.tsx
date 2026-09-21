@@ -31,7 +31,7 @@ export default async function InventoryPage({
 }: {
   searchParams: Promise<{ count?: string }>;
 }) {
-  const session = await requirePermission("inventory:view");
+  const session = await requirePermission("stock_value:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const asOf = new Date();

@@ -112,20 +112,19 @@ export const navigation: NavSection[] = [
     key: "inventory",
     items: [
       { key: "goodsIn", href: "/goods-in", phase: 4, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "inventory:view" },
-      { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true, needs: "inventory:view" },
+      { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true, needs: "stock_value:view" },
       { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ALL_SCOPES, icon: "alert", shipped: true, needs: "stock_value:view" },
       { key: "pos", href: "/pos", phase: 6, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true, needs: ["pos:operate", "pos:close_shift"] },
-      { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "inventory:view" },
-      { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true, needs: "sales_order:view" },
+      { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "stock_value:view" },
+      { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true, needs: "report:brand" },
       // One desk for an order that arrived as a message: sold off the shelf
       // where it exists, and put on the line where the cloth allows it.
-      { key: "moderator", href: "/moderator", phase: 7, scopes: ["BRAND", "GROUP"], icon: "globe", shipped: true, needs: "sales_order:create" },
+      { key: "moderator", href: "/moderator", phase: 7, scopes: ["BRAND", "GROUP"], icon: "globe", shipped: true, needs: "sales_order:view" },
       // The courier has no API: sheets out in its template, its report back in.
       { key: "shipping", href: "/shipping", phase: 6, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "sales_order:view" },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true, needs: "customer:view" },
-      { key: "consignment", href: "/consignment", phase: 6, scopes: ["BRAND", "GROUP"], icon: "layers", shipped: true, needs: "inventory:view" },
+      { key: "consignment", href: "/consignment", phase: 6, scopes: ["BRAND", "GROUP"], icon: "layers", shipped: true, needs: "stock_value:view" },
       { key: "returns", href: "/returns", phase: 6, scopes: ["BRAND", "GROUP"], icon: "refresh", shipped: true, needs: "sales_order:view" },
-      { key: "customOrders", href: "/custom-orders", phase: 7, scopes: ["BRAND", "GROUP"], icon: "scissors", shipped: true, needs: "sales_order:view" },
       { key: "customerCredit", href: "/receivables", phase: 7, scopes: ["BRAND", "GROUP"], icon: "wallet", shipped: true, needs: "sales_order:view" },
       { key: "marketing", href: "/marketing", phase: 10, scopes: ["BRAND", "GROUP"], icon: "sparkles", shipped: true, needs: "campaign:view" },
       { key: "recovery", href: "/recovery", phase: 10, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true, needs: "campaign:view" },

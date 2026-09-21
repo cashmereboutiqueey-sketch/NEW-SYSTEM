@@ -21,7 +21,7 @@ import { OpenExhibitionForm } from "./open-form";
  * the number whoever is standing at the bazaar actually needs.
  */
 export default async function ExhibitionsPage() {
-  const session = await requirePermission("inventory:view");
+  const session = await requirePermission("stock_value:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

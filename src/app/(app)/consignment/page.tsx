@@ -27,7 +27,7 @@ import { SettleForm } from "./settle-form";
  * business owns.
  */
 export default async function ConsignmentPage() {
-  const session = await requirePermission("inventory:view");
+  const session = await requirePermission("stock_value:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

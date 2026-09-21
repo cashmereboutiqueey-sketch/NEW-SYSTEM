@@ -242,13 +242,17 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
 
   POS_CASHIER: [
     "pos:operate",
+    // Enough to read back an order, a return, a delivery and what a customer
+    // owes. Not enough to open the sales register, which is a report.
     "sales_order:view", "sales_order:create",
-    "customer:view",
-    // Quantities only. Whether a size is on the rail and how many are left is
-    // the job; what the company paid for it, what the stock is worth and what
-    // the factory pays for fabric are not, and a shop floor is the easiest
-    // place in the company to read a screen over somebody's shoulder.
+    // Quantities only, and only where the job needs them: counting in a
+    // delivery from the factory. Not the stock register, not what any of it
+    // is worth, and not the factory bill.
     "inventory:view",
+    // Deliberately not `customer:view`. A customer is chosen by name while a
+    // sale is being rung up, which `pos:operate` and `sales_order:create`
+    // already allow; browsing the whole customer base is a different act and
+    // a different screen.
     // Discount and refund are separate capabilities a supervisor grants.
   ],
 

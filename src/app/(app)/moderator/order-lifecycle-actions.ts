@@ -6,7 +6,6 @@ import { LedgerError } from "@/lib/ledger";
 import { SalesError } from "@/lib/sales";
 import { InventoryError } from "@/lib/inventory";
 import {
-  takeCustomOrder,
   addDeposit,
   linkProductionOrder,
   markReady,
@@ -40,57 +39,9 @@ function day(value: FormDataEntryValue | null): Date {
 }
 
 function refresh() {
-  revalidatePath("/custom-orders");
+  revalidatePath("/moderator");
   revalidatePath("/receivables");
-}
-
-export async function takeCustomOrderAction(
-  _prev: CustomOrderState,
-  formData: FormData,
-): Promise<CustomOrderState> {
-  try {
-    const session = await authorize("sales_order:create");
-
-    const depositAmount = String(formData.get("depositAmount") ?? "").trim();
-    const hasDeposit = depositAmount !== "" && Number(depositAmount) > 0;
-
-    const promised = String(formData.get("promisedDate") ?? "");
-
-    // Taking the order can take a deposit, so a second press after a lost
-    // response must return this order rather than open a second one.
-    const result = await formCommand("customOrders.take", formData, { userId: session.userId }, () =>
-      takeCustomOrder(
-        {
-          customerId: String(formData.get("customerId") ?? ""),
-          variantId: String(formData.get("variantId") ?? ""),
-          quantity: Number(formData.get("quantity") ?? 1),
-          agreedUnitPrice: String(formData.get("agreedUnitPrice") ?? "0"),
-          deposit: hasDeposit
-            ? {
-                amount: depositAmount,
-                method: String(formData.get("depositMethod") ?? "CASH") as
-                  | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-              }
-            : null,
-          entityId: String(formData.get("entityId") ?? ""),
-          locationId: String(formData.get("locationId") ?? ""),
-          orderDate: day(formData.get("orderDate")),
-          promisedDate: promised ? new Date(promised) : null,
-          notes: String(formData.get("notes") ?? "") || null,
-        },
-        { userId: session.userId, reason: null },
-      ),
-    );
-
-    refresh();
-    return {
-      success: `اتسجّل ${result.orderNumber} بـ ${Number(result.agreedTotal).toFixed(2)}${
-        Number(result.deposit) > 0 ? ` وعربون ${Number(result.deposit).toFixed(2)}` : " من غير عربون"
-      }`,
-    };
-  } catch (error) {
-    return { error: toMessage(error) };
-  }
+  revalidatePath("/production");
 }
 
 export async function addDepositAction(

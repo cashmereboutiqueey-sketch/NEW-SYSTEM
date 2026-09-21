@@ -120,42 +120,58 @@ describe("what each role is shown", () => {
    * worth failing over. The list is the whole menu, so an addition shows up
    * here as well as a removal.
    */
-  it("gives the till operator the shop and nothing else", () => {
+  it("gives the till operator the till, the desk, and what the day needs", () => {
     expect(visible("POS_CASHIER").sort()).toEqual(
       [
-        "/",               // adapts to the role; shows a cashier no figures
-        "/consignment",    // somebody else's goods, sold here
-        "/custom-orders",
-        "/customers",
-        "/exhibitions",    // bazaars
-        "/goods-in",       // what arrived from the factory, to be counted
-        "/inventory",      // what is here and how much, never what it is worth
-        "/moderator",      // the order desk; they already take custom orders
+        "/",             // adapts to the role; shows a cashier no figures
+        "/goods-in",     // counting in what arrived from the factory
+        "/moderator",    // where an order is taken, sold or made
         "/pos",
-        "/receivables",    // who owes, so part payment can be judged
+        "/receivables",  // who owes, so a part payment can be judged
         "/returns",
-        "/sales",          // the online orders
         "/shipping",
       ].sort(),
     );
   });
 
-  it("keeps the till operator out of the books and off the factory floor", () => {
+  it("keeps the till operator out of the books, the register and the factory", () => {
     const seen = visible("POS_CASHIER");
     for (const href of [
       "/journal", "/audit", "/hr", "/hr/attendance", "/expenses", "/users", "/settings",
-      // Added when stock value was split from stock quantity.
-      "/materials", "/materials/ledger", "/transfers",
-      "/inventory/dead-stock", "/sales/sell-through", "/sales/markdown", "/reports/gmroi",
+      // Stock value split from stock quantity.
+      "/materials", "/materials/ledger", "/transfers", "/inventory", "/inventory/dead-stock",
+      "/exhibitions", "/consignment",
+      // Reports, including the sales register, which reads back what the desk
+      // took rather than taking anything.
+      "/sales", "/sales/sell-through", "/sales/markdown", "/reports/gmroi",
+      // Browsing the customer base is a different act from naming one on a sale.
+      "/customers",
     ]) {
       expect(seen, `a cashier should not be offered ${href}`).not.toContain(href);
     }
   });
 
-  it("gives the same shop floor to a social-media moderator, minus the till", () => {
+  it("gives a social-media moderator the same desk without the till", () => {
     const moderator = visible("MODERATOR");
+    const cashier = visible("POS_CASHIER");
+    expect(moderator).toContain("/moderator");
     expect(moderator).not.toContain("/pos");
-    expect(new Set([...moderator, "/pos"])).toEqual(new Set(visible("POS_CASHIER")));
+    // It keeps the customer base, which is the job: a moderator is talking to
+    // people all day and the till operator is not.
+    expect(moderator).toContain("/customers");
+    expect(new Set([...cashier].filter((h) => h !== "/pos"))).toEqual(
+      new Set([...moderator].filter((h) => h !== "/customers")),
+    );
+  });
+
+  it("leaves made-to-order reachable now that its own screen is gone", () => {
+    // The lifecycle moved onto the moderator desk. Anybody who could work a
+    // promise before must still be able to, or an order taken today can never
+    // be handed over.
+    for (const role of ["OWNER", "BRAND_MANAGER", "POS_CASHIER", "MODERATOR"] as const) {
+      expect(visible(role), `${role} lost the made-to-order desk`).toContain("/moderator");
+    }
+    expect(items.some((i) => i.href === "/custom-orders")).toBe(false);
   });
 
   it("shows a line supervisor who is on the floor and nothing about pay", () => {
