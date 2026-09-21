@@ -28,7 +28,11 @@ export default async function DashboardPage() {
   // alone rendered.
   const seeMoney = can(session.role, "journal:view");
   const seeFactory = can(session.role, "minute_rate:view");
-  const seeBrand = can(session.role, "sales_order:view");
+  // Reading the brand band, not writing a sale. It was gated on
+  // `sales_order:view`, which every till operator holds because selling is
+  // their job, so a cashier landed here on net sales, gross margin and profit
+  // after marketing.
+  const seeBrand = can(session.role, "report:brand");
   const seeGroup = can(session.role, "report:group");
   const seeAnything = seeMoney || seeFactory || seeBrand || seeGroup;
 

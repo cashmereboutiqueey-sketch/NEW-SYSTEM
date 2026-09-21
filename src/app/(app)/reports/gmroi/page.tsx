@@ -15,7 +15,7 @@ import { formatMoney, formatNumber, formatPercent, dec, safeDiv } from "@/lib/mo
  * constraint.
  */
 export default async function GmroiPage() {
-  await requirePermission("inventory:view");
+  await requirePermission("report:brand");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

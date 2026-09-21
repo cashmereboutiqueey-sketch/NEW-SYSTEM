@@ -17,7 +17,7 @@ export default async function DeadStockPage({
 }: {
   searchParams: Promise<{ entity?: string }>;
 }) {
-  await requirePermission("inventory:view");
+  await requirePermission("stock_value:view");
   const { locale, scope } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;

@@ -23,7 +23,7 @@ export default async function MaterialLedgerPage({
 }: {
   searchParams: Promise<{ type?: string; all?: string }>;
 }) {
-  await requirePermission("inventory:view");
+  await requirePermission("material:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;

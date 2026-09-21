@@ -18,7 +18,7 @@ import { formatMoney, formatPercent, dec, safeDiv } from "@/lib/money";
  * ten percent off one earning twelve is most of the profit.
  */
 export default async function MarkdownPage() {
-  await requirePermission("sales_order:view");
+  await requirePermission("report:brand");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

@@ -20,7 +20,7 @@ import { createMaterialAction, toggleMaterialAction } from "./actions";
  * every garment.
  */
 export default async function MaterialsPage() {
-  const session = await requirePermission("inventory:view");
+  const session = await requirePermission("material:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const mayEdit = can(session.role, "purchase_order:create");

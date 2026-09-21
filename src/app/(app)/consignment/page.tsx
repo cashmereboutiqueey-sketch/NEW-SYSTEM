@@ -34,6 +34,11 @@ export default async function ConsignmentPage() {
   const mayHandle = can(session.role, "inventory:transfer");
   const maySell = can(session.role, "sales_order:create");
   const mayPay = can(session.role, "payment:create");
+  // The retail price stays whatever this says: it is on the tag, and
+  // whoever is selling the piece has to be able to read it. What comes off
+  // is the split — commission, takings and what is owed are the shop
+  // economics, not the sale.
+  const seeValue = can(session.role, "stock_value:view");
 
   const [rail, positions, sales, owed, locations, customers] = await Promise.all([
     consignedStock(),
@@ -71,23 +76,33 @@ export default async function ConsignmentPage() {
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-4">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={ar ? "قطع على الرف" : "On the rail"}
           value={formatNumber(onRail)}
-          hint={ar ? `بسعر بيع ${formatMoney(railValue.toString())}` : `worth ${formatMoney(railValue.toString())} at retail`}
+          hint={
+            seeValue
+              ? ar
+                ? `بسعر بيع ${formatMoney(railValue.toString())}`
+                : `worth ${formatMoney(railValue.toString())} at retail`
+              : undefined
+          }
         />
-        <StatTile
-          label={ar ? "عمولتك المكتسبة" : "Commission earned"}
-          value={formatMoney(earned.toString())}
-          tone="good"
-        />
-        <StatTile
-          label={ar ? "فلوس مش بتاعتك" : "Money you are holding"}
-          value={formatMoney(owed.toString())}
-          hint={ar ? "لأصحاب البضاعة" : "owed to the owners"}
-          tone={owed.greaterThan(0) ? "bad" : "good"}
-        />
+        {seeValue && (
+          <StatTile
+            label={ar ? "عمولتك المكتسبة" : "Commission earned"}
+            value={formatMoney(earned.toString())}
+            tone="good"
+          />
+        )}
+        {seeValue && (
+          <StatTile
+            label={ar ? "فلوس مش بتاعتك" : "Money you are holding"}
+            value={formatMoney(owed.toString())}
+            hint={ar ? "لأصحاب البضاعة" : "owed to the owners"}
+            tone={owed.greaterThan(0) ? "bad" : "good"}
+          />
+        )}
         <StatTile
           label={ar ? "فات ميعاد رجوعها" : "Overdue back"}
           value={formatNumber(overdue.length)}
@@ -151,7 +166,7 @@ export default async function ConsignmentPage() {
               ar ? "الصنف" : "Item",
               ar ? "صاحبها" : "Owner",
               ar ? "السعر" : "Price",
-              ar ? "نسبتك" : "Your share",
+              ...(seeValue ? [ar ? "نسبتك" : "Your share"] : []),
               ar ? "فاضل" : "Left",
               ar ? "قاعدة" : "Held",
               "",
@@ -171,7 +186,9 @@ export default async function ConsignmentPage() {
                 </span>,
                 i.consignorName,
                 <span key="p" className="num">{formatMoney(i.retailPrice)}</span>,
-                <span key="r" className="num text-xs">{i.commissionPct}%</span>,
+                ...(seeValue
+                  ? [<span key="r" className="num text-xs">{i.commissionPct}%</span>]
+                  : []),
                 <span key="l" className="num font-medium">
                   {i.left}
                   <span className="ms-1 text-xs text-ink-400">/{i.received}</span>
@@ -196,6 +213,7 @@ export default async function ConsignmentPage() {
                   customers={customers}
                   maySell={maySell}
                   mayReturn={mayHandle}
+                  seeValue={seeValue}
                 />,
               ])}
           />
@@ -214,28 +232,38 @@ export default async function ConsignmentPage() {
           <DataTable
             headers={[
               ar ? "الاسم" : "Name",
-              ar ? "نسبتك" : "Your share",
+              ...(seeValue ? [ar ? "نسبتك" : "Your share"] : []),
               ar ? "على الرف" : "On rail",
               ar ? "بيعات" : "Sales",
-              ar ? "إجمالي البيع" : "Sold for",
-              ar ? "عمولتك" : "You earned",
-              ar ? "مستحق ليه" : "Owed to them",
+              ...(seeValue
+                ? [
+                    ar ? "إجمالي البيع" : "Sold for",
+                    ar ? "عمولتك" : "You earned",
+                    ar ? "مستحق ليه" : "Owed to them",
+                  ]
+                : []),
               ar ? "تساكي" : "Labels",
               "",
             ]}
             empty={ar ? "مفيش أصحاب بضاعة" : "No consignors"}
             rows={positions.map((p) => [
               <span key="n" className="font-medium text-ink-900">{p.name}</span>,
-              <span key="r" className="num text-xs">{p.commissionPct}%</span>,
+              ...(seeValue
+                ? [<span key="r" className="num text-xs">{p.commissionPct}%</span>]
+                : []),
               <span key="i" className="num">{formatNumber(p.itemsOnRail)}</span>,
               <span key="s" className="num">{formatNumber(p.salesCount)}</span>,
-              <span key="t" className="num">{formatMoney(p.takings)}</span>,
-              <span key="c" className="num text-good">{formatMoney(p.commissionEarned)}</span>,
-              dec(p.owed).greaterThan(0) ? (
-                <span key="o" className="num font-semibold text-bad">{formatMoney(p.owed)}</span>
-              ) : (
-                <span key="o" className="text-ink-300">—</span>
-              ),
+              ...(seeValue
+                ? [
+                    <span key="t" className="num">{formatMoney(p.takings)}</span>,
+                    <span key="c" className="num text-good">{formatMoney(p.commissionEarned)}</span>,
+                    dec(p.owed).greaterThan(0) ? (
+                      <span key="o" className="num font-semibold text-bad">{formatMoney(p.owed)}</span>
+                    ) : (
+                      <span key="o" className="text-ink-300">—</span>
+                    ),
+                  ]
+                : []),
               p.itemsOnRail > 0 ? (
                 // Only while something of theirs is still on the rail: a tag
                 // printed for a piece already sold is a live code on a garment
@@ -275,8 +303,9 @@ export default async function ConsignmentPage() {
             ar ? "الصنف" : "Item",
             ar ? "صاحبها" : "Owner",
             ar ? "اتباعت بـ" : "Sold for",
-            ar ? "عمولتك" : "Your share",
-            ar ? "لصاحبها" : "Their share",
+            ...(seeValue
+              ? [ar ? "عمولتك" : "Your share", ar ? "لصاحبها" : "Their share"]
+              : []),
             ar ? "اتدفعت؟" : "Paid over?",
           ]}
           empty={ar ? "لسه مفيش بيعات" : "No sales yet"}
@@ -285,8 +314,12 @@ export default async function ConsignmentPage() {
             <span key="i" className="text-xs">{s.description} ×{s.quantity}</span>,
             s.consignorName,
             <span key="t" className="num">{formatMoney(s.total)}</span>,
-            <span key="c" className="num text-good">{formatMoney(s.commission)}</span>,
-            <span key="o" className="num">{formatMoney(s.owedToOwner)}</span>,
+            ...(seeValue
+              ? [
+                  <span key="c" className="num text-good">{formatMoney(s.commission)}</span>,
+                  <span key="o" className="num">{formatMoney(s.owedToOwner)}</span>,
+                ]
+              : []),
             s.settled ? (
               <Badge key="p" tone="good">{s.settlementNumber}</Badge>
             ) : (

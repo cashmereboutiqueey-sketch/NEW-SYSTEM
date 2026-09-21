@@ -15,6 +15,10 @@ import { OpenExhibitionForm } from "./open-form";
  * is: somewhere stock can be. What this screen adds is the discipline around
  * it — goods go out against a named source, and the bazaar cannot be closed
  * without somebody counting what came back.
+ *
+ * Takings are a figure in money and come off for anybody without
+ * `stock_value:view`. What is left on the stand is a count, and stays: it is
+ * the number whoever is standing at the bazaar actually needs.
  */
 export default async function ExhibitionsPage() {
   const session = await requirePermission("inventory:view");
@@ -22,6 +26,7 @@ export default async function ExhibitionsPage() {
   const ar = locale === "ar";
 
   const mayRun = can(session.role, "inventory:transfer");
+  const seeValue = can(session.role, "stock_value:view");
 
   const [list, sources] = await Promise.all([exhibitionList(), sourceLocations()]);
 
@@ -57,11 +62,13 @@ export default async function ExhibitionsPage() {
           hint={ar ? "لسه على الاستاند" : "still on the stand"}
           tone={onStand.greaterThan(0) ? "warn" : "neutral"}
         />
-        <StatTile
-          label={ar ? "مبيعات البازارات" : "Bazaar takings"}
-          value={formatMoney(takings.toString())}
-          tone="good"
-        />
+        {seeValue && (
+          <StatTile
+            label={ar ? "مبيعات البازارات" : "Bazaar takings"}
+            value={formatMoney(takings.toString())}
+            tone="good"
+          />
+        )}
       </div>
 
       {mayRun && sources.length > 0 && (
@@ -100,7 +107,7 @@ export default async function ExhibitionsPage() {
               ar ? "من" : "From",
               ar ? "من — لـ" : "Dates",
               ar ? "على الاستاند" : "On stand",
-              ar ? "مبيعات" : "Takings",
+              ...(seeValue ? [ar ? "مبيعات" : "Takings"] : []),
               "",
             ]}
             empty={ar ? "مفيش بازار شغال" : "No bazaar is running"}
@@ -118,9 +125,13 @@ export default async function ExhibitionsPage() {
               <span key="q" className="num">
                 {formatNumber(Number(e.onStand))}
               </span>,
-              <span key="r" className="num">
-                {formatMoney(e.revenue)}
-              </span>,
+              ...(seeValue
+                ? [
+                    <span key="r" className="num">
+                      {formatMoney(e.revenue)}
+                    </span>,
+                  ]
+                : []),
               <Link
                 key="l"
                 href={`/exhibitions/${e.id}`}
@@ -147,7 +158,7 @@ export default async function ExhibitionsPage() {
             ar ? "من" : "From",
             ar ? "قفل يوم" : "Closed",
             ar ? "طلبات" : "Orders",
-            ar ? "مبيعات" : "Takings",
+            ...(seeValue ? [ar ? "مبيعات" : "Takings"] : []),
             "",
           ]}
           empty={ar ? "لسه مفيش" : "Nothing yet"}
@@ -165,9 +176,13 @@ export default async function ExhibitionsPage() {
             <span key="o" className="num">
               {formatNumber(e.orderCount)}
             </span>,
-            <span key="r" className="num">
-              {formatMoney(e.revenue)}
-            </span>,
+            ...(seeValue
+              ? [
+                  <span key="r" className="num">
+                    {formatMoney(e.revenue)}
+                  </span>,
+                ]
+              : []),
             Number(e.onStand) > 0 ? (
               <Badge key="b" tone="bad">
                 {ar ? "لسه فيه بضاعة" : "stock left"}

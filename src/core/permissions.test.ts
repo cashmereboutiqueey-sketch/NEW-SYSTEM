@@ -60,6 +60,23 @@ describe("capabilities", () => {
     expect(can("SERVICE_ACCOUNT", "salary:view")).toBe(false);
   });
 
+  /**
+   * How much there is, and what it is worth, are two different questions and
+   * two different capabilities. The shop floor answers the first all day and
+   * has no business with the second.
+   */
+  it("separates how much stock there is from what it is worth", () => {
+    for (const role of ["POS_CASHIER", "MODERATOR", "SERVICE_ACCOUNT"] as const) {
+      expect(can(role, "inventory:view"), `${role} must see stock levels`).toBe(true);
+      expect(can(role, "stock_value:view"), `${role} must not see stock value`).toBe(false);
+      expect(can(role, "material:view"), `${role} must not see the factory bill`).toBe(false);
+    }
+    // Everybody who was trusted with the figure before still is.
+    for (const role of ["OWNER", "ACCOUNTANT", "FINANCE_APPROVER", "VIEWER", "PRODUCTION", "WAREHOUSE", "BRAND_MANAGER"] as const) {
+      expect(can(role, "stock_value:view"), `${role} lost the stock value`).toBe(true);
+    }
+  });
+
   it("makes the viewer read-only", () => {
     const writeish = permissionsFor("VIEWER").filter(
       (p) => !p.endsWith(":view") && !p.startsWith("report:"),

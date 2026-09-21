@@ -26,6 +26,11 @@ export default async function GoodsInPage() {
 
   const mayReceive = can(session.role, "inventory:transfer");
   const maySeePrice = can(session.role, "transfer_price:view");
+  // What a shortfall cost is money, and it was shown to everybody who
+  // could open this screen. The count that is short is the part the
+  // receiving end acts on; what it was worth is the part the factory and
+  // the books argue about.
+  const seeValue = can(session.role, "stock_value:view");
 
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 
@@ -98,9 +103,11 @@ export default async function GoodsInPage() {
           />
         )}
         <StatTile
-          label={ar ? "فاقد في الطريق" : "Lost on the road"}
-          value={formatMoney(shortfallCost, locale)}
-          tone={shortfallCost.greaterThan(0) ? "bad" : "good"}
+          label={seeValue ? (ar ? "فاقد في الطريق" : "Lost on the road") : ar ? "توريدات ناقصة" : "Short deliveries"}
+          value={seeValue ? formatMoney(shortfallCost, locale) : formatNumber(shortfalls.length, locale)}
+          tone={
+            (seeValue ? shortfallCost.greaterThan(0) : shortfalls.length > 0) ? "bad" : "good"
+          }
           hint={
             shortfalls.length === 0
               ? ar ? "مفيش عجز" : "No shortfalls"
@@ -195,7 +202,7 @@ export default async function GoodsInPage() {
               ar ? "اتبعت" : "Sent",
               ar ? "وصل" : "Arrived",
               ar ? "ناقص" : "Short",
-              ar ? "التكلفة" : "Cost",
+              ...(seeValue ? [ar ? "التكلفة" : "Cost"] : []),
               ar ? "السبب" : "Reason",
               ar ? "استلمها" : "Received by",
             ]}
@@ -205,9 +212,13 @@ export default async function GoodsInPage() {
               <span key={`${i}-e`} className="num">{s.despatchedQty}</span>,
               <span key={`${i}-c`} className="num">{s.countedQty}</span>,
               <span key={`${i}-s`} className="num text-bad">{s.shortfallQty}</span>,
-              <span key={`${i}-v`} className="num">
-                {s.shortfallCost ? formatMoney(dec(s.shortfallCost), locale) : "—"}
-              </span>,
+              ...(seeValue
+                ? [
+                    <span key={`${i}-v`} className="num">
+                      {s.shortfallCost ? formatMoney(dec(s.shortfallCost), locale) : "—"}
+                    </span>,
+                  ]
+                : []),
               <span key={`${i}-n`} className="text-ink-600">{s.note ?? "—"}</span>,
               <span key={`${i}-u`} className="text-ink-500">{s.by}</span>,
             ])}

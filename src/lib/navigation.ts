@@ -80,8 +80,8 @@ export const navigation: NavSection[] = [
   {
     key: "materials",
     items: [
-      { key: "materials", href: "/materials", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "layers" , shipped: true, needs: "inventory:view" },
-      { key: "materialLedger", href: "/materials/ledger", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "boxes", shipped: true, needs: "inventory:view" },
+      { key: "materials", href: "/materials", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "layers" , shipped: true, needs: "material:view" },
+      { key: "materialLedger", href: "/materials/ledger", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "boxes", shipped: true, needs: "material:view" },
       { key: "suppliers", href: "/suppliers", phase: 2, scopes: ["FACTORY", "GROUP"], icon: "truck" , shipped: true, needs: "purchase_order:view" },
       { key: "purchasing", href: "/purchasing", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "file", shipped: true, needs: "purchase_order:view" },
       { key: "supplierStatements", href: "/suppliers/statements", phase: 2, scopes: ALL_SCOPES, icon: "receipt", shipped: true, needs: "expense:view" },
@@ -100,7 +100,7 @@ export const navigation: NavSection[] = [
       // starts from the transfer price and still has a shop to pay for.
       { key: "brandPricing", href: "/pricing", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "retail_price:manage" },
       { key: "productionOrder", href: "/production", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "factory" , shipped: true, needs: "production:view" },
-      { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true, needs: "inventory:view" },
+      { key: "transferToBrand", href: "/transfers", phase: 4, scopes: ["FACTORY", "GROUP"], icon: "truck", shipped: true, needs: "stock_value:view" },
       { key: "lineEfficiency", href: "/production/lines", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "activity" , shipped: true, needs: "production:view" },
       { key: "operatorProductivity", href: "/production/operators", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "users", shipped: true, needs: "production:view" },
       { key: "cuttingTicket", href: "/production/cutting", phase: 3, scopes: ["FACTORY", "GROUP"], icon: "scissors", shipped: true, needs: "production:view" },
@@ -113,7 +113,7 @@ export const navigation: NavSection[] = [
     items: [
       { key: "goodsIn", href: "/goods-in", phase: 4, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "inventory:view" },
       { key: "inventory", href: "/inventory", phase: 4, scopes: ALL_SCOPES, icon: "boxes" , shipped: true, needs: "inventory:view" },
-      { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ALL_SCOPES, icon: "alert", shipped: true, needs: "inventory:view" },
+      { key: "deadStock", href: "/inventory/dead-stock", phase: 4, scopes: ALL_SCOPES, icon: "alert", shipped: true, needs: "stock_value:view" },
       { key: "pos", href: "/pos", phase: 6, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true, needs: ["pos:operate", "pos:close_shift"] },
       { key: "exhibitions", href: "/exhibitions", phase: 6, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "inventory:view" },
       { key: "sales", href: "/sales", phase: 4, scopes: ["BRAND", "GROUP"], icon: "cart" , shipped: true, needs: "sales_order:view" },
@@ -128,8 +128,8 @@ export const navigation: NavSection[] = [
       { key: "recovery", href: "/recovery", phase: 10, scopes: ["BRAND", "GROUP"], icon: "cart", shipped: true, needs: "campaign:view" },
       { key: "people", href: "/hr", phase: 8, scopes: ALL_SCOPES, icon: "users", shipped: true, needs: "employee:view" },
       { key: "attendance", href: "/hr/attendance", phase: 8, scopes: ALL_SCOPES, icon: "clock", shipped: true, needs: "attendance:view" },
-      { key: "sellThrough", href: "/sales/sell-through", phase: 5, scopes: ["BRAND", "GROUP"], icon: "trending", shipped: true, needs: "sales_order:view" },
-      { key: "markdown", href: "/sales/markdown", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "sales_order:view" },
+      { key: "sellThrough", href: "/sales/sell-through", phase: 5, scopes: ["BRAND", "GROUP"], icon: "trending", shipped: true, needs: "report:brand" },
+      { key: "markdown", href: "/sales/markdown", phase: 5, scopes: ["BRAND", "GROUP"], icon: "tag", shipped: true, needs: "report:brand" },
     ],
   },
   {
@@ -143,7 +143,7 @@ export const navigation: NavSection[] = [
       { key: "groupPnl", href: "/reports/group-pnl", phase: 5, scopes: ["GROUP"], icon: "chart" , shipped: true, needs: "report:group" },
       { key: "breakEven", href: "/reports/break-even", phase: 5, scopes: ["BRAND", "GROUP"], icon: "target", shipped: true, needs: "journal:view" },
       { key: "cashCycle", href: "/reports/cash-cycle", phase: 5, scopes: ALL_SCOPES, icon: "refresh", shipped: true, needs: "journal:view" },
-      { key: "gmroi", href: "/reports/gmroi", phase: 5, scopes: ["BRAND", "GROUP"], icon: "percent", shipped: true, needs: "inventory:view" },
+      { key: "gmroi", href: "/reports/gmroi", phase: 5, scopes: ["BRAND", "GROUP"], icon: "percent", shipped: true, needs: "report:brand" },
     ],
   },
   {

@@ -16,7 +16,7 @@ import { formatMoney, formatNumber, formatPercent, dec, safeDiv } from "@/lib/mo
  * has only been out a fortnight.
  */
 export default async function SellThroughPage() {
-  await requirePermission("sales_order:view");
+  await requirePermission("report:brand");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

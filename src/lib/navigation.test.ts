@@ -114,13 +114,47 @@ describe("what each role is shown", () => {
     }
   });
 
-  it("keeps the till operator out of the books", () => {
+  /**
+   * Fixed by instruction, not derived: the owner said what the shop floor is
+   * for, and a capability added later that quietly widens this is the thing
+   * worth failing over. The list is the whole menu, so an addition shows up
+   * here as well as a removal.
+   */
+  it("gives the till operator the shop and nothing else", () => {
+    expect(visible("POS_CASHIER").sort()).toEqual(
+      [
+        "/",               // adapts to the role; shows a cashier no figures
+        "/consignment",    // somebody else's goods, sold here
+        "/custom-orders",
+        "/customers",
+        "/exhibitions",    // bazaars
+        "/goods-in",       // what arrived from the factory, to be counted
+        "/inventory",      // what is here and how much, never what it is worth
+        "/pos",
+        "/receivables",    // who owes, so part payment can be judged
+        "/returns",
+        "/sales",          // the online orders
+        "/shipping",
+      ].sort(),
+    );
+  });
+
+  it("keeps the till operator out of the books and off the factory floor", () => {
     const seen = visible("POS_CASHIER");
-    for (const href of ["/journal", "/audit", "/hr", "/hr/attendance", "/expenses", "/users", "/settings"]) {
+    for (const href of [
+      "/journal", "/audit", "/hr", "/hr/attendance", "/expenses", "/users", "/settings",
+      // Added when stock value was split from stock quantity.
+      "/materials", "/materials/ledger", "/transfers",
+      "/inventory/dead-stock", "/sales/sell-through", "/sales/markdown", "/reports/gmroi",
+    ]) {
       expect(seen, `a cashier should not be offered ${href}`).not.toContain(href);
     }
-    expect(seen).toContain("/pos");
-    expect(seen).toContain("/inventory");
+  });
+
+  it("gives the same shop floor to a social-media moderator, minus the till", () => {
+    const moderator = visible("MODERATOR");
+    expect(moderator).not.toContain("/pos");
+    expect(new Set([...moderator, "/pos"])).toEqual(new Set(visible("POS_CASHIER")));
   });
 
   it("shows a line supervisor who is on the floor and nothing about pay", () => {

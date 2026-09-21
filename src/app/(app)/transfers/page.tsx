@@ -19,7 +19,7 @@ import { DespatchForm } from "./transfer-form";
  * shop will count against.
  */
 export default async function TransfersPage() {
-  const session = await requirePermission("inventory:view");
+  const session = await requirePermission("stock_value:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

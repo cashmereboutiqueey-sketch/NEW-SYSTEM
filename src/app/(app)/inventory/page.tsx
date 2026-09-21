@@ -17,6 +17,14 @@ import { CountForm } from "./count-form";
  * fabric bought for 10 pieces, 4 produced, 2 sold — where is the rest of the
  * capital? Raw material, work in progress and finished goods are shown
  * separately, at what they cost, because that is the cash actually tied up.
+ *
+ * Without `stock_value:view` the same screen answers a narrower question:
+ * what is here, and how much of it. Every figure in money is dropped rather
+ * than blanked — a column of dashes still says there is a number and that
+ * somebody decided you may not have it. A shop floor needs to know whether a
+ * size is on the rail; what the company paid for it is not its business, and
+ * a counter is the easiest place in the building to read a screen over
+ * somebody else's shoulder.
  */
 export default async function InventoryPage({
   searchParams,
@@ -30,6 +38,7 @@ export default async function InventoryPage({
   const query = await searchParams;
 
   const mayAdjust = can(session.role, "inventory:adjust");
+  const seeValue = can(session.role, "stock_value:view");
 
   const [lots, locations, deadStockDays] = await Promise.all([
     db.inventoryLot.findMany({
@@ -62,6 +71,9 @@ export default async function InventoryPage({
   const byState = (state: string) => lots.filter((l) => l.state === state);
   const totalOf = (rows: typeof lots) =>
     rows.reduce((s, l) => s.plus(value(l)), dec(0));
+  /** What the same rows come to in pieces, for whoever may not see money. */
+  const unitsOf = (rows: typeof lots) =>
+    rows.reduce((s, l) => s.plus(dec(l.remainingQty as unknown as string)), dec(0));
 
   const raw = byState("RAW_MATERIAL");
   const wip = byState("WIP");
@@ -94,9 +106,13 @@ export default async function InventoryPage({
       <PageHeader
         title={t("inventory", locale)}
         subtitle={
-          ar
-            ? "رأس المال المحبوس في المخزون، مقسّمًا حسب حالته وموقعه"
-            : "Capital locked in stock, split by what state it is in and where it sits"
+          seeValue
+            ? ar
+              ? "رأس المال المحبوس في المخزون، مقسّمًا حسب حالته وموقعه"
+              : "Capital locked in stock, split by what state it is in and where it sits"
+            : ar
+              ? "اللي موجود فعلًا، وكام منه، وهو فين"
+              : "What is actually here, how much of it, and where it sits"
         }
       />
 
@@ -148,8 +164,12 @@ export default async function InventoryPage({
                     <span className="text-xs text-ink-500">
                       {ar ? "بالدفاتر" : "on the books"}{" "}
                       <span className="num">{formatNumber(row.onBooks, locale)}</span> {row.uom}
-                      {" · "}
-                      <span className="num">{formatMoney(row.value, locale)}</span>
+                      {seeValue && (
+                        <>
+                          {" · "}
+                          <span className="num">{formatMoney(row.value, locale)}</span>
+                        </>
+                      )}
                     </span>
                   </div>
                   <CountForm
@@ -190,7 +210,7 @@ export default async function InventoryPage({
               ar ? "الصنف" : "Item",
               ar ? "المكان" : "Where",
               ar ? "الكمية" : "Qty",
-              ar ? "القيمة" : "Value",
+              ...(seeValue ? [ar ? "القيمة" : "Value"] : []),
               ar ? "السبب" : "Reason",
             ]}
             rows={adjustments.map((a) => [
@@ -208,9 +228,13 @@ export default async function InventoryPage({
                 {ar ? a.locationAr : a.locationEn}
               </span>,
               <span key={`${a.id}-q`} className="num">{formatNumber(a.quantity, locale)}</span>,
-              <span key={`${a.id}-v`} className="num text-bad">
-                {formatMoney(a.value, locale)}
-              </span>,
+              ...(seeValue
+                ? [
+                    <span key={`${a.id}-v`} className="num text-bad">
+                      {formatMoney(a.value, locale)}
+                    </span>,
+                  ]
+                : []),
               <span key={`${a.id}-r`} className="text-ink-600">{a.reason}</span>,
             ])}
           />
@@ -218,26 +242,33 @@ export default async function InventoryPage({
       )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={ar ? "خامات" : "Raw material"}
-          value={formatMoney(totalOf(raw), locale)}
-          hint={`${raw.length} ${ar ? "دفعة" : "lots"}`}
-        />
-        <StatTile
-          label={ar ? "تحت التشغيل" : "Work in progress"}
-          value={formatMoney(totalOf(wip), locale)}
-          hint={`${wip.length} ${ar ? "دفعة" : "lots"}`}
-        />
-        <StatTile
-          label={ar ? "إنتاج تام" : "Finished goods"}
-          value={formatMoney(totalOf(fg), locale)}
-          hint={`${fg.length} ${ar ? "دفعة" : "lots"}`}
-        />
-        <StatTile
-          label={ar ? "إجمالي المحبوس" : "Total capital locked"}
-          value={formatMoney(capitalLocked, locale)}
-          tone={capitalLocked.greaterThan(0) ? "warn" : "neutral"}
-        />
+        {(
+          [
+            [ar ? "خامات" : "Raw material", raw],
+            [ar ? "تحت التشغيل" : "Work in progress", wip],
+            [ar ? "إنتاج تام" : "Finished goods", fg],
+          ] as [string, typeof lots][]
+        ).map(([label, rows]) => (
+          <StatTile
+            key={label}
+            label={label}
+            value={seeValue ? formatMoney(totalOf(rows), locale) : formatNumber(unitsOf(rows), locale)}
+            hint={`${rows.length} ${ar ? "دفعة" : "lots"}`}
+          />
+        ))}
+        {seeValue ? (
+          <StatTile
+            label={ar ? "إجمالي المحبوس" : "Total capital locked"}
+            value={formatMoney(capitalLocked, locale)}
+            tone={capitalLocked.greaterThan(0) ? "warn" : "neutral"}
+          />
+        ) : (
+          <StatTile
+            label={ar ? "إجمالي القطع" : "Units on hand"}
+            value={formatNumber(unitsOf(lots), locale)}
+            hint={`${lots.length} ${ar ? "دفعة" : "lots"}`}
+          />
+        )}
       </div>
 
       {lots.length === 0 ? (
@@ -268,20 +299,24 @@ export default async function InventoryPage({
                   headers={[
                     ar ? "العمر" : "Age",
                     ar ? "الكمية" : "Quantity",
-                    ar ? "رأس المال" : "Capital locked",
+                    ...(seeValue ? [ar ? "رأس المال" : "Capital locked"] : []),
                   ]}
                   rows={AGE_BUCKETS.map((b) => [
                     <span key={`${b}-l`} className={b === "90+" ? "text-bad" : undefined}>
                       {b === "90+" ? (ar ? "أكثر من ٩٠ يوم" : "90+ days") : `${b} ${ar ? "يوم" : "days"}`}
                     </span>,
                     <span key={`${b}-q`} className="num">{formatNumber(aging[b].quantity, locale)}</span>,
-                    <span key={`${b}-v`} className={aging[b].value.greaterThan(0) && b === "90+" ? "num text-bad" : "num"}>
-                      {formatMoney(aging[b].value, locale)}
-                    </span>,
+                    ...(seeValue
+                      ? [
+                          <span key={`${b}-v`} className={aging[b].value.greaterThan(0) && b === "90+" ? "num text-bad" : "num"}>
+                            {formatMoney(aging[b].value, locale)}
+                          </span>,
+                        ]
+                      : []),
                   ])}
                 />
               )}
-              {deadValue.greaterThan(0) && (
+              {seeValue && deadValue.greaterThan(0) && (
                 <p className="mt-3 rounded-lg bg-bad/10 px-3 py-2 text-xs text-bad">
                   {ar
                     ? `المخزون الراكد: ${formatMoney(deadValue, locale)} محبوسة في بضاعة تجاوزت ٩٠ يومًا.`
@@ -295,7 +330,7 @@ export default async function InventoryPage({
                 headers={[
                   ar ? "الموقع" : "Location",
                   ar ? "دفعات" : "Lots",
-                  ar ? "القيمة" : "Value",
+                  seeValue ? (ar ? "القيمة" : "Value") : ar ? "الكمية" : "Quantity",
                 ]}
                 rows={locations.map((loc) => {
                   const here = lots.filter((l) => l.locationId === loc.id);
@@ -305,7 +340,9 @@ export default async function InventoryPage({
                       {loc.city && <span className="ms-2 text-xs text-ink-400">{loc.city}</span>}
                     </span>,
                     <span key={`${loc.id}-c`} className="num">{here.length}</span>,
-                    <span key={`${loc.id}-v`} className="num">{formatMoney(totalOf(here), locale)}</span>,
+                    <span key={`${loc.id}-v`} className="num">
+                      {seeValue ? formatMoney(totalOf(here), locale) : formatNumber(unitsOf(here), locale)}
+                    </span>,
                   ];
                 })}
               />
@@ -327,8 +364,7 @@ export default async function InventoryPage({
                 ar ? "الصنف" : "Item",
                 ar ? "الموقع" : "Location",
                 ar ? "المتبقي" : "Remaining",
-                ar ? "تكلفة الوحدة" : "Unit cost",
-                ar ? "القيمة" : "Value",
+                ...(seeValue ? [ar ? "تكلفة الوحدة" : "Unit cost", ar ? "القيمة" : "Value"] : []),
                 ar ? "تاريخ الاستلام" : "Received",
               ]}
               rows={lots.map((l) => [
@@ -348,8 +384,12 @@ export default async function InventoryPage({
                 </span>,
                 <span key={`${l.id}-l`}>{name(l.location)}</span>,
                 <span key={`${l.id}-r`} className="num">{formatNumber(l.remainingQty, locale)}</span>,
-                <span key={`${l.id}-u`} className="num">{formatMoney(l.unitCost, locale)}</span>,
-                <span key={`${l.id}-v`} className="num font-medium">{formatMoney(value(l), locale)}</span>,
+                ...(seeValue
+                  ? [
+                      <span key={`${l.id}-u`} className="num">{formatMoney(l.unitCost, locale)}</span>,
+                      <span key={`${l.id}-v`} className="num font-medium">{formatMoney(value(l), locale)}</span>,
+                    ]
+                  : []),
                 <span key={`${l.id}-d`} className="num" dir="ltr">
                   {l.receivedDate.toISOString().slice(0, 10)}
                 </span>,

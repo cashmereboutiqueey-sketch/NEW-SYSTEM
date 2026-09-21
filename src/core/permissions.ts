@@ -34,7 +34,17 @@ export const PERMISSIONS = [
   "goods_receipt:create",
 
   // --- inventory --------------------------------------------------------
+  /// How much of something is where. A quantity, and nothing about money.
   "inventory:view",
+  /// What that stock is worth: unit costs, the capital standing in it, the
+  /// value of what has aged. Separate from `inventory:view` because a shop
+  /// floor needs to know whether a size is on the rail and has no business
+  /// knowing what the company paid for it. Named like `salary:view` and
+  /// `transfer_price:view`, which is what it is: permission to see a figure.
+  "stock_value:view",
+  /// The factory's raw materials and their ledger. Separate again: finished
+  /// goods are the shop's business and fabric is not.
+  "material:view",
   "inventory:transfer",
   "inventory:adjust",
   "inventory:approve_adjustment",
@@ -141,7 +151,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "payment:create",
     "account:manage",
     "purchase_order:view",
-    "inventory:view",
+    "inventory:view", "stock_value:view", "material:view",
     "production:view",
     "minute_rate:view", "minute_rate:calculate",
     "transfer_price:view",
@@ -167,7 +177,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "expense:view", "expense:approve",
     "payment:approve",
     "purchase_order:view", "purchase_order:approve",
-    "inventory:view",
+    "inventory:view", "stock_value:view", "material:view",
     // Not inventory:approve_adjustment. Writing stock off — a count that does
     // not match, a bazaar that came back short — is the owner's decision by
     // instruction, because it is the one approval whose cost never appears on
@@ -184,7 +194,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
 
   PRODUCTION: [
     "production:view", "production:create", "production:record",
-    "inventory:view", "inventory:transfer",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer",
     "purchase_order:view", "purchase_order:create",
     "goods_receipt:create",
     "minute_rate:view",
@@ -200,7 +210,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
   ],
 
   WAREHOUSE: [
-    "inventory:view", "inventory:transfer", "inventory:adjust",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer", "inventory:adjust",
     "goods_receipt:create",
     "purchase_order:view",
     "production:view",
@@ -212,7 +222,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "sales_order:credit", "sales_order:refund",
     "customer:view",
     "campaign:view", "campaign:manage",
-    "inventory:view", "inventory:transfer",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer",
     "retail_price:manage",
     "transfer_price:view",
     "pos:operate", "pos:close_shift",
@@ -224,6 +234,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
   MODERATOR: [
     "sales_order:view", "sales_order:create",
     "customer:view",
+    // Quantities only, for the same reason as the till.
     "inventory:view",
     // Creates social orders only. No discounting, no refunds, no journals,
     // no stock adjustments.
@@ -233,6 +244,10 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "pos:operate",
     "sales_order:view", "sales_order:create",
     "customer:view",
+    // Quantities only. Whether a size is on the rail and how many are left is
+    // the job; what the company paid for it, what the stock is worth and what
+    // the factory pays for fabric are not, and a shop floor is the easiest
+    // place in the company to read a screen over somebody's shoulder.
     "inventory:view",
     // Discount and refund are separate capabilities a supervisor grants.
   ],
@@ -258,7 +273,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
   ],
 
   VIEWER: [
-    "journal:view", "expense:view", "inventory:view", "production:view",
+    "journal:view", "expense:view", "production:view",
+    "inventory:view", "stock_value:view", "material:view",
     "sales_order:view", "customer:view", "minute_rate:view",
     "report:factory", "report:brand", "report:group",
   ],
@@ -267,6 +283,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     // Shopify/biometric connectors: import data, nothing else.
     "sales_order:view", "sales_order:create",
     "customer:view",
+    // A connector writes orders and reads stock levels. It has no eyes to
+    // show a figure to, so it is given none.
     "inventory:view",
   ],
 };

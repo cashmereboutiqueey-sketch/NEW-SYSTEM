@@ -24,6 +24,7 @@ export function ItemActions({
   customers,
   maySell,
   mayReturn,
+  seeValue,
 }: {
   ar: boolean;
   item: {
@@ -36,6 +37,8 @@ export function ItemActions({
   customers: { id: string; name: string; phone: string | null }[];
   maySell: boolean;
   mayReturn: boolean;
+  /** Whether the split behind the sale may be shown, or only its total. */
+  seeValue: boolean;
 }) {
   const [panel, setPanel] = useState<null | "sell" | "return">(null);
   const [sellState, sell, selling] = useActionState(sellConsignedAction, empty);
@@ -97,14 +100,18 @@ export function ItemActions({
 
         <p className="rounded-lg bg-ink-100 px-2 py-1.5 text-[11px]">
           {ar ? "إجمالي" : "Total"} <span className="num">{total.toFixed(2)}</span>
-          {" · "}
-          <span className="text-good">
-            {ar ? "ليك" : "yours"} <span className="num">{commission.toFixed(2)}</span>
-          </span>
-          {" · "}
-          <span className="text-warn">
-            {ar ? "لصاحبها" : "theirs"} <span className="num">{owner.toFixed(2)}</span>
-          </span>
+          {seeValue && (
+            <>
+              {" · "}
+              <span className="text-good">
+                {ar ? "ليك" : "yours"} <span className="num">{commission.toFixed(2)}</span>
+              </span>
+              {" · "}
+              <span className="text-warn">
+                {ar ? "لصاحبها" : "theirs"} <span className="num">{owner.toFixed(2)}</span>
+              </span>
+            </>
+          )}
         </p>
 
         <div className="flex items-center gap-2">
