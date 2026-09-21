@@ -4,16 +4,29 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
 import { Icon } from "./icon";
-import { navigation, isShipped } from "@/lib/navigation";
+import { navigationFor, isShipped } from "@/lib/navigation";
 import { t, type Locale } from "@/lib/i18n";
+import type { Role } from "@/core/permissions";
 import type { EntityScope } from "@/lib/session";
 
+/**
+ * The menu, as this person's job sees it.
+ *
+ * Filtered by what the role may actually open, not only by which entity is in
+ * view. Every page guards itself and always did, so a link somebody could not
+ * use took them to their own home page — safe, and useless. A cashier reading
+ * "payroll" and "the journal" every day learns two wrong things: that the
+ * system is mostly forbidden to them, and that clicking things is how you find
+ * out what you are allowed to do.
+ */
 export function Sidebar({
   locale,
   scope,
+  role,
 }: {
   locale: Locale;
   scope: EntityScope;
+  role: Role;
 }) {
   const pathname = usePathname();
 
@@ -32,9 +45,8 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-3">
-        {navigation.map((section) => {
-          const visible = section.items.filter((i) => i.scopes.includes(scope));
-          if (visible.length === 0) return null;
+        {navigationFor(role, scope).map((section) => {
+          const visible = section.items;
 
           return (
             <div key={section.key} className="mb-4">

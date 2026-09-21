@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import type { Role } from "@/core/permissions";
 import type { Locale } from "@/lib/i18n";
 import type { EntityScope } from "@/lib/session";
 
@@ -14,7 +15,7 @@ import type { EntityScope } from "@/lib/session";
  * — Today, approvals, uploading a shoot — unusable there. Below `md` it opens
  * from a labelled Menu button instead, and closes itself after navigating.
  */
-export function MobileMenu({ locale, scope }: { locale: Locale; scope: EntityScope }) {
+export function MobileMenu({ locale, scope, role }: { locale: Locale; scope: EntityScope; role: Role }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -36,7 +37,7 @@ export function MobileMenu({ locale, scope }: { locale: Locale; scope: EntitySco
       {open && (
         <div id="mobile-menu" className="fixed inset-0 z-50 flex">
           <div className="h-full shadow-xl">
-            <Sidebar locale={locale} scope={scope} />
+            <Sidebar locale={locale} scope={scope} role={role} />
           </div>
           <button
             type="button"

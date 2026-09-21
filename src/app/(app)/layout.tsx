@@ -31,14 +31,14 @@ export default async function AppLayout({
   return (
     <div className="app-shell flex h-screen overflow-hidden bg-cream">
       <div className="hidden md:flex">
-        <Sidebar locale={locale} scope={scope} />
+        <Sidebar locale={locale} scope={scope} role={user.role} />
       </div>
 
       <div className="app-column flex min-w-0 flex-1 flex-col">
         {/* app-header is what print.css hides. Without it the person signed in
             prints across the top of every garment label and invoice. */}
         <header className="app-header flex flex-wrap items-center gap-3 border-b border-ink-200 bg-panel px-3 py-3 md:px-5">
-          <MobileMenu locale={locale} scope={scope} />
+          <MobileMenu locale={locale} scope={scope} role={user.role} />
           <EntitySwitcher current={scope} locale={locale} />
 
           <div className="ms-auto flex items-center gap-3">
