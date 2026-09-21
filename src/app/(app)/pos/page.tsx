@@ -16,6 +16,13 @@ import { OpenTillForm, CloseTillForm } from "./till-forms";
  * A cashier's screen, not a report: search or scan, tap to add, take payment.
  * Only stock actually on the shelf at this location is offered, so the
  * cashier cannot promise a customer something the shop does not have.
+ *
+ * The shift totals across the top are the day’s takings, which is a ledger
+ * figure, so they follow `journal:view` the way the owner dashboard does. The
+ * person standing at the till rings up sales; how the day is going is not
+ * their number, and a running total on a screen facing a shop is the one
+ * figure in the building that anybody can read from the other side of a
+ * counter.
  */
 export default async function PosPage({
   searchParams,
@@ -30,6 +37,7 @@ export default async function PosPage({
   const session = await requireUser();
   const maySell = can(session.role, "pos:operate");
   const mayClose = can(session.role, "pos:close_shift");
+  const seeTakings = can(session.role, "journal:view");
   if (!maySell && !mayClose) redirect("/");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
@@ -166,26 +174,43 @@ export default async function PosPage({
         }
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={ar ? "مبيعات الوردية" : "Shift sales"}
-          value={formatMoney(totals.revenue, locale)}
-          hint={`${totals.orders} ${ar ? "طلب" : "orders"} · ${formatNumber(totals.units, locale)} ${ar ? "قطعة" : "units"}`}
-        />
-        <StatTile
-          label={ar ? "كاش" : "Cash taken"}
-          value={formatMoney(totals.cash, locale)}
-        />
-        <StatTile
-          label={ar ? "بطاقات ومحافظ" : "Card and wallet"}
-          value={formatMoney(totals.card, locale)}
-        />
-        <StatTile
-          label={ar ? "المتوقع في الدرج" : "Expected in drawer"}
-          value={formatMoney(totals.expectedDrawer, locale)}
-          hint={`${ar ? "افتتاحي" : "float"} ${formatMoney(till.openingFloat, locale)}`}
-        />
-      </div>
+      {seeTakings ? (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatTile
+            label={ar ? "مبيعات الوردية" : "Shift sales"}
+            value={formatMoney(totals.revenue, locale)}
+            hint={`${totals.orders} ${ar ? "طلب" : "orders"} · ${formatNumber(totals.units, locale)} ${ar ? "قطعة" : "units"}`}
+          />
+          <StatTile
+            label={ar ? "كاش" : "Cash taken"}
+            value={formatMoney(totals.cash, locale)}
+          />
+          <StatTile
+            label={ar ? "بطاقات ومحافظ" : "Card and wallet"}
+            value={formatMoney(totals.card, locale)}
+          />
+          <StatTile
+            label={ar ? "المتوقع في الدرج" : "Expected in drawer"}
+            value={formatMoney(totals.expectedDrawer, locale)}
+            hint={`${ar ? "افتتاحي" : "float"} ${formatMoney(till.openingFloat, locale)}`}
+          />
+        </div>
+      ) : (
+        /* Not blanked into four empty boxes: how many sales have gone through
+           is worth knowing at the till, and none of it is money. */
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <StatTile
+            label={ar ? "طلبات الوردية" : "Orders this shift"}
+            value={formatNumber(totals.orders, locale)}
+            hint={`${formatNumber(totals.units, locale)} ${ar ? "قطعة" : "units"}`}
+          />
+          <StatTile
+            label={ar ? "الوردية" : "Shift"}
+            value={till.sessionNumber}
+            hint={name(till.location)}
+          />
+        </div>
+      )}
 
       {waiting > 0 && (
         <Card className="mb-4" title={ar ? "المعرض فاضي" : "Nothing on the shelf"}>

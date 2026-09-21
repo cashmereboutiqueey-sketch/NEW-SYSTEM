@@ -77,6 +77,24 @@ describe("capabilities", () => {
     }
   });
 
+  /**
+   * The till shows what has been taken today, and that is a ledger figure.
+   *
+   * Fixed by instruction. Of the roles that can open the till at all, only the
+   * owner and the accountant are shown the running totals: the person
+   * standing at it rings up sales, and a shop counter is the one place in the
+   * building where a screen faces outwards.
+   */
+  it("shows the day takings at the till only to the owner and the accountant", () => {
+    const atTheTill = ALL_ROLES.filter(
+      (r) => can(r, "pos:operate") || can(r, "pos:close_shift"),
+    );
+    expect(atTheTill.filter((r) => can(r, "journal:view"))).toEqual(["OWNER", "ACCOUNTANT"]);
+    // Sells on it and counts it, and sees neither total.
+    expect(can("POS_CASHIER", "journal:view")).toBe(false);
+    expect(can("BRAND_MANAGER", "journal:view")).toBe(false);
+  });
+
   it("makes the viewer read-only", () => {
     const writeish = permissionsFor("VIEWER").filter(
       (p) => !p.endsWith(":view") && !p.startsWith("report:"),
