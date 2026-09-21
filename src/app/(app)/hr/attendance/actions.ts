@@ -15,6 +15,7 @@ import {
   previewImport,
   reviewDay,
 } from "@/lib/attendance";
+import type { ColumnMapping, DateOrder } from "@/core/attendance-import";
 import type { FormState } from "@/components/entity-form";
 
 /**
@@ -45,12 +46,54 @@ export type PreviewState = FormState & {
     validRows: number;
     duplicateRows: number;
     invalidRows: number;
+    emptyRows: number;
     unknownBadges: string[];
     rangeFrom: string | null;
     rangeTo: string | null;
     problems: { rowNumber: number; reason: string }[];
   };
 };
+
+/**
+ * Reads the mapping off the form.
+ *
+ * The clock columns arrive as `map_in_0`, `map_out_0`, `map_in_1` … because
+ * how many pairs a device prints is the device's business, not this form's.
+ * A pair with no arrival column chosen is not a pair and is dropped.
+ */
+function buildMapping(formData: FormData): ColumnMapping {
+  const layout = formData.get("layout") === "PAIRS_PER_DAY" ? "PAIRS_PER_DAY" : "PUNCH_PER_ROW";
+  const dateOrder = (formData.get("dateOrder") as DateOrder) || "DMY";
+  const headerRow = Number(formData.get("headerRow") ?? 1) || 1;
+
+  const base = {
+    layout,
+    badge: String(formData.get("map_badge") ?? ""),
+    dateOrder,
+    headerRow,
+    device: (formData.get("map_device") as string) || null,
+    payload: (formData.get("map_payload") as string) || null,
+  } as const;
+
+  if (layout === "PUNCH_PER_ROW") {
+    return {
+      ...base,
+      timestamp: String(formData.get("map_timestamp") ?? ""),
+      direction: (formData.get("map_direction") as string) || null,
+    };
+  }
+
+  const pairs: { in: string; out: string | null }[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    const inCol = (formData.get(`map_in_${i}`) as string) || "";
+    const outCol = (formData.get(`map_out_${i}`) as string) || "";
+    if (!inCol && !outCol) continue;
+    if (!inCol) continue;
+    pairs.push({ in: inCol, out: outCol || null });
+  }
+
+  return { ...base, date: String(formData.get("map_date") ?? ""), pairs };
+}
 
 /** Counts what is in a file and writes nothing. */
 export async function previewImportAction(
@@ -67,13 +110,7 @@ export async function previewImportAction(
       {
         deviceId: String(formData.get("deviceId") ?? ""),
         filename: String(formData.get("filename") ?? "export.csv"),
-        mapping: {
-          badge: String(formData.get("map_badge") ?? ""),
-          timestamp: String(formData.get("map_timestamp") ?? ""),
-          device: (formData.get("map_device") as string) || null,
-          direction: (formData.get("map_direction") as string) || null,
-          payload: (formData.get("map_payload") as string) || null,
-        },
+        mapping: buildMapping(formData),
         text,
       },
       { userId: session.userId },
@@ -86,7 +123,7 @@ export async function previewImportAction(
         rangeTo: result.rangeTo?.toISOString() ?? null,
       },
       success:
-        `${result.validRows} of ${result.totalRows} row(s) can be imported. ` +
+        `${result.validRows} punch(es) from ${result.totalRows} row(s) can be imported. ` +
         `Nothing has been written yet.`,
     };
   } catch (error) {

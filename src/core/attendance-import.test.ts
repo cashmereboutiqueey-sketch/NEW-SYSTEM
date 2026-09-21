@@ -5,6 +5,8 @@ import {
   classifyImport,
   punchKey,
   SAMPLE_CSV,
+  SAMPLE_PAIRS_CSV,
+  sniffDateOrder,
   type ColumnMapping,
 } from "./attendance-import";
 import { cairoParts } from "./attendance";
@@ -150,5 +152,184 @@ describe("sorting the rows", () => {
     const result = classify("badge_id,timestamp,note\n1001,nonsense,late entry");
     const bad = result.verdicts[0];
     if (bad.kind === "invalid") expect(bad.raw.note).toBe("late entry");
+  });
+});
+
+/**
+ * A day to a row, which is what the attendance software bundled with these
+ * readers prints. Fixed against the real export: `Emp No.`, a month-first
+ * date, and five clock pairs of which one is usually filled.
+ */
+describe("a day per row, with clock in and clock out columns", () => {
+  const paired: ColumnMapping = {
+    layout: "PAIRS_PER_DAY",
+    badge: "Emp No.",
+    date: "Date",
+    dateOrder: "MDY",
+    pairs: [
+      { in: "Clock In 1", out: "Clock Out 1" },
+      { in: "Clock In 2", out: "Clock Out 2" },
+    ],
+  };
+
+  function classifyPaired(csv: string, known: string[] = ["21"], existing: string[] = []) {
+    return classifyImport({
+      table: parseDelimited(csv),
+      mapping: paired,
+      knownBadges: new Set(known),
+      existingKeys: new Set(existing),
+    });
+  }
+
+  const header = "Emp No.,Date,Clock In 1,Clock Out 1,Clock In 2,Clock Out 2,Total in time";
+
+  it("turns one printed day into the two punches it stands for", () => {
+    const result = classifyPaired(`${header}\n21,9/12/2026,07:47,17:07,,,09:20`);
+
+    expect(result.totalRows).toBe(1);
+    expect(result.validRows).toBe(2);
+
+    const punches = result.verdicts.filter((v) => v.kind === "valid");
+    expect(punches.map((v) => (v.kind === "valid" ? v.direction : null))).toEqual(["IN", "OUT"]);
+
+    const [first, second] = punches.map((v) => (v.kind === "valid" ? cairoParts(v.punchedAt) : null));
+    expect(first).toMatchObject({ dateKey: "2026-09-12", minuteOfDay: 7 * 60 + 47 });
+    expect(second).toMatchObject({ dateKey: "2026-09-12", minuteOfDay: 17 * 60 + 7 });
+  });
+
+  it("reads a month-first date as month-first and a day-first one as day-first", () => {
+    const csv = `${header}\n21,9/10/2026,08:00,17:00,,,`;
+
+    const asMonthFirst = classifyPaired(csv);
+    const monthFirst = asMonthFirst.verdicts.find((v) => v.kind === "valid");
+    expect(monthFirst?.kind === "valid" && cairoParts(monthFirst.punchedAt).dateKey).toBe("2026-09-10");
+
+    const asDayFirst = classifyImport({
+      table: parseDelimited(csv),
+      mapping: { ...paired, dateOrder: "DMY" },
+      knownBadges: new Set(["21"]),
+      existingKeys: new Set(),
+    });
+    const dayFirst = asDayFirst.verdicts.find((v) => v.kind === "valid");
+    expect(dayFirst?.kind === "valid" && cairoParts(dayFirst.punchedAt).dateKey).toBe("2026-10-09");
+  });
+
+  it("refuses a date the stated order cannot read, naming the order it tried", () => {
+    // 9/16 is only a date if the month comes first. Read day-first it is the
+    // sixteenth month, and swapping it silently would be the whole disaster.
+    const result = classifyImport({
+      table: parseDelimited(`${header}\n21,9/16/2026,09:17,18:11,,,`),
+      mapping: { ...paired, dateOrder: "DMY" },
+      knownBadges: new Set(["21"]),
+      existingKeys: new Set(),
+    });
+    expect(result.validRows).toBe(0);
+    const bad = result.verdicts[0];
+    expect(bad.kind).toBe("invalid");
+    if (bad.kind === "invalid") expect(bad.reason).toContain("day-first");
+  });
+
+  it("calls a day the device printed with nobody on it empty, not an error", () => {
+    const result = classifyPaired(`${header}\n21,9/15/2026,,,,,`);
+    expect(result.emptyRows).toBe(1);
+    expect(result.invalidRows).toBe(0);
+    expect(result.validRows).toBe(0);
+  });
+
+  it("keeps a single clock in without inventing the clock out", () => {
+    const result = classifyPaired(`${header}\n21,9/13/2026,08:30,,,,`);
+    expect(result.validRows).toBe(1);
+    const only = result.verdicts.find((v) => v.kind === "valid");
+    expect(only?.kind === "valid" && only.direction).toBe("IN");
+  });
+
+  it("puts a clock out earlier than its clock in on the next morning", () => {
+    const result = classifyPaired(`${header}\n21,9/20/2026,20:00,04:05,,,`);
+    const punches = result.verdicts.filter((v) => v.kind === "valid");
+    const days = punches.map((v) => (v.kind === "valid" ? cairoParts(v.punchedAt).dateKey : ""));
+    expect(days).toEqual(["2026-09-20", "2026-09-21"]);
+  });
+
+  it("reads every pair the device printed, not only the first", () => {
+    const result = classifyPaired(`${header}\n21,9/14/2026,07:42,12:00,13:00,16:47,09:05`);
+    expect(result.validRows).toBe(4);
+  });
+
+  it("writes nothing twice when the same week is exported again", () => {
+    const csv = `${header}\n21,9/12/2026,07:47,17:07,,,09:20`;
+    const first = classifyPaired(csv);
+    const stored = first.verdicts
+      .filter((v) => v.kind === "valid")
+      .map((v) => (v.kind === "valid" ? punchKey(v.badge, v.punchedAt) : ""));
+
+    const again = classifyPaired(csv, ["21"], stored);
+    expect(again.validRows).toBe(0);
+    expect(again.duplicateRows).toBe(2);
+  });
+
+  it("points a refusal at the line of the file it came from", () => {
+    const result = classifyPaired(
+      `${header}\n21,9/12/2026,07:47,17:07,,,09:20\n21,nonsense,08:00,17:00,,,`,
+    );
+    const bad = result.verdicts.find((v) => v.kind === "invalid");
+    expect(bad?.row).toBe(2);
+  });
+
+  it("surfaces a badge nobody is linked to rather than dropping the day", () => {
+    const result = classifyPaired(`${header}\n99,9/12/2026,07:47,17:07,,,09:20`, ["21"]);
+    expect(result.unknownBadges).toEqual(["99"]);
+    expect(result.validRows).toBe(2);
+  });
+
+  it("reads the sample file it offers, which is the real export's shape", () => {
+    const result = classifyImport({
+      table: parseDelimited(SAMPLE_PAIRS_CSV),
+      mapping: {
+        layout: "PAIRS_PER_DAY",
+        badge: "Emp No.",
+        date: "Date",
+        dateOrder: "MDY",
+        pairs: [
+          { in: "Clock In 1", out: "Clock Out 1" },
+          { in: "Clock In 2", out: "Clock Out 2" },
+        ],
+      },
+      knownBadges: new Set(["21"]),
+      existingKeys: new Set(),
+    });
+    // Three days worked, one with no clock out, one printed empty.
+    expect(result.validRows).toBe(7);
+    expect(result.emptyRows).toBe(1);
+    expect(result.invalidRows).toBe(0);
+  });
+});
+
+describe("saying which number is the month", () => {
+  it("knows month-first when a second number passes twelve", () => {
+    expect(sniffDateOrder(["9/10/2026", "9/16/2026"])).toBe("MDY");
+  });
+
+  it("knows day-first when a first number passes twelve", () => {
+    expect(sniffDateOrder(["16/09/2026", "10/09/2026"])).toBe("DMY");
+  });
+
+  it("says nothing at all when every date reads both ways", () => {
+    expect(sniffDateOrder(["03/04/2026", "05/06/2026"])).toBeNull();
+  });
+
+  it("says nothing when the column cannot be dates in any order", () => {
+    expect(sniffDateOrder(["16/16/2026"])).toBeNull();
+  });
+});
+
+describe("a report with a title above the table", () => {
+  it("takes the headers from the line it is told to", () => {
+    const withTitle = ["Attendance calculation", "OUR COMPANY  9/10/2026 - 9/16/2026", "badge_id,timestamp", "1001,2026-09-12 07:47"].join("\n");
+
+    expect(parseDelimited(withTitle).headers).toEqual(["Attendance calculation"]);
+
+    const table = parseDelimited(withTitle, 3);
+    expect(table.headers).toEqual(["badge_id", "timestamp"]);
+    expect(table.rows).toEqual([["1001", "2026-09-12 07:47"]]);
   });
 });

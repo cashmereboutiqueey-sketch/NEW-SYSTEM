@@ -202,6 +202,8 @@ export type ImportPreview = {
   validRows: number;
   duplicateRows: number;
   invalidRows: number;
+  /** Days the device printed with nobody on them. Not errors, and not silent either. */
+  emptyRows: number;
   unknownBadges: string[];
   rangeFrom: Date | null;
   rangeTo: Date | null;
@@ -225,8 +227,25 @@ export async function previewImport(
   ctx: AuditContext,
 ): Promise<ImportPreview> {
   if (!input.deviceId.trim()) throw new AttendanceError("Name the device this file came from.");
+  if (!input.mapping.badge.trim()) {
+    throw new AttendanceError("Say which column holds the badge number.");
+  }
+  // Caught here rather than row by row: a half-given mapping refuses every
+  // line in the file, and a hundred identical refusals hide the one fact that
+  // matters, which is that a column was not chosen.
+  if (input.mapping.layout === "PAIRS_PER_DAY") {
+    if (!input.mapping.date?.trim()) {
+      throw new AttendanceError("Say which column holds the date.");
+    }
+    if (!input.mapping.pairs?.length) {
+      throw new AttendanceError("Say which columns hold the clock in and clock out times.");
+    }
+  } else if (!input.mapping.timestamp?.trim()) {
+    throw new AttendanceError("Say which column holds the timestamp.");
+  }
 
-  const table = parseDelimited(input.text);
+  const headerRow = input.mapping.headerRow ?? 1;
+  const table = parseDelimited(input.text, headerRow);
   if (table.headers.length === 0) throw new AttendanceError("That file has no rows.");
 
   const employees = await db.employee.findMany({
@@ -264,12 +283,15 @@ export async function previewImport(
     },
   });
 
-  // Refusals are kept with the row that caused them, so "why is my day short"
-  // has an answer that does not require the original file.
+  // Refusals are kept with the line that caused them, so "why is my day short"
+  // has an answer that does not require the original file. The line number is
+  // the verdict's own row plus whatever sits above the headers, because one
+  // line can produce several verdicts and its position in the list is not its
+  // position in the file.
   const problems: { rowNumber: number; reason: string }[] = [];
   const rows = classified.verdicts
-    .map((v, i) => ({ v, rowNumber: i + 2 }))
-    .filter((r) => r.v.kind === "invalid");
+    .filter((v) => v.kind === "invalid")
+    .map((v) => ({ v, rowNumber: v.row + headerRow }));
   for (const { v, rowNumber } of rows) {
     if (v.kind !== "invalid") continue;
     problems.push({ rowNumber, reason: v.reason });
@@ -307,6 +329,7 @@ export async function previewImport(
     validRows: classified.validRows,
     duplicateRows: classified.duplicateRows,
     invalidRows: classified.invalidRows,
+    emptyRows: classified.emptyRows,
     unknownBadges: classified.unknownBadges,
     rangeFrom: classified.rangeFrom,
     rangeTo: classified.rangeTo,
@@ -340,7 +363,8 @@ export async function commitImport(
       );
     }
 
-    const table = parseDelimited(input.text);
+    const mapping = record.mapping as unknown as ColumnMapping;
+    const table = parseDelimited(input.text, mapping.headerRow ?? 1);
     const employees = await db.employee.findMany({
       where: { biometricDeviceUserId: { not: null } },
       select: { id: true, biometricDeviceUserId: true },
@@ -355,7 +379,7 @@ export async function commitImport(
 
     const classified = classifyImport({
       table,
-      mapping: record.mapping as unknown as ColumnMapping,
+      mapping,
       knownBadges: new Set(byBadge.keys()),
       existingKeys,
     });

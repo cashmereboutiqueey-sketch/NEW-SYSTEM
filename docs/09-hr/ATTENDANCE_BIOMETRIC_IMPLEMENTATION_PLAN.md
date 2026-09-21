@@ -134,22 +134,45 @@ Nothing about a vendor, and as little as possible about anything else.
   comma, semicolon, tab or pipe — because these files come off devices
   configured by whoever installed them, and a semicolon export read as commas
   produces one column and a page of meaningless errors. Quoted fields are
-  honoured; a byte-order mark is ignored.
-- **Two columns are required**: a badge or user id, and a timestamp. Which
-  ones they are is chosen on screen and kept with the batch. Direction and a
-  raw payload column are taken when offered and needed by nothing.
+  honoured; a byte-order mark is ignored. Which line the headers sit on is
+  asked, not guessed, because some of this software prints a report title and
+  a date range above the table.
+- **One of two shapes**, chosen on screen and kept with the batch:
+  - **A punch per row** — a badge and one timestamp. The rawest thing a reader
+    produces, and the one to ask for where the software offers it.
+  - **A day per row** — a badge, a date, and paired clock columns across the
+    row (`Clock In 1`, `Clock Out 1`, `Clock In 2` …), which is what the
+    attendance software bundled with most readers prints. Each filled cell
+    becomes a punch, so the day is reassembled here rather than accepted as
+    the device computed it. A closing time earlier on the clock than the
+    arrival it belongs to is read as the next morning, which is what a night
+    shift looks like on one of these reports. Columns the report adds for the
+    operator — a total, a wage, an advance — are mapped to nothing and read by
+    nothing: pay is computed from approved attendance and never imported.
 - **Timestamps are the device's own wall-clock, in Cairo.** A reader knows
   nothing of offsets, so `2026-07-01 09:00` is 06:00 UTC in summer and 07:00 in
   winter; both are handled by asking the calendar rather than assuming a fixed
   offset. Accepted shapes: `YYYY-MM-DD HH:mm[:ss]`, the same with slashes or a
-  `T`, and `DD/MM/YYYY HH:mm[:ss] [AM|PM]`. A date with no time is refused —
+  `T`, and `DD/MM/YYYY HH:mm[:ss] [AM|PM]`. In the paired layout the date and
+  the time are read from separate columns. A date with no time is refused —
   it names a day, not a moment somebody arrived.
-- **Day-first when ambiguous.** `03/04/2026` is the third of April. It is the
-  convention here, and the alternative is silently moving a punch by months.
+- **Which number is the month is stated, not inferred.** Day-first is the
+  default and the convention here, but this software is usually American and
+  prints `9/16/2026`. The order is offered as a choice, preselected from the
+  file itself where the file settles it — any day past the twelfth proves
+  which position is the month — and a date the chosen order cannot read is
+  refused naming that order rather than quietly swapped to fit. A file read in
+  the wrong order moves every punch in it by months, so it fails loudly on the
+  preview screen, before anything is written.
+- **A printed day with no clock reading on it is empty, not an error.** These
+  reports print a row for every day in the range whether anybody came in or
+  not. Counting those as refusals would bury the real ones; they are counted
+  and shown separately, and produce no punch and no absence.
 - **XLSX is not parsed.** A spreadsheet is a zip of XML and reading it needs a
-  library; every device tested exports CSV or TXT, and a file saved as xlsx can
-  be saved as CSV in one step. The parser takes a table, so adding a
-  spreadsheet reader later changes one function and nothing else.
+  library. The software that drives these readers exports CSV or TXT from the
+  same dialog as the spreadsheet, and a file already saved as xlsx can be saved
+  as CSV in one step. The parser takes a table, so adding a spreadsheet reader
+  later changes one function and nothing else.
 
 ## What is not built
 
