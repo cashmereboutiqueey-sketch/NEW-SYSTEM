@@ -14,6 +14,7 @@ import {
   ReceivableError,
 } from "./receivables";
 import { dec } from "./money";
+import { setCustomerCredit } from "./master-data";
 
 /**
  * Paying part now and the rest later.
@@ -216,10 +217,20 @@ describe("paying part of the price", () => {
 });
 
 describe("the credit limit", () => {
-  it("stops a stranger walking out owing money", async () => {
+  /**
+   * A stranger may now leave owing something, and only up to a point.
+   *
+   * The default used to be nothing, which refused every part payment until
+   * somebody went and raised a limit. By the owner's instruction it is fifty
+   * thousand, so the counter can take part of the price without sending the
+   * customer to find a manager — and the limit, not the absence of one, is
+   * what stops the debt growing without end.
+   */
+  it("lets a stranger owe something, and refuses past the limit", async () => {
     await givenStock();
-    // A new customer's limit is zero, which is the right default for somebody
-    // who walked in off the street.
+    await expect(partPaidSale(1500, 1000, strangerId)).resolves.toBeTruthy();
+
+    await setCustomerCredit({ customerId: strangerId, creditLimit: 100, creditDays: 0 }, ctx);
     await expect(partPaidSale(1500, 1000, strangerId)).rejects.toThrow(/over their/i);
   });
 

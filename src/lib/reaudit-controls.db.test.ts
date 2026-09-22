@@ -108,7 +108,10 @@ async function balance(code: string, entityId = brandId) {
 describe("independent re-audit reproductions — current defects", () => {
   it("cashier cannot submit an unfunded deposit tender", async () => {
     await stock();
-    expect(can(actor.role, "sales_order:credit")).toBe(false);
+    // The cashier may now let somebody pay part, which is not the control
+    // under test: DEPOSIT is not a tender the till accepts at all, funded or
+    // otherwise, and that is what must still hold.
+    expect(can(actor.role, "sales_order:credit")).toBe(true);
     const till = await openPosSession({ locationId, cashierUserId: actor.userId, openingFloat: "0" }, ctx());
     const form = new FormData();
     for (const [key, value] of Object.entries({ locationId, entityId: brandId, channelId, posSessionId: till.posSessionId,
