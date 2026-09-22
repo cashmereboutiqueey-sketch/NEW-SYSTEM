@@ -159,7 +159,25 @@ export function PosTerminal({
     );
   }, [products, query]);
 
-  const ownTotal = useMemo(
+  /**
+   * A discount on the whole invoice, on top of whatever came off each line.
+   *
+   * Typed either way round — a percentage or an amount in pounds — because a
+   * customer asks for both and the cashier should not have to do the division
+   * at the counter with somebody waiting.
+   *
+   * It is carried to the server as a percentage on each line, because that is
+   * what the invoice stores and what the markdown report reads. An amount is
+   * turned into the percentage of the basket it represents and applied
+   * evenly, so what comes off is what was asked for, give or take the
+   * rounding of a piastre across several lines. The figure shown is always
+   * what actually came off, never what was typed.
+   */
+  const [billDiscountMode, setBillDiscountMode] = useState<"PCT" | "AMOUNT">("PCT");
+  const [billDiscount, setBillDiscount] = useState("");
+
+  /** What the lines come to with their own discounts and nothing else. */
+  const lineNetTotal = useMemo(
     () =>
       money(
         cart.reduce(
@@ -167,6 +185,47 @@ export function PosTerminal({
           0,
         ),
       ),
+    [cart],
+  );
+
+  /** The whole-invoice discount as a fraction, whichever way it was typed. */
+  const billPct = useMemo(() => {
+    const typed = Number(billDiscount || 0);
+    if (!Number.isFinite(typed) || typed <= 0 || lineNetTotal <= 0) return 0;
+    const pct = billDiscountMode === "PCT" ? typed / 100 : typed / lineNetTotal;
+    return Math.min(1, Math.max(0, pct));
+  }, [billDiscount, billDiscountMode, lineNetTotal]);
+
+  /**
+   * What each line is sent as: its own discount and its share of the bill's.
+   *
+   * Combined into one fraction rather than sent as two, so the till, the
+   * invoice and the server all multiply the same number in the same order and
+   * cannot disagree by a piastre.
+   */
+  const pricedCart = useMemo(
+    () =>
+      cart.map((l) => ({
+        ...l,
+        discountPct: Math.min(1, 1 - (1 - l.discountPct) * (1 - billPct)),
+      })),
+    [cart, billPct],
+  );
+
+  const ownTotal = useMemo(
+    () =>
+      money(
+        pricedCart.reduce(
+          (s, l) => s + money(money(l.retailPrice) * (1 - l.discountPct)) * l.quantity,
+          0,
+        ),
+      ),
+    [pricedCart],
+  );
+
+  /** Before anything came off, so the two can be shown side by side. */
+  const grossTotal = useMemo(
+    () => money(cart.reduce((s, l) => s + money(l.retailPrice) * l.quantity, 0)),
     [cart],
   );
 
@@ -747,8 +806,10 @@ export function PosTerminal({
       {/* -------------------------------------------------------------- cart */}
       <form action={formAction} className="flex flex-col gap-3">
         <RequestIdField state={state} />
+        {/* The line discount and the invoice discount already folded into one
+            fraction, so the server multiplies exactly what the screen showed. */}
         <input type="hidden" name="cart" value={JSON.stringify(
-          cart.map((l) => ({
+          pricedCart.map((l) => ({
             variantId: l.variantId,
             quantity: l.quantity,
             retailPrice: l.retailPrice,
@@ -844,18 +905,13 @@ export function PosTerminal({
                       />
 
                       {canDiscount && (
-                        <select
-                          value={l.discountPct}
-                          onChange={(e) =>
-                            setLine(l.variantId, { discountPct: Number(e.target.value) })
-                          }
-                          className={`${field} w-20 px-2 py-1`}
-                          aria-label={ar ? "الخصم" : "Discount"}
-                        >
-                          {[0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5].map((d) => (
-                            <option key={d} value={d}>{d === 0 ? "—" : `${d * 100}%`}</option>
-                          ))}
-                        </select>
+                        <LineDiscount
+                          ar={ar}
+                          field={field}
+                          gross={money(money(l.retailPrice) * l.quantity)}
+                          discountPct={l.discountPct}
+                          onChange={(discountPct) => setLine(l.variantId, { discountPct })}
+                        />
                       )}
 
                       <span className="num ms-auto text-sm font-medium">
@@ -926,7 +982,58 @@ export function PosTerminal({
             </ul>
           )}
 
-          <div className="mt-3 flex items-baseline justify-between border-t border-ink-300 pt-2">
+          {canDiscount && cart.length > 0 && (
+            <div className="mt-3 flex items-center gap-2 border-t border-ink-100 pt-2">
+              <span className="text-xs text-ink-600">{ar ? "خصم على الفاتورة" : "Discount the bill"}</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={billDiscount}
+                onChange={(e) => setBillDiscount(e.target.value)}
+                placeholder="0"
+                className={`${field} num w-20 px-2 py-1`}
+                dir="ltr"
+                aria-label={ar ? "خصم على الفاتورة" : "Discount the bill"}
+              />
+              <button
+                type="button"
+                onClick={() => setBillDiscountMode(billDiscountMode === "PCT" ? "AMOUNT" : "PCT")}
+                title={ar ? "بدّل بين النسبة والمبلغ" : "Switch between percent and pounds"}
+                className="rounded-lg border border-ink-200 px-2.5 py-1 text-xs font-medium text-ink-700"
+              >
+                {billDiscountMode === "PCT" ? "%" : (ar ? "ج.م" : "EGP")}
+              </button>
+              {billDiscount !== "" && (
+                <button
+                  type="button"
+                  onClick={() => setBillDiscount("")}
+                  className="text-xs text-ink-400 underline"
+                >
+                  {ar ? "شيله" : "clear"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* What actually came off, never what was typed: an amount spread
+              across several lines lands a piastre or two away from itself, and
+              the customer is owed the real figure. */}
+          {grossTotal > ownTotal && (
+            <div className="mt-2 flex items-baseline justify-between text-xs">
+              <span className="text-ink-500">{ar ? "قبل الخصم" : "Before discount"}</span>
+              <span className="num text-ink-500 line-through">{grossTotal.toFixed(2)}</span>
+            </div>
+          )}
+          {grossTotal > ownTotal && (
+            <div className="flex items-baseline justify-between text-xs">
+              <span className="text-good">{ar ? "نزل" : "Came off"}</span>
+              <span className="num text-good">−{money(grossTotal - ownTotal).toFixed(2)}</span>
+            </div>
+          )}
+
+          <div className="mt-2 flex items-baseline justify-between border-t border-ink-300 pt-2">
             <span className="font-semibold">{ar ? "الإجمالي" : "Total"}</span>
             <span className="num text-xl font-semibold">{total.toFixed(2)}</span>
           </div>
@@ -1152,6 +1259,17 @@ export function PosTerminal({
                     </p>
                   )}
 
+                  {/* Allowed, and worth saying out loud: the owner of those
+                      goods is owed their share the moment the piece leaves,
+                      whether or not this customer ever pays. */}
+                  {owed > 0 && consignedLines.length > 0 && (
+                    <p className="mt-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+                      {ar
+                        ? `في الفاتورة دي بضاعة أمانة بـ ${consignedTotal.toFixed(2)}. صاحبها مستحق نصيبه من ساعة ما تخرج من المحل — لو العميل مادفعش، انت اللي هتدفعله من جيبك.`
+                        : `This basket holds ${consignedTotal.toFixed(2)} of somebody else's goods. Their owner is owed their share the moment the piece leaves, so if this customer never pays, the shop pays them anyway.`}
+                    </p>
+                  )}
+
                   {overLimit && chosenCustomer && (
                     <p className="mt-2 rounded-lg bg-bad/10 px-3 py-2 text-xs text-bad">
                       {ar
@@ -1250,5 +1368,76 @@ export function PosTerminal({
         </div>
       </form>
     </div>
+  );
+}
+
+/**
+ * The discount on one line, typed either way round.
+ *
+ * A customer asks for both — "خصملي ١٠٪" and "خصملي خمسين جنيه" — and the
+ * cashier should not have to do the division at the counter with somebody
+ * waiting. Whichever is typed, the line is stored as a percentage, because
+ * that is what the invoice holds and what the markdown report reads: an
+ * amount is only ever a way of arriving at one.
+ *
+ * The box shows what is in force rather than what was last typed, so a line
+ * whose quantity changed after a fifty-pound discount shows the percentage
+ * that fifty pounds now is, which is the truth about what is coming off.
+ */
+function LineDiscount({
+  ar,
+  field,
+  gross,
+  discountPct,
+  onChange,
+}: {
+  ar: boolean;
+  field: string;
+  /** The line before anything comes off, which an amount is a fraction of. */
+  gross: number;
+  discountPct: number;
+  onChange: (discountPct: number) => void;
+}) {
+  const [mode, setMode] = useState<"PCT" | "AMOUNT">("PCT");
+
+  const shown =
+    discountPct <= 0
+      ? ""
+      : mode === "PCT"
+        ? String(Math.round(discountPct * 10_000) / 100)
+        : (Math.round(gross * discountPct * 100) / 100).toFixed(2);
+
+  const apply = (text: string) => {
+    const typed = Number(text || 0);
+    if (!Number.isFinite(typed) || typed <= 0) return onChange(0);
+    const pct = mode === "PCT" ? typed / 100 : gross > 0 ? typed / gross : 0;
+    // Never past free: a line given away is the largest discount there is, and
+    // anything beyond it would be the shop paying the customer to take it.
+    onChange(Math.min(1, Math.max(0, pct)));
+  };
+
+  return (
+    <span className="flex items-center gap-1">
+      <input
+        type="number"
+        min={0}
+        step="0.01"
+        inputMode="decimal"
+        value={shown}
+        onChange={(e) => apply(e.target.value)}
+        placeholder="0"
+        className={`${field} num w-16 px-2 py-1`}
+        dir="ltr"
+        aria-label={ar ? "الخصم" : "Discount"}
+      />
+      <button
+        type="button"
+        onClick={() => setMode(mode === "PCT" ? "AMOUNT" : "PCT")}
+        title={ar ? "بدّل بين النسبة والمبلغ" : "Switch between percent and pounds"}
+        className="rounded-lg border border-ink-200 px-1.5 py-1 text-[11px] font-medium text-ink-600"
+      >
+        {mode === "PCT" ? "%" : (ar ? "ج.م" : "EGP")}
+      </button>
+    </span>
   );
 }

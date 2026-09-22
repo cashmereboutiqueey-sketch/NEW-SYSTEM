@@ -45,10 +45,23 @@ describe("capabilities", () => {
     expect(can("MODERATOR", "transfer_price:override")).toBe(false);
   });
 
-  it("stops a POS cashier discounting or refunding without a supervisor", () => {
+  /**
+   * What the till may decide, and what it may not.
+   *
+   * Discounting and taking part of the price were a supervisor's, and by
+   * instruction are the cashier's: a shop where the only person who may knock
+   * ten pounds off is upstairs is a shop that loses the sale. What the
+   * cashier still cannot do is the pair that moves money the other way —
+   * handing cash back, and counting the drawer they filled.
+   */
+  it("lets the till decide the price, and not what happens to the money after", () => {
     expect(can("POS_CASHIER", "pos:operate")).toBe(true);
-    expect(can("POS_CASHIER", "sales_order:discount")).toBe(false);
+    expect(can("POS_CASHIER", "sales_order:discount")).toBe(true);
+    expect(can("POS_CASHIER", "sales_order:credit")).toBe(true);
+
+    // Taking money back is a different decision from deciding what to charge.
     expect(can("POS_CASHIER", "sales_order:refund")).toBe(false);
+    // Whoever took the money is never the one who counts it.
     expect(can("POS_CASHIER", "pos:close_shift")).toBe(false);
   });
 

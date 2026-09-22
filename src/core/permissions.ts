@@ -253,7 +253,15 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     // sale is being rung up, which `pos:operate` and `sales_order:create`
     // already allow; browsing the whole customer base is a different act and
     // a different screen.
-    // Discount and refund are separate capabilities a supervisor grants.
+    //
+    // Discounting and taking part of the price were a supervisor's to grant,
+    // and by instruction they are the cashier's: a shop where the only person
+    // who may knock ten pounds off is upstairs is a shop that loses the sale.
+    // What still holds the line is elsewhere — a debt must name a customer,
+    // and it is refused above that customer's credit limit.
+    "sales_order:discount", "sales_order:credit",
+    // Refund stays out: taking money back is a different decision from
+    // deciding what to charge.
   ],
 
   HR: [

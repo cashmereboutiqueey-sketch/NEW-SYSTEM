@@ -296,15 +296,13 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       return { error: "You do not have permission to let a customer pay later." };
     }
 
-    // Goods belonging to somebody else cannot go out on credit. The shop owes
-    // their owner a share from the moment they leave, and letting a customer
-    // pay later means owing real money against a debt not yet collected.
-    if (consignedCart.length > 0 && paidNow.lessThan(total)) {
-      return {
-        error:
-          "بضاعة الأمانة لازم تتدفع كاملة — انت مدين لصاحبها من ساعة ما تخرج من المحل.",
-      };
-    }
+    // Goods belonging to somebody else used to be refused on credit outright.
+    // By instruction they are allowed, and the reason for the old rule has not
+    // gone anywhere: the shop owes their owner a share from the moment they
+    // leave, so a customer who pays later leaves the shop owing real money
+    // against a debt not yet collected. The till says so on the screen before
+    // the sale, which is where a warning is worth something; refusing it here
+    // was deciding for the owner what risk the shop may take.
 
     const locationId = String(formData.get("locationId") ?? "");
     const posSessionId = String(formData.get("posSessionId") ?? "");
