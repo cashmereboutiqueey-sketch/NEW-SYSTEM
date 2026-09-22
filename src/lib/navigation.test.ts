@@ -126,6 +126,7 @@ describe("what each role is shown", () => {
         "/",             // adapts to the role; shows a cashier no figures
         "/goods-in",     // counting in what arrived from the factory
         "/moderator",    // where an order is taken, sold or made
+        "/my-orders",    // what they personally are still waiting on
         "/pos",
         "/receivables",  // who owes, so a part payment can be judged
         "/returns",
@@ -149,6 +150,17 @@ describe("what each role is shown", () => {
     ]) {
       expect(seen, `a cashier should not be offered ${href}`).not.toContain(href);
     }
+  });
+
+  it("shows everybody who takes an order somewhere to follow it", () => {
+    // The point of the screen is that the person who promised a customer a
+    // date can see it without asking the office, so it follows the right to
+    // take the order rather than any right to read the books.
+    for (const role of ["POS_CASHIER", "MODERATOR", "BRAND_MANAGER", "OWNER"] as const) {
+      expect(visible(role), `${role} cannot follow their own orders`).toContain("/my-orders");
+    }
+    // Reads the register instead; takes nothing.
+    expect(visible("ACCOUNTANT")).not.toContain("/my-orders");
   });
 
   it("gives a social-media moderator the same desk without the till", () => {
