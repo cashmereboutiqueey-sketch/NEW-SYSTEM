@@ -51,7 +51,15 @@ beforeAll(async () => {
   brandId = (await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } })).id;
   locationId = (await db.location.findFirstOrThrow({ where: { entityId: brandId, isActive: true } })).id;
   channelId = (await db.salesChannel.findFirstOrThrow({})).id;
-  customerId = (await db.customer.findFirstOrThrow({})).id;
+  // The seed ships no customers, so this file brings its own rather than
+  // depending on demo data that may or may not be loaded.
+  customerId = (
+    await db.customer.upsert({
+      where: { code: "CUS-COMMISSION-TEST" },
+      update: {},
+      create: { code: "CUS-COMMISSION-TEST", name: "Commission Test Customer", channelId },
+    })
+  ).id;
   variantId = (await db.variant.findFirstOrThrow({})).id;
 
   const period = await db.fiscalPeriod.findFirstOrThrow({
@@ -98,6 +106,7 @@ beforeEach(wipe);
 afterAll(async () => {
   await wipe();
   await db.user.deleteMany({ where: { email: "commission-test@example.com" } });
+  await db.customer.deleteMany({ where: { code: "CUS-COMMISSION-TEST" } });
   await db.$disconnect();
 });
 
