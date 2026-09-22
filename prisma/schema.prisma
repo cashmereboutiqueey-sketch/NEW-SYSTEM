@@ -2698,12 +2698,17 @@ model Customer {
   city      String?
   creditDays Int          @default(0)
 
-  /// The most this customer may owe at any one time. Zero — the default —
-  /// means no credit at all, which is the right starting point for somebody
-  /// who walked in off the street. Raising it is a decision somebody makes
-  /// about a person they know, so it lives on the customer rather than being
-  /// a blanket policy.
-  creditLimit Decimal     @default(0) @db.Decimal(18, 4)
+  /// The most this customer may owe at any one time.
+  ///
+  /// Fifty thousand by instruction, because the shop wants the counter able to
+  /// let somebody pay part without sending them to find a manager. It stays on
+  /// the customer rather than being a rule in code, so lowering it for one
+  /// person who has let the shop down is a thing anybody can do on a screen.
+  ///
+  /// It is the only automatic brake on selling for less than the price, so a
+  /// figure set high is a decision about how much the shop is willing to be
+  /// owed at once, not a formality.
+  creditLimit Decimal     @default(50000) @db.Decimal(18, 4)
 
   shopifyCustomerId String?
   isActive  Boolean       @default(true)
