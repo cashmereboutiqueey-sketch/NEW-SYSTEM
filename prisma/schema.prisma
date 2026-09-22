@@ -112,6 +112,11 @@ model User {
   attendanceImports        AttendanceImport[]
   attendanceAdjustmentsRequested AttendanceAdjustment[] @relation("AttendanceAdjustmentRequestedBy")
   attendanceAdjustmentsApproved  AttendanceAdjustment[] @relation("AttendanceAdjustmentApprovedBy")
+
+  moderatorRates        ModeratorRate[]
+  moderatorCommissions  ModeratorCommission[]       @relation("CommissionEarnedBy")
+  moderatorSettlements  ModeratorSettlement[]       @relation("ModeratorSettlementFor")
+  moderatorSettlementsPaid ModeratorSettlement[]    @relation("ModeratorSettlementPaidBy")
 }
 
 /// Append-only record of who changed what. Never mutate historical records —
@@ -217,6 +222,9 @@ model Entity {
   consignorSettlements ConsignorSettlement[]
   @@map("entities")
   attendancePeriods AttendancePeriod[]
+
+  moderatorCommissions ModeratorCommission[]
+  moderatorSettlements ModeratorSettlement[]
 }
 
 enum PeriodStatus {
@@ -436,6 +444,9 @@ model JournalEntry {
   updatedAt DateTime @updatedAt
 
   lines JournalLine[]
+
+  moderatorCommissions ModeratorCommission[]
+  moderatorSettlements ModeratorSettlement[]
 
   @@index([entityId, postingDate])
   @@index([fiscalPeriodId, status])
@@ -2855,6 +2866,8 @@ model SalesOrder {
   posSessionId String?
   posSession   PosSession? @relation(fields: [posSessionId], references: [id], onDelete: SetNull)
 
+  moderatorCommissions ModeratorCommission[]
+
   /// Which marketing effort is claiming credit for this order. Attribution
   /// never changes the order's revenue or cost — it only says who claims it.
   campaignId String?
@@ -3788,4 +3801,137 @@ model Shipment {
   @@index([courier, reference])
   @@index([status])
   @@map("shipments")
+}
+
+
+// ===========================================================================
+// MODERATOR COMMISSION
+// ===========================================================================
+
+/// What one person earns for an order they entered.
+///
+/// Effective-dated rather than a column on the user, for the same reason a
+/// shift is: raising somebody's rate in March must not rewrite what February
+/// earned. The rate in force on the day the money came in is the rate that
+/// applies, and it is copied onto the commission so the arithmetic survives
+/// any later change.
+///
+/// Both halves are allowed at once. A flat amount per piece is what this shop
+/// pays; a percentage of the net is what it may pay next year; and a shop that
+/// pays "ten pounds a piece plus two per cent" is not doing anything strange.
+model ModeratorRate {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// EGP per garment on the order.
+  perPieceAmount Decimal @default(0) @db.Decimal(18, 4)
+  /// A fraction of the order's net, after discount and before shipping.
+  percentOfNet   Decimal @default(0) @db.Decimal(9, 6)
+
+  effectiveFrom DateTime  @db.Date
+  /// Closed the day a new rate starts. Open-ended while it is the current one.
+  effectiveTo   DateTime? @db.Date
+
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  commissions ModeratorCommission[]
+
+  @@index([userId, effectiveFrom])
+  @@map("moderator_rates")
+}
+
+enum ModeratorCommissionKind {
+  /// The customer's money is in, so the commission is owed.
+  EARNED
+  /// Some of it came back, so some of the commission does too.
+  REVERSED
+}
+
+/// One line of what a moderator is owed, or owes back.
+///
+/// Written when the money is collected, never when the order is taken: in a
+/// country where a parcel comes back as often as it does, paying on orders
+/// placed pays for sales that never happened. A return after collection
+/// writes a second, negative line rather than editing the first, so what was
+/// earned and what was clawed back are both on the record.
+///
+/// `sourceKey` is what makes both idempotent — `order:<id>` for the earning
+/// and `return:<id>` for the claw-back — so the accrual can be attempted from
+/// every place money is taken without ever double-paying.
+model ModeratorCommission {
+  id        String                  @id @default(cuid())
+  kind      ModeratorCommissionKind @default(EARNED)
+  sourceKey String                  @unique
+
+  userId String
+  user   User   @relation("CommissionEarnedBy", fields: [userId], references: [id], onDelete: Restrict)
+
+  salesOrderId String
+  salesOrder   SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+
+  /// The rate that produced this, kept so the figure can be re-derived.
+  rateId         String?
+  rate           ModeratorRate? @relation(fields: [rateId], references: [id], onDelete: SetNull)
+  perPieceAmount Decimal        @db.Decimal(18, 4)
+  percentOfNet   Decimal        @db.Decimal(9, 6)
+
+  /// What the rate was applied to. Negative on a claw-back.
+  pieces    Int
+  netAmount Decimal @db.Decimal(18, 4)
+  /// Negative on a claw-back, so a sum over the rows is what is owed.
+  amount    Decimal @db.Decimal(18, 4)
+
+  earnedOn DateTime @db.Date
+
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  journalEntryId String?
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+
+  settlementId String?
+  settlement   ModeratorSettlement? @relation(fields: [settlementId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, settlementId])
+  @@index([salesOrderId])
+  @@index([earnedOn])
+  @@map("moderator_commissions")
+}
+
+/// Paying a moderator what the lines say they are owed.
+///
+/// Claims the lines it pays rather than recomputing a total, so a line written
+/// between the screen loading and the button being pressed is not silently
+/// paid twice or silently missed.
+model ModeratorSettlement {
+  id     String @id @default(cuid())
+  number String @unique
+
+  userId String
+  user   User   @relation("ModeratorSettlementFor", fields: [userId], references: [id], onDelete: Restrict)
+
+  amount Decimal       @db.Decimal(18, 4)
+  method PaymentMethod
+  paidOn DateTime      @db.Date
+  notes  String?
+
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  journalEntryId String?
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+
+  paidByUserId String?
+  paidBy       User?   @relation("ModeratorSettlementPaidBy", fields: [paidByUserId], references: [id], onDelete: SetNull)
+
+  commissions ModeratorCommission[]
+  createdAt   DateTime @default(now())
+
+  @@index([userId, paidOn])
+  @@map("moderator_settlements")
 }

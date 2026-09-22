@@ -89,6 +89,12 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   // and not takings.
   { code: "2500", nameEn: "Payable to consignors", nameAr: "مستحق لأصحاب البضاعة الأمانة", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "PAYABLE" },
 
+  // Earned the moment the customer's money is actually in, and owed to the
+  // moderator from that moment until it is paid over. Separate from accrued
+  // payroll: a moderator is paid per order, not per month, and a commission
+  // nobody has settled is a debt with a name on it.
+  { code: "2510", nameEn: "Payable to moderators", nameAr: "مستحق للمودريتورز", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "PAYABLE" },
+
   { code: "2400", nameEn: "Customer deposits and unearned revenue", nameAr: "دفعات مقدمة من العملاء", type: "LIABILITY", normalBalance: "CREDIT", parent: "2000", scope: "BRAND", reportingCategory: "UNEARNED" },
 
   // The factory's own version of the same thing. A deposit on an external
@@ -186,6 +192,11 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   { code: "6220", nameEn: "Shipping and delivery", nameAr: "الشحن والتوصيل", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
   { code: "6230", nameEn: "Payment and COD fees", nameAr: "رسوم الدفع والتحصيل", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
   { code: "6240", nameEn: "Return handling", nameAr: "معالجة المرتجعات", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
+
+  // A cost of making the sale, not of running the brand: it exists only when
+  // an order does, which is what puts it beside shipping and the COD fee
+  // rather than beside the rent.
+  { code: "6250", nameEn: "Moderator commission", nameAr: "عمولة المودريتور", type: "EXPENSE", normalBalance: "DEBIT", parent: "6200", scope: "BRAND", reportingCategory: "BRAND_VARIABLE" },
 
   { code: "6300", nameEn: "Brand fixed costs", nameAr: "التكاليف الثابتة للبراند", type: "EXPENSE", normalBalance: "DEBIT", parent: "6000", scope: "BRAND", isPostable: false, reportingCategory: "BRAND_FIXED" },
   { code: "6310", nameEn: "Brand salaries", nameAr: "رواتب البراند", type: "EXPENSE", normalBalance: "DEBIT", parent: "6300", scope: "BRAND", reportingCategory: "BRAND_FIXED", includeInBrandFixedPool: true },

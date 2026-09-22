@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
+import { reverseCommissionForReturn } from "./moderator-commission";
 import { dec, roundMoney, Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { outstandingOnOrder } from "./receivables";
@@ -454,6 +455,19 @@ export async function recordReturn(
           returnDate,
         },
       });
+
+      // Goods back means the commission on them comes back too, for the
+      // pieces that returned rather than as a share of the whole order.
+      // Silent where the order never earned any.
+      await reverseCommissionForReturn(
+        {
+          returnId: record.id,
+          salesOrderId: input.salesOrderId,
+          piecesReturned: input.quantity,
+          netRefunded: refund.toString(),
+        },
+        ctx,
+      );
 
       await writeAudit(tx, {
         action: "SALE_RETURNED",

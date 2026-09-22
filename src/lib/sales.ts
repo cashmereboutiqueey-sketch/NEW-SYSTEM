@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
 import { relieveFinishedGoodsForSale } from "./inventory";
+import { accrueCommissionForOrder } from "./moderator-commission";
 import { markUnitsSold } from "./garment-units";
 import { writeAudit, type AuditContext } from "./audit";
 import type { DraftLine } from "@/core/ledger";
@@ -608,6 +609,12 @@ export async function createSale(
         },
         ctx,
       });
+
+      // Paid in full at the counter or by transfer, so the money is already
+      // in and whoever took the order has earned on it now. Silent and
+      // idempotent: an order left owing accrues nothing here and is picked up
+      // by the collection that clears it.
+      await accrueCommissionForOrder(order.id, ctx);
 
       return {
         salesOrderId: order.id,

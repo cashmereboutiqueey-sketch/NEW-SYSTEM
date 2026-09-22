@@ -2,6 +2,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { db, inTransaction } from "./db";
 import { createSale, SalesError } from "./sales";
+import { accrueCommissionForOrder } from "./moderator-commission";
 import { writeAudit, type AuditContext } from "./audit";
 import { dec } from "./money";
 import { postEntry } from "./ledger";
@@ -806,6 +807,11 @@ async function applyOrderUpdate(
           where: { id: salesOrderId },
           data: { collectedDate: new Date(), dueDate: null },
         });
+        // Machine imports carry no moderator, so this normally does nothing;
+        // it is here so an order a person did enter is not treated differently
+        // for having been paid on the website.
+        await accrueCommissionForOrder(salesOrderId, ctx);
+
         await writeAudit(tx, {
           action: "SHOPIFY_ORDER_PAID",
           entityName: "SalesOrder",

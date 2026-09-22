@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import { postEntry } from "./ledger";
+import { accrueCommissionForOrder } from "./moderator-commission";
 import { dec, roundMoney, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { command } from "./command";
@@ -366,6 +367,10 @@ export async function collectPayment(
         },
         ctx,
       });
+
+      // The moment the last of it lands is the moment the commission on it is
+      // owed. Does nothing while anything is still outstanding.
+      await accrueCommissionForOrder(order.id, ctx);
 
       return {
         collected: amount.toString(),

@@ -120,6 +120,9 @@ export const navigation: NavSection[] = [
       // One desk for an order that arrived as a message: sold off the shelf
       // where it exists, and put on the line where the cloth allows it.
       { key: "moderator", href: "/moderator", phase: 7, scopes: ["BRAND", "GROUP"], icon: "globe", shipped: true, needs: "sales_order:view" },
+      // What the desk above costs. Behind the books, not behind the desk:
+      // the people paid out of it must not be the people setting it.
+      { key: "commissions", href: "/commissions", phase: 7, scopes: ["BRAND", "GROUP"], icon: "wallet", shipped: true, needs: "journal:view" },
       // The courier has no API: sheets out in its template, its report back in.
       { key: "shipping", href: "/shipping", phase: 6, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "sales_order:view" },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true, needs: "customer:view" },
