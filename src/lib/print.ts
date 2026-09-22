@@ -63,11 +63,17 @@ export async function receiptFor(salesOrderId: string): Promise<ReceiptData | nu
     customerName: order.customer?.name ?? null,
     lines: order.lines.map((l) => ({
       sku: l.variant.sku,
-      nameEn: `${l.variant.style.nameEn} · ${l.variant.colorCode.nameEn} · ${l.variant.sizeCode.code}`,
-      nameAr: `${l.variant.style.nameAr} · ${l.variant.colorCode.nameAr} · ${l.variant.sizeCode.code}`,
+      // The garment alone: colour and size have columns of their own.
+      nameEn: l.variant.style.nameEn,
+      nameAr: l.variant.style.nameAr,
+      colourEn: l.variant.colorCode.nameEn,
+      colourAr: l.variant.colorCode.nameAr,
+      size: l.variant.sizeCode.code,
       quantity: l.quantity,
-      // The price stored on the line, not the style's current price — a
-      // reprinted receipt must show what was actually charged.
+      // Both prices stored on the line, not the style's current one — a
+      // reprinted receipt must show what was actually charged, and the two
+      // together are what makes the discount column mean anything.
+      retailPrice: l.retailPrice.toString(),
       unitPrice: l.netPrice.toString(),
       lineTotal: l.lineTotal.toString(),
     })),
@@ -78,6 +84,8 @@ export async function receiptFor(salesOrderId: string): Promise<ReceiptData | nu
     paymentMethod: order.payments[0]?.method ?? null,
     tendered: cash ? cash.amount.toString() : null,
     change: null,
+    cashTaken: cash ? cash.amount.toString() : null,
+    user: order.posSession?.cashier.name ?? order.createdBy?.name ?? null,
   };
 }
 

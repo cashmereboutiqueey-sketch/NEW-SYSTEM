@@ -223,6 +223,19 @@
   font-family: "Consolas", "Courier New", monospace;
 }
 
+/*
+ * The shop's own sales invoice on the same roll.
+ *
+ * Set in a proportional Arabic face rather than the roll's monospace, because
+ * Arabic in Courier is barely Arabic — the letters stop joining and a customer
+ * reads it as a fault in the printer. Columns still line up: `.num` gives
+ * figures tabular widths, which is the only thing the monospace was for.
+ */
+.sheet-thermal.sheet-arabic-invoice {
+  font-family: "Segoe UI", "Dubai", "Tahoma", "Arial", sans-serif;
+  line-height: 1.3;
+}
+
 @media print {
   .sheet-thermal {
     page: thermal;

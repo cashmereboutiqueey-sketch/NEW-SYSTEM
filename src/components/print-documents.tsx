@@ -1,4 +1,5 @@
 import { code128Svg, canEncode } from "@/core/barcode";
+import { amountInArabicWords } from "@/core/arabic-words";
 import { formatMoney, formatNumber, dec } from "@/lib/money";
 import type { Locale } from "@/lib/i18n";
 
@@ -67,7 +68,14 @@ export type ReceiptData = {
     sku: string;
     nameEn: string;
     nameAr: string;
+    /** Colour and size in their own columns, as the printed invoice sets them. */
+    colourEn: string;
+    colourAr: string;
+    size: string;
     quantity: number;
+    /** Before the line discount. The column headed السعر. */
+    retailPrice: string;
+    /** After it. The column headed القيمة. */
     unitPrice: string;
     lineTotal: string;
   }[];
@@ -78,6 +86,10 @@ export type ReceiptData = {
   paymentMethod?: string | null;
   tendered?: string | null;
   change?: string | null;
+  /** What was taken in cash, printed beside the totals as النقدى. */
+  cashTaken?: string | null;
+  /** Whoever rang it up, printed at the foot as المستخدم. */
+  user?: string | null;
 };
 
 /**
@@ -85,6 +97,23 @@ export type ReceiptData = {
  *
  * Sized in millimetres for a thermal roll, monospaced so figures line up, and
  * with the barcode at the bottom where a returns desk expects to find it.
+ */
+/**
+ * The shop's own sales invoice, as it has always been printed.
+ *
+ * Copied from the paper: the name across the top, the invoice number, branch
+ * and customer boxed on the right with the date and time boxed on the left,
+ * the garment in six columns, the totals in a box of their own with the cash
+ * beside it, and the sum written out in words underneath.
+ *
+ * The line in words is the part worth keeping rather than tidying away. It is
+ * what a printed invoice is checked against when the figure is smudged or
+ * argued over, which is why it has been on invoices here for a century.
+ *
+ * Two fields the old till left at nought are filled in: what the customer
+ * handed over and what they got back. They are labelled المدفوع and الباقى,
+ * which is what they mean, and printing zeroes under them was the old
+ * machine's habit rather than a fact about the sale.
  */
 export function Receipt({
   data,
@@ -95,117 +124,194 @@ export function Receipt({
   business: Business;
   locale: Locale;
 }) {
-  const ar = locale === "ar";
-  const money = (v: string) => formatMoney(v, locale, false);
+  const ar = locale !== "en";
+  const money = (v: string) => formatMoney(v, "ar", false);
+
+  const gross = dec(data.grossAmount);
+  const discount = dec(data.discountAmount);
+  const net = dec(data.netAmount);
+  const cash = data.cashTaken ? dec(data.cashTaken) : null;
+  const tendered = data.tendered ? dec(data.tendered) : null;
+  const change = data.change ? dec(data.change) : null;
+
+  // The date and the time as the paper sets them: American date, twelve-hour
+  // clock. Deliberately not the ISO string — this is a copy of a document the
+  // shop's customers already recognise.
+  const when = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Cairo",
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+  }).format(data.date);
+  const at = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Cairo",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(data.date);
+  const stamp = `${when}  ${new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Cairo",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(data.date)}`;
+
+  const cell: React.CSSProperties = {
+    border: "1px solid #000",
+    padding: "0.8mm 1mm",
+    textAlign: "center",
+  };
+  const label: React.CSSProperties = {
+    border: "1px dashed #000",
+    padding: "0.6mm 1.2mm",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  };
+  const value: React.CSSProperties = { padding: "0.6mm 1.2mm", whiteSpace: "nowrap" };
+
+  const phones = (business.phone ?? "")
+    .split(/[,\n\/]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
 
   return (
-    <div className="print-sheet sheet-thermal" dir={ar ? "rtl" : "ltr"}>
-      <div style={{ textAlign: "center", marginBottom: "3mm" }}>
-        <div style={{ fontSize: "12pt", fontWeight: 700 }}>
-          {ar ? business.nameAr : business.nameEn}
-        </div>
-        <div style={{ fontSize: "8pt" }}>{ar ? data.locationAr : data.locationEn}</div>
-        {business.phone && (
-          <div className="ltr" style={{ fontSize: "8pt" }}>{business.phone}</div>
-        )}
+    <div className="print-sheet sheet-thermal sheet-arabic-invoice" dir="rtl" style={{ fontSize: "8pt" }}>
+      {/* ------------------------------------------------------------ head */}
+      <div style={{ textAlign: "start", fontSize: "15pt", fontWeight: 700, letterSpacing: "0.5mm" }}>
+        {business.nameEn || "CASHMERE"}
       </div>
+      <div style={{ textAlign: "start", marginBottom: "2mm" }}>فاتورة بيع</div>
 
-      <div style={{ borderTop: "1px dashed #000", paddingTop: "2mm", fontSize: "8pt" }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>{ar ? "إيصال" : "Receipt"}</span>
-          <span className="ltr">{data.orderNumber}</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>{ar ? "التاريخ" : "Date"}</span>
-          <span className="ltr">
-            {data.date.toISOString().slice(0, 16).replace("T", " ")}
-          </span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>{ar ? "الكاشير" : "Cashier"}</span>
-          <span>{data.cashier}</span>
-        </div>
-        {data.customerName && (
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>{ar ? "العميل" : "Customer"}</span>
-            <span>{data.customerName}</span>
-          </div>
-        )}
-      </div>
-
-      <table style={{ marginTop: "2mm", borderTop: "1px dashed #000", fontSize: "8pt" }}>
+      <table style={{ width: "100%", marginBottom: "1.5mm" }}>
         <tbody>
-          {data.lines.map((l) => (
-            <tr key={l.sku} className="keep-together">
-              <td colSpan={2} style={{ paddingTop: "1.5mm" }}>
-                <div>{ar ? l.nameAr : l.nameEn}</div>
-                <div className="ltr" style={{ fontSize: "7pt", color: "#444" }}>{l.sku}</div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span className="num">
-                    {l.quantity} × {money(l.unitPrice)}
-                  </span>
-                  <span className="num">{money(l.lineTotal)}</span>
-                </div>
-              </td>
+          <tr>
+            <td style={label}>م الفاتورة</td>
+            <td style={{ ...value, fontSize: "12pt", fontWeight: 700 }} className="num">
+              {data.orderNumber}
+            </td>
+            <td style={{ ...value, textAlign: "end" }} className="num ltr">{when}</td>
+            <td style={label}>التاريخ</td>
+          </tr>
+          <tr>
+            <td style={label}>الفرع</td>
+            <td style={value}>{data.locationAr || data.locationEn}</td>
+            <td style={{ ...value, textAlign: "end" }} className="num ltr">{at}</td>
+            <td style={label}>الوقت</td>
+          </tr>
+          <tr>
+            <td style={label}>العميل</td>
+            <td style={value} colSpan={3}>{data.customerName ?? "مبيعات نقدية"}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ----------------------------------------------------------- lines */}
+      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "2mm" }}>
+        <thead>
+          <tr>
+            <th style={{ ...cell, textDecoration: "underline" }}>الصنف</th>
+            <th style={{ ...cell, textDecoration: "underline" }}>اللون</th>
+            <th style={{ ...cell, textDecoration: "underline" }}>مقاس</th>
+            <th style={{ ...cell, textDecoration: "underline" }}>الكمية</th>
+            <th style={{ ...cell, textDecoration: "underline" }}>السعر</th>
+            <th style={{ ...cell, textDecoration: "underline" }}>القيمة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.lines.map((l, i) => (
+            <tr key={`${l.sku}-${i}`} className="keep-together">
+              <td style={{ ...cell, textAlign: "start" }}>{ar ? l.nameAr : l.nameEn}</td>
+              <td style={cell}>{ar ? l.colourAr : l.colourEn}</td>
+              <td style={cell} className="ltr">{l.size}</td>
+              <td style={cell} className="num">{l.quantity}</td>
+              <td style={cell} className="num">{money(l.retailPrice)}</td>
+              <td style={cell} className="num">{money(l.lineTotal)}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <div
-        className="totals"
-        style={{ marginTop: "2mm", borderTop: "1px dashed #000", paddingTop: "2mm", fontSize: "9pt" }}
-      >
-        {dec(data.discountAmount).greaterThan(0) && (
-          <>
-            <Row label={ar ? "الإجمالي" : "Subtotal"} value={money(data.grossAmount)} />
-            <Row label={ar ? "الخصم" : "Discount"} value={`−${money(data.discountAmount)}`} />
-          </>
+      {/* ---------------------------------------------------------- totals */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "2mm", marginBottom: "2mm" }}>
+        {cash !== null && cash.greaterThan(0) && (
+          <div style={{ border: "1px dashed #000", padding: "1mm 2mm", whiteSpace: "nowrap" }}>
+            <span style={{ fontWeight: 700 }}>النقدى</span>{" "}
+            <span className="num" style={{ fontSize: "11pt", fontWeight: 700 }}>{money(cash.toString())}</span>
+          </div>
         )}
-        {dec(data.shippingAmount).greaterThan(0) && (
-          <Row label={ar ? "الشحن" : "Shipping"} value={money(data.shippingAmount)} />
-        )}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontWeight: 700,
-            fontSize: "11pt",
-            borderTop: "1px solid #000",
-            marginTop: "1mm",
-            paddingTop: "1mm",
-          }}
-        >
-          <span>{ar ? "المطلوب" : "Total"}</span>
-          <span className="num">{money(data.netAmount)}</span>
+        <table style={{ marginInlineStart: "auto", borderCollapse: "collapse", border: "2px solid #000" }}>
+          <tbody>
+            <tr>
+              <td style={{ ...cell, fontWeight: 700 }}>الأجمالى</td>
+              <td style={cell} className="num">{money(gross.toString())}</td>
+            </tr>
+            {discount.greaterThan(0) && (
+              <tr>
+                <td style={{ ...cell, fontWeight: 700 }}>الخصم</td>
+                <td style={cell} className="num">{money(discount.toString())}</td>
+              </tr>
+            )}
+            {dec(data.shippingAmount).greaterThan(0) && (
+              <tr>
+                <td style={{ ...cell, fontWeight: 700 }}>الشحن</td>
+                <td style={cell} className="num">{money(data.shippingAmount)}</td>
+              </tr>
+            )}
+            <tr>
+              <td style={{ ...cell, fontWeight: 700 }}>الصافى</td>
+              <td style={{ ...cell, fontWeight: 700 }} className="num">{money(net.toString())}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <table style={{ marginBottom: "2mm" }}>
+        <tbody>
+          <tr>
+            <td style={label}>المدفوع</td>
+            <td style={{ ...value, fontSize: "11pt" }} className="num">
+              {money((tendered ?? cash ?? net).toString())}
+            </td>
+          </tr>
+          <tr>
+            <td style={label}>الباقى</td>
+            <td style={{ ...value, fontSize: "11pt" }} className="num">
+              {money((change ?? dec(0)).toString())}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ------------------------------------------- the figure, in words */}
+      <div style={{ textAlign: "center", marginBottom: "2.5mm" }}>
+        {amountInArabicWords(net.toString())}
+      </div>
+
+      {/* ----------------------------------------------------------- foot */}
+      {phones.length > 0 && (
+        <div style={{ textAlign: "center", marginBottom: "1.5mm" }}>
+          <span style={{ fontWeight: 700 }}>للتواصل معنا :</span>{" "}
+          <span className="num ltr">{phones.join("  ")}</span>
         </div>
+      )}
 
-        {data.tendered && (
-          <>
-            <Row label={ar ? "المدفوع" : "Tendered"} value={money(data.tendered)} />
-            <Row label={ar ? "الباقي" : "Change"} value={money(data.change ?? "0")} />
-          </>
-        )}
+      {business.addressLine && (
+        <div style={{ marginBottom: "2mm" }}>
+          <div style={{ fontWeight: 700 }}>العنوان</div>
+          <div>{business.addressLine}</div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "baseline", gap: "2mm", fontSize: "8pt" }}>
+        <span style={label}>المستخدم</span>
+        <span>{data.user ?? data.cashier}</span>
+        <span className="num ltr" style={{ marginInlineStart: "auto" }}>{stamp}</span>
       </div>
 
-      <div style={{ textAlign: "center", marginTop: "4mm" }}>
-        <Barcode value={data.orderNumber} moduleWidthMm={0.3} heightMm={10} />
+      <div style={{ textAlign: "center", marginTop: "1.5mm" }} className="num">
+        {data.orderNumber}
       </div>
-
-      <div style={{ textAlign: "center", marginTop: "3mm", fontSize: "7pt" }}>
-        {ar
-          ? "الاستبدال خلال ١٤ يومًا بالإيصال والقطعة كما هي"
-          : "Exchange within 14 days with this receipt and the item unworn"}
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between" }}>
-      <span>{label}</span>
-      <span className="num">{value}</span>
     </div>
   );
 }
