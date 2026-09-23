@@ -110,6 +110,13 @@ export const CHART_OF_ACCOUNTS: AccountSeed[] = [
   // ---------------------------------------------------------------------
   { code: "3000", nameEn: "Equity", nameAr: "حقوق الملكية", type: "EQUITY", normalBalance: "CREDIT", isPostable: false, reportingCategory: "EQUITY" },
   { code: "3100", nameEn: "Owner capital", nameAr: "رأس المال", type: "EQUITY", normalBalance: "CREDIT", parent: "3000", reportingCategory: "EQUITY" },
+  // Where everything the business already had on the day it started keeping
+  // books is posted: stock on the shelf, cash in the drawer, what customers
+  // owe and what is owed to suppliers. Once all of it is in, what remains in
+  // here is the owner's capital, and moving it there is a decision somebody
+  // makes deliberately rather than an assumption made on their behalf.
+  { code: "3400", nameEn: "Opening balances", nameAr: "أرصدة افتتاحية", type: "EQUITY", normalBalance: "CREDIT", parent: "3000", reportingCategory: "EQUITY" },
+
   { code: "3200", nameEn: "Owner drawings", nameAr: "مسحوبات المالك", type: "EQUITY", normalBalance: "DEBIT", parent: "3000", reportingCategory: "EQUITY_DRAWINGS" },
   { code: "3300", nameEn: "Retained earnings", nameAr: "الأرباح المرحلة", type: "EQUITY", normalBalance: "CREDIT", parent: "3000", reportingCategory: "EQUITY" },
 

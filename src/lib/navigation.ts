@@ -63,6 +63,9 @@ export const navigation: NavSection[] = [
       // The ledger itself, and the only honest way to correct it. Postings are
       // immutable by design, which left nothing able to put a mistake right.
       { key: "journal", href: "/journal", phase: 2, scopes: ALL_SCOPES, icon: "file", shipped: true, needs: "journal:view" },
+      // What the business already had on the day the books opened. Next to
+      // the journal because that is what posting one is.
+      { key: "openingBalances", href: "/opening-balances", phase: 2, scopes: ALL_SCOPES, icon: "boxes", shipped: true, needs: "journal:create" },
       { key: "auditTrail", href: "/audit", phase: 2, scopes: ALL_SCOPES, icon: "search", shipped: true, needs: "audit:view" },
       { key: "chartOfAccounts", href: "/accounts", phase: 2, scopes: ALL_SCOPES, icon: "layers", shipped: true, needs: "journal:view" },
       { key: "tax", href: "/tax", phase: 2, scopes: ALL_SCOPES, icon: "percent", shipped: true, needs: "journal:view" },

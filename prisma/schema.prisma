@@ -113,6 +113,7 @@ model User {
   attendanceAdjustmentsRequested AttendanceAdjustment[] @relation("AttendanceAdjustmentRequestedBy")
   attendanceAdjustmentsApproved  AttendanceAdjustment[] @relation("AttendanceAdjustmentApprovedBy")
 
+  openingBalanceBatches OpeningBalanceBatch[]
   moderatorRates        ModeratorRate[]
   moderatorCommissions  ModeratorCommission[]       @relation("CommissionEarnedBy")
   moderatorSettlements  ModeratorSettlement[]       @relation("ModeratorSettlementFor")
@@ -225,6 +226,7 @@ model Entity {
 
   moderatorCommissions ModeratorCommission[]
   moderatorSettlements ModeratorSettlement[]
+  openingBalanceBatches OpeningBalanceBatch[]
 }
 
 enum PeriodStatus {
@@ -447,6 +449,7 @@ model JournalEntry {
 
   moderatorCommissions ModeratorCommission[]
   moderatorSettlements ModeratorSettlement[]
+  openingBalanceBatches OpeningBalanceBatch[]
 
   @@index([entityId, postingDate])
   @@index([fiscalPeriodId, status])
@@ -950,6 +953,7 @@ model Material {
   inventoryLots  InventoryLot[]
 
   @@index([type])
+  openingBalanceLines OpeningBalanceLine[]
   @@map("materials")
 }
 
@@ -1235,6 +1239,7 @@ model Variant {
   customOrders CustomOrder[]
   @@unique([styleId, colorCodeId, sizeCodeId])
   @@index([sku])
+  openingBalanceLines OpeningBalanceLine[]
   @@map("variants")
 }
 
@@ -1626,6 +1631,7 @@ model Location {
   consignmentSales ConsignmentSale[]
   @@index([kind, isActive])
   @@index([parentLocationId])
+  openingBalanceLines OpeningBalanceLine[]
   @@map("locations")
 }
 
@@ -1743,11 +1749,19 @@ model InventoryLot {
   entityId String?
   entity   Entity? @relation(fields: [entityId], references: [id], onDelete: Restrict)
 
+  /// The batch that brought this in as an opening balance, where it was one.
+  openingBatchId String?
+  openingBatch   OpeningBalanceBatch? @relation(fields: [openingBatchId], references: [id], onDelete: SetNull)
+
   originalQty  Decimal @db.Decimal(18, 4)
   remainingQty Decimal @db.Decimal(18, 4)
   /// Reserved for orders but not yet issued. Available = remaining − reserved.
   reservedQty  Decimal @default(0) @db.Decimal(18, 4)
   unitCost     Decimal @db.Decimal(18, 4)
+  /// True where nobody knew what this actually cost and a figure was derived
+  /// instead. Every margin computed against it is an estimate too, and the
+  /// screens that show one say so rather than letting it pass as measured.
+  costEstimated Boolean @default(false)
 
   /// Breaks same-day receipt ties so FIFO order is total and deterministic.
   sequence Int @default(autoincrement())
@@ -3939,4 +3953,100 @@ model ModeratorSettlement {
 
   @@index([userId, paidOn])
   @@map("moderator_settlements")
+}
+
+
+// ===========================================================================
+// OPENING BALANCES
+// ===========================================================================
+
+enum OpeningBalanceStatus {
+  /// Counted and priced, nothing written to the books yet.
+  PREVIEWED
+  /// Posted. The lots exist and the journal entry is against them.
+  COMMITTED
+  CANCELLED
+}
+
+/// How a cost was arrived at, which decides whether a margin means anything.
+enum CostBasis {
+  /// Somebody knew what it cost and typed it.
+  STATED
+  /// Derived from the selling price and a ratio the owner gave.
+  ESTIMATED_FROM_RETAIL
+  /// Exploded from the style's own bill of materials and minute rate.
+  DERIVED_FROM_BOM
+}
+
+/// Everything the business already had on the day it started keeping books.
+///
+/// One batch, one journal entry, one date. Kept as a record rather than a
+/// script that ran once, because "where did this stock come from and who said
+/// it was worth that" is the first question anybody asks of an opening
+/// balance, usually a year later.
+model OpeningBalanceBatch {
+  id     String               @id @default(cuid())
+  number String               @unique
+  status OpeningBalanceStatus @default(PREVIEWED)
+
+  /// The day the books open. Everything here is dated to it.
+  asOfDate DateTime @db.Date
+
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  /// What was assumed about cost where nobody knew it: a fraction of the
+  /// selling price. Kept so the assumption can be found and argued with.
+  retailCostRatio Decimal? @db.Decimal(9, 6)
+
+  filename   String?
+  notes      String?
+  totalLines Int     @default(0)
+  totalValue Decimal @default(0) @db.Decimal(18, 4)
+  /// How much of that value rests on an estimate rather than a known cost.
+  estimatedValue Decimal @default(0) @db.Decimal(18, 4)
+
+  journalEntryId String?
+  journalEntry   JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+
+  createdByUserId String?
+  createdBy       User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  committedAt     DateTime?
+
+  lines OpeningBalanceLine[]
+  lots  InventoryLot[]
+
+  @@index([status, asOfDate])
+  @@map("opening_balance_batches")
+}
+
+/// One counted line: this much of this thing, here, at this cost.
+model OpeningBalanceLine {
+  id      String              @id @default(cuid())
+  batchId String
+  batch   OpeningBalanceBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  /// Which row of the file this came from, so a refusal can be pointed at it.
+  rowNumber Int
+
+  materialId String?
+  material   Material? @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  variantId  String?
+  variant    Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  quantity  Decimal   @db.Decimal(18, 4)
+  unitCost  Decimal   @db.Decimal(18, 4)
+  costBasis CostBasis @default(STATED)
+
+  /// What the row said before anything was resolved, kept for a refusal to
+  /// quote back rather than leaving somebody to guess which line was wrong.
+  raw    Json?
+  reason String?
+
+  @@index([batchId])
+  @@map("opening_balance_lines")
 }
