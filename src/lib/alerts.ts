@@ -335,7 +335,43 @@ async function moqShortfall(): Promise<Finding[]> {
     }));
 }
 
+/**
+ * A drawer still open after the shop has shut.
+ *
+ * The cashier cannot close it — counting the money is not the job of whoever
+ * took it — so somebody else has to, and nobody finds out it was forgotten
+ * until the morning, when she is at the counter with a customer and cannot
+ * open a shift. This is the only rule here whose whole purpose is to be seen
+ * the evening before.
+ */
+async function tillLeftOpen(p: Params): Promise<Finding[]> {
+  const hours = num(p, "afterHours", 12);
+  const stale = new Date(Date.now() - hours * 3_600_000);
+
+  const open = await db.posSession.findMany({
+    where: { closedAt: null, openedAt: { lt: stale } },
+    include: { location: true, cashier: true },
+  });
+
+  return open.map((till) => {
+    const since = till.openedAt.toISOString().slice(0, 16).replace("T", " ");
+    return {
+      // The session, so closing this one and opening another tomorrow raises
+      // a fresh alert rather than reviving a resolved one.
+      dedupeKey: `till:${till.id}`,
+      titleEn: `Till ${till.sessionNumber} is still open at ${till.location.nameEn}`,
+      titleAr: `وردية ${till.sessionNumber} لسه مفتوحة في ${till.location.nameAr}`,
+      bodyEn: `Opened by ${till.cashier.name} at ${since}. The drawer has to be counted and closed by somebody who may before anybody can start a shift there tomorrow — the cashier cannot close her own.`,
+      bodyAr: `فتحها ${till.cashier.name} الساعة ${since}. لازم حد معاه صلاحية القفل يعدّ الدرج ويقفله قبل ما حد يفتح وردية هناك بكرة — الكاشير مش بيقفل ورديته بنفسه.`,
+      subjectType: "PosSession",
+      subjectId: till.id,
+      metrics: { openedAt: since, location: till.location.nameEn, cashier: till.cashier.name },
+    };
+  });
+}
+
 const EVALUATORS: Record<string, (p: Params) => Promise<Finding[]>> = {
+  TILL_LEFT_OPEN: tillLeftOpen,
   WASTE_DRIFT: wasteDrift,
   IDLE_CAPACITY: idleCapacity,
   LOW_STOCK: lowStock,

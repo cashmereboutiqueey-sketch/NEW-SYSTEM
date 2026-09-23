@@ -1437,6 +1437,13 @@ async function main() {
   // -------------------------------------------------------------------------
   const alertRules = [
     {
+      code: "TILL_LEFT_OPEN", nameEn: "Till left open", nameAr: "وردية مفتوحة من غير قفل",
+      descriptionEn: "A POS session is still open long after it was started.",
+      descriptionAr: "وردية كاشير لسه مفتوحة بعد وقت طويل من فتحها.",
+      severity: "WARNING" as const,
+      parameters: { afterHours: 12 },
+    },
+    {
       code: "WASTE_DRIFT", nameEn: "Waste above plan", nameAr: "الهالك أعلى من المخطط",
       descriptionEn: "A style's trailing actual waste exceeds its planned rate.",
       descriptionAr: "الهالك الفعلي لموديل تجاوز النسبة المخططة.",
