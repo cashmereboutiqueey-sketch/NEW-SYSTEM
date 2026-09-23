@@ -6,6 +6,7 @@ import { can } from "@/core/permissions";
 import { PageHeader, Card, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber } from "@/lib/money";
 import { sellableStock, openTillFor, tillTotals } from "@/lib/pos";
+import { shiftFor, locationsFree } from "@/core/till";
 import { sellableConsignedStock } from "@/lib/consignment";
 import { PosTerminal } from "./pos-terminal";
 import { OpenTillForm, CloseTillForm } from "./till-forms";
@@ -52,16 +53,26 @@ export default async function PosPage({
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
 
-  // Whichever till is already open wins, so a cashier returning to the screen
-  // lands back in their own shift rather than being asked to open a new one.
-  let till = null;
-  for (const l of locations) {
-    const open = await openTillFor(l.id);
-    if (open && (!params.location || open.locationId === params.location)) {
-      till = open;
-      break;
-    }
-  }
+  /*
+   * Which till this person is standing at.
+   *
+   * Their own first, wherever it is, so a cashier returning to the screen
+   * lands back in their own shift. Only then somebody else's, and only to be
+   * told about it: the screen used to hand a cashier the first open till it
+   * found anywhere — including one at another branch, opened by somebody else
+   * — let her fill a basket on it, and refuse at the moment she pressed sell
+   * with the customer standing there.
+   */
+  const open = (
+    await Promise.all(
+      locations
+        .filter((l) => !params.location || l.id === params.location)
+        .map((l) => openTillFor(l.id)),
+    )
+  ).filter((t) => t !== null);
+
+  const { use: till, blockedBy: elsewhere } = shiftFor(open, session.userId, mayClose);
+  const free = locationsFree(locations, open);
 
   // A retail channel if one is configured, otherwise whatever exists — the
   // till must not refuse to open because nobody has named a channel yet.
@@ -113,12 +124,42 @@ export default async function PosPage({
               : "Open the shift by counting what is in the drawer before the first sale"
           }
         />
+
+        {/* Said before a basket is built, not after it. The drawer belongs to
+            one shift and one person; whoever is not that person has to be told
+            so, and told what actually unblocks it. */}
+        {elsewhere && (
+          <Card
+            className="mb-4"
+            title={ar ? "الدرج مفتوح باسم حد تاني" : "The drawer is open in somebody else's name"}
+          >
+            <p className="text-sm text-ink-700">
+              {ar
+                ? `وردية ${elsewhere.sessionNumber} مفتوحة في ${name(elsewhere.location)} باسم ${elsewhere.cashier.name}، من ${elsewhere.openedAt.toISOString().slice(0, 16).replace("T", " ")}.`
+                : `Till ${elsewhere.sessionNumber} is open at ${name(elsewhere.location)} in ${elsewhere.cashier.name}'s name, since ${elsewhere.openedAt.toISOString().slice(0, 16).replace("T", " ")}.`}
+            </p>
+            <p className="mt-2 text-sm text-ink-600">
+              {ar
+                ? "درج واحد لوردية واحدة، عشان الفرق في العدّ يبقى على اسم واحد. علشان تبيع، لازم حد معاه صلاحية قفل الوردية يعدّ الدرج ويقفلها — بعدها تفتح وردية باسمك."
+                : "One drawer, one shift, so a difference in the count has one name on it. Before you can sell, somebody who may close a till has to count the drawer and close it — then you open one in your own name."}
+            </p>
+            {free.length > 0 && maySell && (
+              <p className="mt-2 text-sm text-good">
+                {ar
+                  ? `ولو هتبيع من مكان تاني، ${free.map(name).join(" أو ")} فاضي ومتاح تفتح فيه دلوقتي.`
+                  : `If you are selling somewhere else, ${free.map(name).join(" or ")} has no till open and you can start one now.`}
+              </p>
+            )}
+          </Card>
+        )}
+
+        {(free.length > 0 || !elsewhere) && (
         <Card title={ar ? "فتح وردية" : "Open a till"}>
           {maySell ? (
             <>
               <OpenTillForm
                 locale={locale}
-                locations={locations.map((l) => ({ id: l.id, label: name(l) }))}
+                locations={free.map((l) => ({ id: l.id, label: name(l) }))}
               />
               <p className="mt-3 text-xs text-ink-500">
                 {ar
@@ -136,6 +177,7 @@ export default async function PosPage({
             </p>
           )}
         </Card>
+        )}
       </>
     );
   }

@@ -245,7 +245,12 @@ async function checkTill(
     throw new CheckoutError("That till is at another location from this sale.");
   }
   if (till.cashierUserId !== session.userId && !can(session.role, "pos:close_shift")) {
-    throw new CheckoutError("That till belongs to another cashier. Open your own.");
+    // Not "open your own": one drawer takes one shift, so that is the one
+    // thing this person cannot do. What unblocks it is the drawer being
+    // counted and closed by somebody who may.
+    throw new CheckoutError(
+      "That till is open in another cashier's name. It has to be counted and closed before you can sell.",
+    );
   }
 }
 
