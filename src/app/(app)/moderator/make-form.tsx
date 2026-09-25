@@ -2,6 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
+import { CustomerPicker } from "@/components/customer-picker";
 import { takeOrderToMakeAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
 
@@ -55,6 +56,7 @@ export function MakeToOrderForm({
   mayPlan: boolean;
 }) {
   const [state, action, pending] = useActionState(takeOrderToMakeAction, empty);
+  const [customerId, setCustomerId] = useState("");
   const [variantId, setVariantId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
@@ -108,17 +110,20 @@ export function MakeToOrderForm({
           </select>
         </label>
 
-        <label className="text-sm">
+        <div className="text-sm">
           <span className="mb-1 block text-ink-600">{ar ? "الزبون" : "Customer"}</span>
-          <select name="customerId" required className={field}>
-            <option value="">{ar ? "اختار…" : "Pick…"}</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.phone ? ` · ${c.phone}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+          {/* A moderator knows the number from the chat and nothing else, and
+              the person is usually not on file yet — the order is the first
+              thing they ever bought. */}
+          <CustomerPicker
+            ar={ar}
+            people={customers}
+            value={customerId}
+            onChange={(id) => setCustomerId(id)}
+            name="customerId"
+            required
+          />
+        </div>
       </div>
 
       {/* ------------------------------------------------- the fabric verdict */}

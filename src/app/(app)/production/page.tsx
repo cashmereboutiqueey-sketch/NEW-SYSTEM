@@ -45,6 +45,18 @@ export default async function ProductionPage() {
             },
           },
         },
+        // A run raised for one customer looks exactly like a season's batch
+        // once it is in the list, and it is not: somebody paid a deposit and
+        // was given a date.
+        customOrder: {
+          select: {
+            orderNumber: true,
+            quantity: true,
+            promisedDate: true,
+            status: true,
+            customer: { select: { name: true, phone: true } },
+          },
+        },
         costSnapshot: true,
         minuteRatePeriod: { include: { fiscalPeriod: true } },
         materialIssues: { include: { material: { include: { uom: true } } } },
@@ -74,6 +86,28 @@ export default async function ProductionPage() {
     (o) => o.status === "CONFIRMED" || o.status === "IN_PRODUCTION",
   );
   const completed = orders.filter((o) => o.status === "COMPLETED");
+
+  /*
+   * Runs somebody is waiting on, soonest first.
+   *
+   * These were indistinguishable from the rest: a draft among drafts, with
+   * nothing on the screen saying a customer had been promised a date. So the
+   * factory did not know to start them, which is the same as the order never
+   * having arrived.
+   */
+  // Not `today` — the page already has one of those, as the string a date
+  // input wants.
+  const startOfToday = new Date(new Date().toISOString().slice(0, 10));
+  const promised = orders
+    .filter((o) => o.customOrder && !["COMPLETED", "CANCELLED"].includes(o.status))
+    .sort((a, b) => {
+      const x = a.customOrder?.promisedDate?.getTime() ?? Infinity;
+      const y = b.customOrder?.promisedDate?.getTime() ?? Infinity;
+      return x - y;
+    });
+  const late = promised.filter(
+    (o) => o.customOrder?.promisedDate && o.customOrder.promisedDate < startOfToday,
+  );
 
   // What each open order still needs, against what the warehouse holds.
   const openWork = await Promise.all(
@@ -161,6 +195,16 @@ export default async function ProductionPage() {
           tone={inFlight.length > 0 ? "info" : "neutral"}
         />
         <StatTile
+          label={ar ? "عليها عميل مستني" : "A customer is waiting"}
+          value={String(promised.length)}
+          hint={
+            late.length > 0
+              ? ar ? `${late.length} فات ميعادها` : `${late.length} past their day`
+              : ar ? "كلها في ميعادها" : "all still in time"
+          }
+          tone={late.length > 0 ? "bad" : promised.length > 0 ? "warn" : "neutral"}
+        />
+        <StatTile
           label={ar ? "أوامر مكتملة" : "Completed orders"}
           value={String(completed.length)}
         />
@@ -196,6 +240,54 @@ export default async function ProductionPage() {
       )}
 
       {/* --------------------------------------- drafts waiting on a costing */}
+      {promised.length > 0 && (
+        <Card
+          className="mb-4"
+          title={ar ? "أوامر عليها عميل مستني" : "Runs somebody is waiting on"}
+          description={
+            ar
+              ? "دي مش أوامر موسم — كل واحد فيهم زبون اتوعد بميعاد ودفع عربون. الأقرب ميعادًا الأول."
+              : "Not season batches: each one is a customer who was given a date and left a deposit. Soonest first."
+          }
+        >
+          <DataTable
+            headers={[
+              ar ? "أمر الإنتاج" : "Run",
+              ar ? "الأوردر" : "Order",
+              ar ? "الزبون" : "Customer",
+              ar ? "الموديل" : "Style",
+              ar ? "العدد" : "Qty",
+              ar ? "الحالة" : "Status",
+              ar ? "الميعاد" : "Promised",
+            ]}
+            rows={promised.map((o) => {
+              const overdue =
+                o.customOrder?.promisedDate && o.customOrder.promisedDate < startOfToday;
+              return [
+                <span key="r" className="num text-xs" dir="ltr">{o.orderNumber}</span>,
+                <span key="o" className="num text-xs" dir="ltr">{o.customOrder!.orderNumber}</span>,
+                <span key="c">
+                  {o.customOrder!.customer.name}
+                  {o.customOrder!.customer.phone && (
+                    <span className="ms-2 num text-xs text-ink-400" dir="ltr">
+                      {o.customOrder!.customer.phone}
+                    </span>
+                  )}
+                </span>,
+                <span key="s" className="text-xs">{name(o.style)}</span>,
+                <span key="q" className="num">{formatNumber(o.plannedQty, locale)}</span>,
+                <Badge key="t" tone={statusTone[o.status]}>{statusLabel[o.status]}</Badge>,
+                <span key="d" className={`num text-xs ${overdue ? "text-bad font-semibold" : ""}`} dir="ltr">
+                  {o.customOrder!.promisedDate
+                    ? o.customOrder!.promisedDate.toISOString().slice(0, 10)
+                    : "—"}
+                </span>,
+              ];
+            })}
+          />
+        </Card>
+      )}
+
       {mayConfirm &&
         draft.map((o) => (
           <Card

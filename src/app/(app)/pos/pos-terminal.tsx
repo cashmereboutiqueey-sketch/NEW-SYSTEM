@@ -131,6 +131,15 @@ export function PosTerminal({
    * in the database three times.
    */
   const [people, setPeople] = useState(customers);
+  /*
+   * Finding somebody in a list of hundreds.
+   *
+   * The dropdown was every customer the shop has, which at a counter with a
+   * queue is a list nobody reads to the end: the cashier types the name in
+   * again and the person's history splits in two. Searching both the name and
+   * the number because a till knows a face and a phone knows a number.
+   */
+  const [customerQuery, setCustomerQuery] = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: "", phone: "" });
   const [duplicate, setDuplicate] = useState<
@@ -464,6 +473,22 @@ export function PosTerminal({
    * the same story — and a customer added at the counter has no limit yet,
    * which is why an absent figure counts as nil rather than as no rule.
    */
+  /** A number typed with spaces or a leading zero has to find the same person. */
+  const matchingPeople = useMemo(() => {
+    const q = customerQuery.trim().toLowerCase();
+    if (!q) return people;
+    const digits = q.replace(/\D/g, "");
+    const found = people.filter((c) => {
+      if (c.name.toLowerCase().includes(q)) return true;
+      if (!digits) return false;
+      return (c.phone ?? "").replace(/\D/g, "").includes(digits);
+    });
+    // Whoever is already selected stays in the list, or choosing somebody and
+    // then typing would silently unselect them.
+    const chosen = people.find((c) => c.id === customerId);
+    return chosen && !found.some((c) => c.id === chosen.id) ? [chosen, ...found] : found;
+  }, [people, customerQuery, customerId]);
+
   const chosenCustomer = people.find((c) => c.id === customerId);
   const alreadyOwed = chosenCustomer?.alreadyOwed ?? 0;
   const creditLimit = chosenCustomer?.creditLimit ?? 0;
@@ -1116,6 +1141,15 @@ export function PosTerminal({
             </div>
           )}
 
+          {people.length > 8 && (
+            <input
+              value={customerQuery}
+              onChange={(e) => setCustomerQuery(e.target.value)}
+              placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
+              className={`${field} mb-2 w-full`}
+            />
+          )}
+
           <div className="mb-2 flex items-center gap-2">
             <select
               value={customerId}
@@ -1123,7 +1157,7 @@ export function PosTerminal({
               className={`${field} min-w-0 flex-1`}
             >
               <option value="">{ar ? "بدون عميل" : "No customer"}</option>
-              {people.map((c) => (
+              {matchingPeople.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}{c.phone ? ` — ${c.phone}` : ""}
                 </option>
