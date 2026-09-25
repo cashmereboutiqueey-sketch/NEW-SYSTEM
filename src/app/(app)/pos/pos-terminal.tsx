@@ -432,9 +432,24 @@ export function PosTerminal({
 
   const change = Math.max(0, money(Number(tendered || 0) - total));
 
+  /*
+   * Whether part of the price may be left owing at all.
+   *
+   * Never where somebody else's goods are in the basket: their owner is owed
+   * a share the moment the piece leaves, so the shop would be lending its own
+   * money against a debt it has not collected.
+   *
+   * Read from the basket rather than from the tick, because the tick can go
+   * on while the basket holds only the shop's own stock and a consigned piece
+   * be added afterwards — and a stale tick would otherwise send a part
+   * payment for a basket that may not have one.
+   */
+  const creditAllowed = consignedLines.length === 0;
+  const onAccountNow = onAccount && creditAllowed;
+
   // What the customer is actually handing over. A blank box while "part now"
   // is ticked means nothing yet, not the whole price.
-  const collectedNow = onAccount
+  const collectedNow = onAccountNow
     ? Math.min(total, Math.max(0, money(Number(paidNow || 0))))
     : total;
   const owed = money(total - collectedNow);
@@ -836,7 +851,7 @@ export function PosTerminal({
             means the whole price, as the server works it out: this screen
             rounds in floating point, and a piastre's disagreement must not
             turn a sale paid in full into credit the cashier cannot give. */}
-        <input type="hidden" name="paidNow" value={onAccount ? collectedNow.toFixed(2) : ""} />
+        <input type="hidden" name="paidNow" value={onAccountNow ? collectedNow.toFixed(2) : ""} />
         <input type="hidden" name="method" value={method} />
         <input type="hidden" name="tendered" value={tendered || "0"} />
         <input type="hidden" name="customerId" value={customerId} />
@@ -1211,7 +1226,15 @@ export function PosTerminal({
           )}
 
           {/* ----------------------------------------------- part payment */}
-          {mayGiveCredit && consignedLines.length === 0 && (
+          {mayGiveCredit && !creditAllowed && (
+            <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
+              {ar
+                ? `في الفاتورة دي بضاعة أمانة بـ ${consignedTotal.toFixed(2)} — دي بتتدفع كاملة. صاحبها مستحق نصيبه من ساعة ما تخرج من المحل، فلو العميل مادفعش انت اللي هتدفعله من جيبك.`
+                : `This basket holds ${consignedTotal.toFixed(2)} of somebody else's goods, and those are paid for in full. Their owner is owed their share the moment the piece leaves, so if this customer never pays, the shop pays them anyway.`}
+            </p>
+          )}
+
+          {mayGiveCredit && creditAllowed && (
             <div className="mb-2 rounded-lg border border-ink-200 p-2">
               <label className="flex items-center gap-2 text-xs text-ink-700">
                 <input
@@ -1256,17 +1279,6 @@ export function PosTerminal({
                       {ar
                         ? "لازم تختار العميل — الدين من غير اسم محدش يقدر يطالب بيه."
                         : "Choose the customer: a debt with no name cannot be chased."}
-                    </p>
-                  )}
-
-                  {/* Allowed, and worth saying out loud: the owner of those
-                      goods is owed their share the moment the piece leaves,
-                      whether or not this customer ever pays. */}
-                  {owed > 0 && consignedLines.length > 0 && (
-                    <p className="mt-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
-                      {ar
-                        ? `في الفاتورة دي بضاعة أمانة بـ ${consignedTotal.toFixed(2)}. صاحبها مستحق نصيبه من ساعة ما تخرج من المحل — لو العميل مادفعش، انت اللي هتدفعله من جيبك.`
-                        : `This basket holds ${consignedTotal.toFixed(2)} of somebody else's goods. Their owner is owed their share the moment the piece leaves, so if this customer never pays, the shop pays them anyway.`}
                     </p>
                   )}
 

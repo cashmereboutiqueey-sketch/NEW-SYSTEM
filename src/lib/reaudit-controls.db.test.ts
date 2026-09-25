@@ -8,6 +8,7 @@ import { recordReturn, returnableLines } from "./returns";
 import { receiveWebhook, retryFailedWebhooks, type ShopifyOrder } from "./shopify";
 import { groupProfitAndLoss } from "./consolidation";
 import { recordSettlement } from "./reconciliation";
+import { createConsignor, receiveConsignment, totalOwedToConsignors } from "./consignment";
 import { checkoutAction } from "@/app/(app)/pos/actions";
 import { can } from "@/core/permissions";
 
@@ -53,6 +54,13 @@ async function wipe() {
     await db.externalMapping.deleteMany();
     await db.syncLog.deleteMany();
     await db.integrationConnection.deleteMany();
+    // Consignment was not in this wipe, so goods held for other people
+    // survived it: a second run of the file met its own consignor from the
+    // first and refused the code. Cleared before the sales that reference it.
+    await db.consignmentSale.deleteMany();
+    await db.consignorSettlement.deleteMany();
+    await db.consignmentItem.deleteMany();
+    await db.consignor.deleteMany();
     await db.return.deleteMany();
     await db.garmentUnit.deleteMany();
     await db.settlementLine.deleteMany();
@@ -122,6 +130,105 @@ describe("independent re-audit reproductions — current defects", () => {
     expect(await balance("2400")).toBe(0);
     expect(await balance("1115")).toBe(0);
     expect(await db.salesPayment.count({ where: { method: "DEPOSIT", status: "COLLECTED" } })).toBe(0);
+  });
+
+  /**
+   * Somebody else's goods are paid for in full.
+   *
+   * Their owner is owed a share the moment the piece leaves the shop, so a
+   * customer who pays later leaves the business owing real money against a
+   * debt it has not collected — and if that customer never pays, the shop
+   * pays the owner anyway, out of its own pocket.
+   *
+   * The rule has been turned off and on once already, so it is pinned here.
+   * The till does not offer the option, but a hidden control has prevented
+   * nothing: a basket that had part payment ticked before a consigned piece
+   * was added would carry a stale figure straight past it.
+   */
+  it("refuses part payment on a basket holding somebody else's goods", async () => {
+    await stock();
+    expect(can(actor.role, "sales_order:credit")).toBe(true);
+
+    const consignor = await createConsignor(
+      { code: `CONS-AUDIT-${++sequence}`, name: "Audit consignor", commissionRate: "0.25" }, ctx(),
+    );
+    const item = await receiveConsignment(
+      {
+        consignorId: consignor.id,
+        description: "Somebody else's dress",
+        quantity: 1,
+        retailPrice: "1000",
+        locationId,
+        receivedDate: day,
+      },
+      ctx(),
+    );
+
+    const till = await openPosSession(
+      { locationId, cashierUserId: actor.userId, openingFloat: "0" }, ctx(),
+    );
+    const form = new FormData();
+    for (const [key, value] of Object.entries({
+      locationId, entityId: brandId, channelId, customerId,
+      posSessionId: till.posSessionId,
+      method: "CASH",
+      requestId: "reaudit-consigned-credit",
+      cart: JSON.stringify([{ variantId, quantity: 1, retailPrice: 1500, discountPct: 0 }]),
+      consignedCart: JSON.stringify([
+        { itemId: item.id, quantity: 1, retailPrice: 1000 },
+      ]),
+      // Half the basket, which is exactly what must not be allowed here.
+      paidNow: "1250",
+    })) form.set(key, value);
+
+    const result = await checkoutAction({}, form);
+    expect(result.error).toMatch(/كاملة|in full/);
+    expect(result.receipt).toBeUndefined();
+
+    // Nothing moved: not the consigned piece, not the debt to its owner.
+    expect(await db.consignmentSale.count()).toBe(0);
+    expect(Number((await totalOwedToConsignors()).toString())).toBeCloseTo(0, 2);
+  });
+
+  it("takes the same basket when the whole price is handed over", async () => {
+    await stock();
+    const consignor = await createConsignor(
+      { code: `CONS-AUDIT-${++sequence}`, name: "Audit consignor paid", commissionRate: "0.25" }, ctx(),
+    );
+    const item = await receiveConsignment(
+      {
+        consignorId: consignor.id,
+        description: "Somebody else's skirt",
+        quantity: 1,
+        retailPrice: "1000",
+        locationId,
+        receivedDate: day,
+      },
+      ctx(),
+    );
+
+    const till = await openPosSession(
+      { locationId, cashierUserId: actor.userId, openingFloat: "0" }, ctx(),
+    );
+    const form = new FormData();
+    for (const [key, value] of Object.entries({
+      locationId, entityId: brandId, channelId, customerId,
+      posSessionId: till.posSessionId,
+      method: "CASH",
+      requestId: "reaudit-consigned-paid",
+      cart: JSON.stringify([{ variantId, quantity: 1, retailPrice: 1500, discountPct: 0 }]),
+      consignedCart: JSON.stringify([
+        { itemId: item.id, quantity: 1, retailPrice: 1000 },
+      ]),
+      paidNow: "2500",
+    })) form.set(key, value);
+
+    const result = await checkoutAction({}, form);
+    expect(result.error).toBeUndefined();
+    expect(await db.consignmentSale.count()).toBe(1);
+    // The owner is owed their share from this moment, which is the whole
+    // reason the sale before it was refused.
+    expect(Number((await totalOwedToConsignors()).toString())).toBeCloseTo(750, 2);
   });
 
   it("one full return settles both debt and cash", async () => {

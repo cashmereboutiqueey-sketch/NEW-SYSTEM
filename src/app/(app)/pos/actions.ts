@@ -301,13 +301,23 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
       return { error: "You do not have permission to let a customer pay later." };
     }
 
-    // Goods belonging to somebody else used to be refused on credit outright.
-    // By instruction they are allowed, and the reason for the old rule has not
-    // gone anywhere: the shop owes their owner a share from the moment they
-    // leave, so a customer who pays later leaves the shop owing real money
-    // against a debt not yet collected. The till says so on the screen before
-    // the sale, which is where a warning is worth something; refusing it here
-    // was deciding for the owner what risk the shop may take.
+    // Goods belonging to somebody else are paid for in full. Their owner is
+    // owed a share the moment the piece leaves the shop, so a customer who
+    // pays later leaves the business owing real money against a debt it has
+    // not collected — and if that customer never pays, the shop pays the
+    // owner anyway, out of its own pocket.
+    //
+    // The till does not offer the option at all when such a line is in the
+    // basket. This is here because a screen that hides a control has not
+    // prevented anything: the request can still arrive, and a basket that had
+    // the box ticked before a consigned piece was added would otherwise carry
+    // a stale part payment straight past it.
+    if (consignedCart.length > 0 && paidNow.lessThan(total)) {
+      return {
+        error:
+          "بضاعة الأمانة لازم تتدفع كاملة — انت مدين لصاحبها من ساعة ما تخرج من المحل.",
+      };
+    }
 
     const locationId = String(formData.get("locationId") ?? "");
     const posSessionId = String(formData.get("posSessionId") ?? "");
