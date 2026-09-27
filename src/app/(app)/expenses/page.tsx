@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -147,7 +148,7 @@ export default async function ExpensesPage() {
             categoriesByEntity={categoriesByEntity}
             suppliers={suppliers.map((s) => ({ id: s.id, label: name(s) }))}
             costCenters={costCenters.map((c) => ({ id: c.id, label: name(c) }))}
-            today={new Date().toISOString().slice(0, 10)}
+            today={cairoDateKey()}
           />
         </Card>
       )}

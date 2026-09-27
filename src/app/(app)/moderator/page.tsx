@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -48,7 +49,6 @@ export default async function ModeratorPage() {
         where: { isSuppressed: false, mergedIntoId: null },
         select: { id: true, name: true, phone: true },
         orderBy: { name: "asc" },
-        take: 500,
       }),
       db.salesChannel.findMany({ where: { isActive: true }, orderBy: { nameEn: "asc" } }),
       db.location.findMany({
@@ -64,7 +64,6 @@ export default async function ModeratorPage() {
         where: { isActive: true },
         include: { style: true, colorCode: true, sizeCode: true },
         orderBy: { sku: "asc" },
-        take: 500,
       }),
       makeabilityByStyle(),
       customOrderList(true),
@@ -226,7 +225,7 @@ export default async function ModeratorPage() {
             channels={channels.map((c) => ({ id: c.id, label: ar ? c.nameAr : c.nameEn }))}
             entityId={brand.id}
             canDiscount={can(session.role, "sales_order:discount")}
-            today={new Date().toISOString().slice(0, 10)}
+            today={cairoDateKey()}
             zones={zones}
           />
         )}

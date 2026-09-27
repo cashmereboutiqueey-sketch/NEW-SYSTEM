@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { payExpenseAction } from "./actions";
@@ -46,7 +47,7 @@ export function PayForm({
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(outstanding.toFixed(2));
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const typed = amount === "" ? 0 : Number(amount);
   const tooMuch = typed > outstanding;
 

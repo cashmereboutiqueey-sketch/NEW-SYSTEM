@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { recordScrapAction } from "./actions";
@@ -58,7 +59,7 @@ export function ScrapForm({
   const [disposition, setDisposition] = useState("DISCARDED");
   const [quantity, setQuantity] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const chosen = sources.find((s) => `${s.materialId}:${s.locationId}` === source);
   const available = chosen ? Number(chosen.onHand) : 0;
   const asked = quantity === "" ? 0 : Number(quantity);

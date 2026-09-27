@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
@@ -28,7 +29,7 @@ export default async function MyOrdersPage() {
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const today = new Date(new Date().toISOString().slice(0, 10));
+  const today = new Date(cairoDateKey());
 
   const [sales, promises] = await Promise.all([
     db.salesOrder.findMany({

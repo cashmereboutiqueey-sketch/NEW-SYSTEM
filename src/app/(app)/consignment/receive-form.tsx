@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { receiveConsignmentAction, type ConsignmentState } from "./actions";
@@ -19,7 +20,7 @@ export function ReceiveForm({
   const [state, action, pending] = useActionState(receiveConsignmentAction, empty);
   const [consignorId, setConsignorId] = useState(consignors[0]?.id ?? "");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const chosen = consignors.find((c) => c.id === consignorId);
 
   return (

@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { addTaxRateAction, setRegistrationAction } from "./actions";
@@ -21,7 +22,7 @@ export function RateForm({ ar, codes }: { ar: boolean; codes: string[] }) {
   const [open, setOpen] = useState(false);
   const [rate, setRate] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const typed = rate === "" ? null : Number(rate);
   const looksLikePercent = typed !== null && typed > 1;
 

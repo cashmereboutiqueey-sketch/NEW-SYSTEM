@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -49,7 +50,7 @@ export function OrderActions({
   const [deliverState, deliverActionFn, deliverPending] = useActionState(deliverAction, empty);
   const [cancelState, cancelActionFn, cancelPending] = useActionState(cancelAction, empty);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const owing = Number(order.atRisk);
 
   const message =

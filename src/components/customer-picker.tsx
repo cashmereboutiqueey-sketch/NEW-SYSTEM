@@ -36,7 +36,7 @@ export function CustomerPicker({
   value: string;
   onChange: (id: string, person: Person | null) => void;
   /** Where they walked in, so acquisition reporting means something. */
-  source?: "POS" | "EXHIBITION";
+  source?: "POS" | "EXHIBITION" | "MODERATOR";
   required?: boolean;
   /** Set to post the chosen id with a plain form. */
   name?: string;
@@ -101,8 +101,13 @@ export function CustomerPicker({
 
       <div className="flex items-center gap-2">
         <input
+          type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Searching again must reveal matches and clear the old choice.
+            if (value) onChange("", null);
+          }}
           placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
           className={`${field} min-w-0 flex-1`}
         />

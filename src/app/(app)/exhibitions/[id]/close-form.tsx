@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { closeExhibitionAction, type ExhibitionState } from "../actions";
@@ -39,7 +40,7 @@ export function CloseForm({
 }) {
   const [state, action, pending] = useActionState(closeExhibitionAction, empty);
   const [counts, setCounts] = useState<Record<string, string>>({});
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   let missingQty = 0;
   let missingValue = 0;

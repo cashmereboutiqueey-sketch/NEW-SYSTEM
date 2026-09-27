@@ -466,7 +466,7 @@ export async function quickAddCustomerAction(input: {
   name: string;
   phone: string;
   /** Where they walked in, so acquisition reporting means something. */
-  source: "POS" | "EXHIBITION";
+  source: "POS" | "EXHIBITION" | "MODERATOR";
   /** Set once the cashier has seen the match and said it is somebody else. */
   createAnyway?: boolean;
 }): Promise<QuickCustomerResult> {

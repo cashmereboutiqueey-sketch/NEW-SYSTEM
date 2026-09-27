@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { createCuttingTicketAction } from "./actions";
@@ -33,7 +34,7 @@ export function TicketForm({ ar, runs }: { ar: boolean; runs: CuttableRun[] }) {
   const [plies, setPlies] = useState("");
   const [pieces, setPieces] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const n = (v: string) => (v === "" ? 0 : Number(v));
   const run = runs.find((r) => r.id === runId);
 

@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -28,7 +29,7 @@ export function SettleForm({
 }) {
   const [state, action, pending] = useActionState(settleConsignorAction, empty);
   const [open, setOpen] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   if (!open) {
     return (

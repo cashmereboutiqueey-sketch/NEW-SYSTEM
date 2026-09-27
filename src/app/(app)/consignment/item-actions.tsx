@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -46,7 +47,7 @@ export function ItemActions({
   const [price, setPrice] = useState(item.retailPrice);
   const [quantity, setQuantity] = useState("1");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const total = Number(price || 0) * Number(quantity || 0);
   const commission = (total * Number(item.commissionPct)) / 100;
   const owner = total - commission;

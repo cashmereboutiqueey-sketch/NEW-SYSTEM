@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { recordInspectionAction, recordReworkAction } from "./actions";
@@ -46,7 +47,7 @@ export function InspectionForm({ ar, runs }: { ar: boolean; runs: QualityRun[] }
   const [reworkQty, setReworkQty] = useState("");
   const [rejected, setRejected] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const n = (v: string) => (v === "" ? 0 : Number(v));
   const total = n(passed) + n(reworkQty) + n(rejected);
   const inspectedN = n(inspected);
@@ -216,7 +217,7 @@ export function ReworkForm({
   const [source, setSource] = useState("");
   const [materialQty, setMaterialQty] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const n = (v: string) => (v === "" ? 0 : Number(v));
   const rate = minuteRate ? Number(minuteRate) : null;
   const totalMinutes = n(quantity) * n(minutes);

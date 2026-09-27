@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -46,7 +47,7 @@ export function OpeningForm({
   const [filename, setFilename] = useState("");
   const [rows, setRows] = useState<Typed[]>([blank()]);
   const [ratio, setRatio] = useState("40");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   const setRow = (i: number, patch: Partial<Typed>) =>
     setRows((prev) => prev.map((r, n) => (n === i ? { ...r, ...patch } : r)));

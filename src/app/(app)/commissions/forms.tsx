@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -27,7 +28,7 @@ export function RateForm({
   const [state, action, pending] = useActionState(setRateAction, empty);
   const [perPiece, setPerPiece] = useState("10");
   const [percent, setPercent] = useState("0");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   return (
     <form action={action} className="space-y-3">
@@ -108,7 +109,7 @@ export function SettleForm({
 }) {
   const [state, action, pending] = useActionState(settleAction, empty);
   const [open, setOpen] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   if (!open) {
     return (
@@ -167,7 +168,7 @@ export function SettleForm({
 /** Taking somebody off commission from a day, earnings untouched. */
 export function EndRateForm({ ar, userId }: { ar: boolean; userId: string }) {
   const [state, action, pending] = useActionState(endRateAction, empty);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   return (
     <form action={action} className="flex items-center gap-1.5">

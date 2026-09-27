@@ -86,7 +86,6 @@ export default async function PosPage({
       // at the counter, is finding out too late.
       select: { id: true, name: true, phone: true, creditLimit: true },
       orderBy: { name: "asc" },
-      take: 200,
     }),
   ]);
 

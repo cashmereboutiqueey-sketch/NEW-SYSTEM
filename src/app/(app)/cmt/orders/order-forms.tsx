@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import {
@@ -37,7 +38,7 @@ export function ConfirmForm({ ar, quotes }: { ar: boolean; quotes: ConfirmableQu
   const [state, action, pending] = useActionState(confirmOrderAction, empty);
   const [quoteId, setQuoteId] = useState(quotes[0]?.id ?? "");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const quote = quotes.find((q) => q.id === quoteId);
 
   if (quotes.length === 0) {
@@ -123,7 +124,7 @@ export function CompleteForm({
   const [minutes, setMinutes] = useState("");
   const [delivered, setDelivered] = useState(String(orderedQty));
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const quoted = Number(quotedMinutes);
   const actual = minutes === "" ? 0 : Number(minutes);
   const overrun = actual > 0 ? actual - quoted : null;
@@ -294,7 +295,7 @@ export function MoneyForm({
     empty,
   );
   const [open, setOpen] = useState(false);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   if (!open) {
     return (

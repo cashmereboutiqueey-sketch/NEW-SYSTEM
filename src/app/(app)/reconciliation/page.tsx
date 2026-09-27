@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -180,7 +181,7 @@ export default async function ReconciliationPage({
                   locale={locale}
                   provider="COURIER"
                   entityId={brand.id}
-                  today={new Date().toISOString().slice(0, 10)}
+                  today={cairoDateKey()}
                   channels={channels.map((c) => ({ id: c.id, label: ar ? c.nameAr : c.nameEn }))}
                   payments={courier.map(toRow)}
                 />
@@ -199,7 +200,7 @@ export default async function ReconciliationPage({
                   locale={locale}
                   provider="PAYMENT_GATEWAY"
                   entityId={brand.id}
-                  today={new Date().toISOString().slice(0, 10)}
+                  today={cairoDateKey()}
                   channels={channels.map((c) => ({ id: c.id, label: ar ? c.nameAr : c.nameEn }))}
                   payments={gateway.map(toRow)}
                 />
@@ -264,7 +265,7 @@ export default async function ReconciliationPage({
             <Card className="mb-4" title={ar ? "كشف حساب جديد" : "New statement"}>
               <ImportStatementForm
                 locale={locale}
-                today={new Date().toISOString().slice(0, 10)}
+                today={cairoDateKey()}
                 entities={entities.map((e) => ({ id: e.id, label: ar ? e.nameAr : e.nameEn }))}
                 accounts={accounts.map((a) => ({
                   code: a.code,

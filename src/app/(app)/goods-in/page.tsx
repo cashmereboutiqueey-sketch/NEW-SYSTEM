@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -49,7 +50,7 @@ export default async function GoodsInPage() {
   ]);
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   const expectedUnits = arriving.reduce((s, r) => s.plus(dec(r.expectedQty)), dec(0));
   const expectedValue = arriving.reduce(

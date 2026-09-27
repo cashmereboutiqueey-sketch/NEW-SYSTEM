@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { logStageAction } from "./actions";
@@ -51,7 +52,7 @@ export function StageForm({
   const [qtyOut, setQtyOut] = useState("");
   const [clocked, setClocked] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const run = runs.find((r) => r.id === runId);
   const routed = run?.stages ?? [];
   const chosen = routed.find((s) => s.stage === stage);

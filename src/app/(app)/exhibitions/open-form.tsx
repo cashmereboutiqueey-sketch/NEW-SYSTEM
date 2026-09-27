@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey, cairoDatePlusDays } from "@/lib/cairo-date";
 
 import { useActionState } from "react";
 import { openExhibitionAction, type ExhibitionState } from "./actions";
@@ -14,8 +15,8 @@ export function OpenExhibitionForm({
 }) {
   const [state, action, pending] = useActionState(openExhibitionAction, empty);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const inThree = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  const today = cairoDateKey();
+  const inThree = cairoDatePlusDays(3);
 
   return (
     <form action={action} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

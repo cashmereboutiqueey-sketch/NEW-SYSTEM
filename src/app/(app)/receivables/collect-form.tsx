@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { collectPaymentAction, type ReceivableState } from "./actions";
@@ -34,7 +35,7 @@ export function CollectForm({
   const [orderId, setOrderId] = useState(orders[0]?.id ?? "");
   const [amount, setAmount] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const selected = orders.find((o) => o.id === orderId) ?? orders[0];
   const owed = Number(selected?.outstanding ?? 0);
   const typed = amount === "" ? 0 : Number(amount);

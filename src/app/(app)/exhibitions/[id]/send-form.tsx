@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState } from "react";
 import { sendToExhibitionAction, type ExhibitionState } from "../actions";
@@ -25,7 +26,7 @@ export function SendForm({
   ar: boolean;
 }) {
   const [state, action, pending] = useActionState(sendToExhibitionAction, empty);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   const sendable = rows.filter((r) => Number(r.available) > 0);
 

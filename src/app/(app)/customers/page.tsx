@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { t } from "@/lib/i18n";
@@ -19,10 +20,15 @@ import { dec } from "@/lib/money";
  * segments come from stated thresholds rather than quintiles of the current
  * base — so a segment means the same thing next week as it does today.
  */
-export default async function CustomersPage() {
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const session = await requirePermission("customer:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
+  const params = await searchParams;
 
   const [profiles, duplicates] = await Promise.all([
     customerProfiles(),
@@ -47,7 +53,6 @@ export default async function CustomersPage() {
         where: { mergedIntoId: null },
         select: { id: true, code: true, name: true, creditLimit: true, creditDays: true },
         orderBy: { name: "asc" },
-        take: 200,
       })
     : [];
   // Merging rewrites who owns an order history, so it sits with the elevated
@@ -59,6 +64,13 @@ export default async function CustomersPage() {
   const value = buyers.reduce((s, p) => s.plus(dec(p.lifetimeValue)), dec(0));
   const repeat = buyers.filter((p) => p.orders > 1).length;
   const consented = profiles.filter((p) => p.marketingConsent && !p.isSuppressed).length;
+  const pageSize = 100;
+  const pageCount = Math.max(1, Math.ceil(profiles.length / pageSize));
+  const requestedPage = Number(params.page);
+  const page = Number.isSafeInteger(requestedPage)
+    ? Math.min(Math.max(requestedPage, 1), pageCount)
+    : 1;
+  const shownProfiles = profiles.slice((page - 1) * pageSize, page * pageSize);
 
   const segmentTone: Record<string, "good" | "info" | "warn" | "bad" | "neutral"> = {
     CHAMPION: "good", LOYAL: "good", PROMISING: "info", NEW: "info",
@@ -304,6 +316,7 @@ export default async function CustomersPage() {
             {ar ? "لا يوجد عملاء بعد." : "No customers yet."}
           </p>
         ) : (
+          <>
           <DataTable
             headers={[
               ar ? "العميل" : "Customer",
@@ -315,7 +328,7 @@ export default async function CustomersPage() {
               ar ? "قيمة محققة" : "Value earned",
               ar ? "مرتجعات" : "Returns",
             ]}
-            rows={profiles.slice(0, 100).map((p) => [
+            rows={shownProfiles.map((p) => [
               <span key={`${p.id}-n`}>
                 {p.name}
                 {p.phone && (
@@ -352,6 +365,14 @@ export default async function CustomersPage() {
               </span>,
             ])}
           />
+          {pageCount > 1 && (
+            <nav aria-label={ar ? "صفحات العملاء" : "Customer pages"} className="mt-4 flex items-center justify-between gap-3 text-sm">
+              {page > 1 ? <Link href={`/customers?page=${page - 1}`} className="underline">{ar ? "السابق" : "Previous"}</Link> : <span />}
+              <span>{ar ? "صفحة" : "Page"} {formatNumber(page, locale)} / {formatNumber(pageCount, locale)}</span>
+              {page < pageCount ? <Link href={`/customers?page=${page + 1}`} className="underline">{ar ? "التالي" : "Next"}</Link> : <span />}
+            </nav>
+          )}
+          </>
         )}
       </Card>
     </>

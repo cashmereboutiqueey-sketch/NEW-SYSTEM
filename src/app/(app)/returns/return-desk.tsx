@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState, useTransition } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -44,7 +45,6 @@ export function ReturnDesk({
   orders: OrderRow[];
 }) {
   const [state, action, pending] = useActionState(recordReturnAction, empty);
-  const [query, setQuery] = useState(initialQuery);
   const [picture, setPicture] = useState<OrderPicture | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [variantId, setVariantId] = useState("");
@@ -54,17 +54,7 @@ export function ReturnDesk({
   const [refundMethod, setRefundMethod] = useState("CASH");
   const [loading, startLoading] = useTransition();
 
-  const today = new Date().toISOString().slice(0, 10);
-
-  const visible = orders.filter((o) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      o.orderNumber.toLowerCase().includes(q) ||
-      (o.customerName ?? "").toLowerCase().includes(q) ||
-      (o.customerPhone ?? "").includes(q)
-    );
-  });
+  const today = cairoDateKey();
 
   const line = picture?.lines.find((l) => l.variantId === variantId);
   const paid = line ? Number(line.unitPrice) * Number(quantity || 0) : 0;
@@ -90,13 +80,17 @@ export function ReturnDesk({
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <form action="/returns" method="get" className="mb-3 flex flex-wrap items-center gap-2">
         <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          name="q"
+          defaultValue={initialQuery}
           placeholder={ar ? "رقم الطلب، اسم الزبون، أو التليفون" : "Order number, name or phone"}
           className={`${field} w-72`}
         />
+        <button type="submit" className="rounded-lg bg-ink-900 px-3 py-2 text-sm font-medium text-white">
+          {ar ? "ابحث في كل الطلبات" : "Search all orders"}
+        </button>
+        {initialQuery && <a href="/returns" className="text-xs text-ink-500 underline">{ar ? "امسح البحث" : "Clear search"}</a>}
         {picture && (
           <button
             type="button"
@@ -106,18 +100,20 @@ export function ReturnDesk({
             {ar ? "طلب تاني" : "Different order"}
           </button>
         )}
-      </div>
+      </form>
 
       {!picture && (
         <div className="max-h-64 overflow-y-auto rounded-lg border border-ink-200">
-          {visible.length === 0 ? (
+          {orders.length === 0 ? (
             <p className="py-6 text-center text-sm text-ink-400">
-              {ar ? "مفيش طلب مطابق." : "No order matches."}
+              {initialQuery
+                ? ar ? "مفيش طلب مطابق." : "No order matches."
+                : ar ? "مفيش طلبات حديثة." : "No recent orders."}
             </p>
           ) : (
             <table className="w-full text-sm">
               <tbody>
-                {visible.map((o) => (
+                {orders.map((o) => (
                   <tr key={o.id} className="border-b border-ink-100 last:border-0">
                     <td className="px-3 py-2 num text-xs" dir="ltr">{o.orderNumber}</td>
                     <td className="px-3 py-2 num text-xs text-ink-400" dir="ltr">{o.orderDate}</td>

@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -97,7 +98,7 @@ export default async function ProductionPage() {
    */
   // Not `today` — the page already has one of those, as the string a date
   // input wants.
-  const startOfToday = new Date(new Date().toISOString().slice(0, 10));
+  const startOfToday = new Date(cairoDateKey());
   const promised = orders
     .filter((o) => o.customOrder && !["COMPLETED", "CANCELLED"].includes(o.status))
     .sort((a, b) => {
@@ -160,7 +161,7 @@ export default async function ProductionPage() {
   const unitsCompleted = completed.reduce((s, o) => s + (o.actualQty ?? 0), 0);
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   const statusTone: Record<string, "neutral" | "info" | "good" | "warn" | "bad"> = {
     DRAFT: "neutral", CONFIRMED: "info", IN_PRODUCTION: "warn",

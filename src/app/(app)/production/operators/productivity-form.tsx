@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { recordProductivityAction } from "./actions";
@@ -38,7 +39,7 @@ export function ProductivityForm({
   const [smv, setSmv] = useState("");
   const [minutes, setMinutes] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
   const operator = operators.find((o) => o.id === operatorId);
   const needsMinutes = operator ? !operator.hasEmployee : false;
 

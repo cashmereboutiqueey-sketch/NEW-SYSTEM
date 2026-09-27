@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -273,7 +274,7 @@ export default async function HrPage() {
               { kind: "text", name: "department", labelEn: "Department", labelAr: "القسم" },
               {
                 kind: "date", name: "hiredAt", labelEn: "Hired on", labelAr: "تاريخ التعيين",
-                required: true, defaultValue: new Date().toISOString().slice(0, 10), ltr: true,
+                required: true, defaultValue: cairoDateKey(), ltr: true,
               },
               {
                 kind: "select", name: "payFrequency", labelEn: "Paid by", labelAr: "بيتحاسب بالـ",

@@ -1,3 +1,4 @@
+import { cairoDateKey } from "@/lib/cairo-date";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
@@ -32,7 +33,7 @@ export default async function TransfersPage() {
     recentTransfers(),
   ]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cairoDateKey();
 
   const waitingUnits = pending.reduce((s, r) => s.plus(dec(r.quantity)), dec(0));
   const waitingCost = pending.reduce((s, r) => s.plus(dec(r.factoryCost)), dec(0));

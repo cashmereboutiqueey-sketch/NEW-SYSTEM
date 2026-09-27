@@ -1,4 +1,5 @@
 "use client";
+import { cairoDateKey, cairoDatePlusDays } from "@/lib/cairo-date";
 
 import { useActionState, useMemo, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
@@ -58,15 +59,23 @@ export function MakeToOrderForm({
   const [state, action, pending] = useActionState(takeOrderToMakeAction, empty);
   const [customerId, setCustomerId] = useState("");
   const [variantId, setVariantId] = useState("");
+  const [variantQuery, setVariantQuery] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
   const [deposit, setDeposit] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
-  const inTwoWeeks = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  const today = cairoDateKey();
+  const inTwoWeeks = cairoDatePlusDays(14);
 
   const byId = useMemo(() => new Map(variants.map((v) => [v.variantId, v])), [variants]);
   const chosen = variantId ? byId.get(variantId) : undefined;
+  const matchingVariants = useMemo(() => {
+    const q = variantQuery.trim().toLowerCase();
+    if (!q) return [];
+    return variants
+      .filter((v) => v.sku.toLowerCase().includes(q) || v.label.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [variants, variantQuery]);
 
   const qty = Number(quantity || 0);
   const total = (Number(price || 0) * qty) || 0;
@@ -79,7 +88,9 @@ export function MakeToOrderForm({
   const onPick = (id: string) => {
     setVariantId(id);
     const v = byId.get(id);
-    if (v && !price) setPrice(v.retailPrice);
+    // A price suggested for the previous garment must not follow a new one.
+    setPrice(v?.retailPrice ?? "");
+    setVariantQuery("");
   };
 
   return (
@@ -87,28 +98,68 @@ export function MakeToOrderForm({
       <RequestIdField state={state} />
       <input type="hidden" name="entityId" value={entityId} />
       <input type="hidden" name="orderDate" value={today} />
+      <input type="hidden" name="variantId" value={variantId} />
 
       <div className="grid gap-3 lg:grid-cols-3">
-        <label className="text-sm lg:col-span-2">
-          <span className="mb-1 block text-ink-600">{ar ? "المطلوب" : "What they asked for"}</span>
-          <select
-            name="variantId"
-            required
-            value={variantId}
-            onChange={(e) => onPick(e.target.value)}
+        <div className="text-sm lg:col-span-2">
+          <label htmlFor="make-variant-search" className="mb-1 block text-ink-600">
+            {ar ? "المطلوب — ابحث بالكود أو الموديل" : "What they asked for — search by SKU or style"}
+          </label>
+          <input
+            id="make-variant-search"
+            type="search"
+            value={variantQuery}
+            onChange={(e) => {
+              setVariantQuery(e.target.value);
+              setVariantId("");
+              setPrice("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              if (matchingVariants[0]) onPick(matchingVariants[0].variantId);
+            }}
+            placeholder={ar ? "اكتب جزء من SKU أو اسم الموديل" : "Type part of a SKU or style name"}
             className={field}
-          >
-            <option value="">{ar ? "اختار القطعة…" : "Pick the piece…"}</option>
-            {variants.map((v) => (
-              <option key={v.variantId} value={v.variantId}>
-                {v.sku} · {v.label}
-                {v.makeable > 0
-                  ? ar ? ` — القماش يكفي ${v.makeable}` : ` — cloth makes ${v.makeable}`
-                  : ar ? " — مفيش قماش" : " — no cloth"}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+          {variantQuery.trim() ? (
+            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-ink-200 bg-panel">
+              {matchingVariants.length === 0 ? (
+                <p role="status" className="px-3 py-3 text-xs text-ink-500">
+                  {ar ? "مفيش صنف مطابق." : "No matching garment."}
+                </p>
+              ) : (
+                <ul className="divide-y divide-ink-100">
+                  {matchingVariants.map((v) => (
+                    <li key={v.variantId}>
+                      <button
+                        type="button"
+                        onClick={() => onPick(v.variantId)}
+                        className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start hover:bg-ink-50 focus:bg-ink-50 focus:outline-none"
+                      >
+                        <span><code dir="ltr" className="num text-xs text-ink-500">{v.sku}</code> · {v.label}</span>
+                        <span className="text-xs text-ink-500">
+                          {v.makeable > 0
+                            ? ar ? `القماش يكفي ${v.makeable}` : `Cloth makes ${v.makeable}`
+                            : ar ? "مفيش قماش" : "No cloth"}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : chosen ? (
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-rose-deep bg-rose/10 px-3 py-2">
+              <span><code dir="ltr" className="num text-xs">{chosen.sku}</code> · {chosen.label}</span>
+              <button type="button" onClick={() => { setVariantId(""); setPrice(""); }} className="shrink-0 text-xs font-medium underline">
+                {ar ? "غيّر" : "Change"}
+              </button>
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-ink-500">{ar ? "اكتب الكود أو اسم الموديل لاختيار القطعة." : "Type a SKU or style name to choose a garment."}</p>
+          )}
+        </div>
 
         <div className="text-sm">
           <span className="mb-1 block text-ink-600">{ar ? "الزبون" : "Customer"}</span>
@@ -120,6 +171,7 @@ export function MakeToOrderForm({
             people={customers}
             value={customerId}
             onChange={(id) => setCustomerId(id)}
+            source="MODERATOR"
             name="customerId"
             required
           />
@@ -287,7 +339,7 @@ export function MakeToOrderForm({
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || !variantId || !customerId}
           className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
           {pending
