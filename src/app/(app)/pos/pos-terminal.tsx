@@ -508,6 +508,7 @@ export function PosTerminal({
     setConsignedLines([]);
     setTendered("");
     setCustomerId("");
+    setCustomerQuery("");
     setOnAccount(false);
     setPaidNow("");
     searchRef.current?.focus();
@@ -1141,14 +1142,17 @@ export function PosTerminal({
             </div>
           )}
 
-          {people.length > 8 && (
-            <input
-              value={customerQuery}
-              onChange={(e) => setCustomerQuery(e.target.value)}
-              placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
-              className={`${field} mb-2 w-full`}
-            />
-          )}
+          <label htmlFor="pos-customer-search" className="mb-1 block text-xs font-medium text-ink-600">
+            {ar ? "العميل — ابحث بالاسم أو التليفون" : "Customer — search by name or phone"}
+          </label>
+          <input
+            id="pos-customer-search"
+            type="search"
+            value={customerQuery}
+            onChange={(e) => setCustomerQuery(e.target.value)}
+            placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
+            className={`${field} mb-2 w-full`}
+          />
 
           <div className="mb-2 flex items-center gap-2">
             <select
