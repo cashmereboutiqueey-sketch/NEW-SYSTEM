@@ -41,6 +41,7 @@ type Product = {
 type ConsignedProduct = {
   itemId: string;
   itemCode: string;
+  image: string | null;
   description: string;
   size: string;
   colour: string;
@@ -815,6 +816,10 @@ export function PosTerminal({
                     disabled={left <= 0}
                     className="rounded-xl border border-dashed border-warn/60 bg-warn/5 p-3 text-start transition-colors hover:border-warn disabled:cursor-not-allowed disabled:opacity-40"
                   >
+                    {c.image && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={c.image} alt="" className="mb-2 aspect-[3/4] w-full rounded-lg object-cover" />
+                    )}
                     <div className="truncate text-sm font-medium text-ink-900">
                       {c.description}
                     </div>

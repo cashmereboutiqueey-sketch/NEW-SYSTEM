@@ -3,6 +3,7 @@ import { cairoDateKey } from "@/lib/cairo-date";
 
 import { useActionState, useState } from "react";
 import { receiveConsignmentAction, type ConsignmentState } from "./actions";
+import { shrinkPhoto } from "@/lib/photo-client";
 
 const empty: ConsignmentState = {};
 const field =
@@ -19,6 +20,8 @@ export function ReceiveForm({
 }) {
   const [state, action, pending] = useActionState(receiveConsignmentAction, empty);
   const [consignorId, setConsignorId] = useState(consignors[0]?.id ?? "");
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [shrinking, setShrinking] = useState(false);
 
   const today = cairoDateKey();
   const chosen = consignors.find((c) => c.id === consignorId);
@@ -49,6 +52,33 @@ export function ReceiveForm({
           placeholder={ar ? "فستان سواريه" : "Evening dress"}
           className={field}
         />
+      </label>
+
+      <label className="text-sm sm:col-span-2">
+        <span className="mb-1 block text-ink-600">{ar ? "صورة القطعة (اختياري)" : "Garment photo (optional)"}</span>
+        <input
+          name="photo" type="file" accept="image/jpeg,image/png,image/webp"
+          onChange={async (event) => {
+            const input = event.currentTarget;
+            const file = input.files?.[0];
+            if (!file) { setPhotoPreview(null); return; }
+            setShrinking(true);
+            const ready = await shrinkPhoto(file);
+            if (ready !== file) {
+              const transfer = new DataTransfer();
+              transfer.items.add(ready);
+              input.files = transfer.files;
+            }
+            setPhotoPreview(URL.createObjectURL(ready));
+            setShrinking(false);
+          }}
+          className="block w-full text-xs file:me-2 file:rounded-lg file:border-0 file:bg-ink-900 file:px-2.5 file:py-1.5 file:text-xs file:text-white"
+        />
+        {shrinking && <span className="mt-1 block text-xs text-ink-500">{ar ? "بنصغّر الصورة…" : "Making the photo smaller…"}</span>}
+        {photoPreview && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={photoPreview} alt={ar ? "معاينة الصورة" : "Photo preview"} className="mt-2 h-28 w-20 rounded object-cover" />
+        )}
       </label>
 
       <label className="text-sm">

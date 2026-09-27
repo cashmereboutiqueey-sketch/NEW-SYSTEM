@@ -52,6 +52,8 @@ export type ShopifyOrder = {
   name: string;
   created_at: string;
   currency: string;
+  total_price?: string;
+  fulfillment_status?: string | null;
   total_discounts?: string;
   shipping_lines?: { price: string }[];
   customer?: {
@@ -367,7 +369,9 @@ export async function importOrders(
       connectionId: connection.id,
       objectType: "order",
       direction: "INBOUND",
-      status: "SUCCESS",
+      // A delivery is only successful after every line and stock movement commit.
+      // If an unexpected error interrupts the run, this row must not claim success.
+      status: "FAILED",
       processed: input.orders.length,
     },
   });
@@ -549,6 +553,18 @@ export async function importOrders(
       });
       return "CREATED";
       });
+      // A previously missing SKU may have been corrected before this retry.
+      // Keep the attention list aligned with what actually imported.
+      try {
+        await db.integrationException.updateMany({
+          where: { connectionId: connection.id, provider: "SHOPIFY", objectType: "order", externalId, status: "OPEN" },
+          data: { status: "RESOLVED", resolvedAt: new Date(), resolvedNote: "Resolved by a successful Shopify retry." },
+        });
+      } catch (error) {
+        // The sale and stock move have committed; an attention-list error must
+        // never make Shopify retry an already imported order.
+        console.error("Could not close resolved Shopify order exception:", error);
+      }
       if (outcome === "CREATED") created += 1;
       else if (outcome === "UPDATED") updated += 1;
       else duplicates += 1;

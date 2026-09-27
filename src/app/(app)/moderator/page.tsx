@@ -4,6 +4,9 @@ import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
 import { sellableStock } from "@/lib/pos";
+import { imageUrl } from "@/lib/images";
+import { consignedStock } from "@/lib/consignment";
+import { ModeratorConsignmentForm } from "./consignment-form";
 import { makeabilityByStyle } from "@/lib/made-to-order";
 import { courierZones } from "@/lib/shipping";
 import { customOrderList, depositsHeld, availableRuns } from "@/lib/custom-orders";
@@ -70,6 +73,9 @@ export default async function ModeratorPage() {
     ]);
 
   const held = await depositsHeld();
+  const consigned = (await consignedStock()).filter(
+    (item) => item.left > 0 && brandLocations.some((location) => location.id === item.locationId),
+  );
   const open = promises.filter((o) => ["PENDING", "IN_PRODUCTION", "READY"].includes(o.status));
   const finished = promises.filter((o) => ["DELIVERED", "CANCELLED"].includes(o.status));
   const uncovered = open.reduce((sum, o) => sum.plus(dec(o.atRisk)), dec(0));
@@ -90,7 +96,7 @@ export default async function ModeratorPage() {
   const shelves = await Promise.all(brandLocations.map((l) => sellableStock(l.id, brand.id)));
   const sellable = new Map<
     string,
-    { variantId: string; sku: string; label: string; available: number; retailPrice: number }
+    { variantId: string; sku: string; label: string; available: number; retailPrice: number; image: string | null }
   >();
   for (const shelf of shelves) {
     for (const p of shelf) {
@@ -104,6 +110,7 @@ export default async function ModeratorPage() {
           label: `${ar ? p.styleAr : p.styleEn} · ${ar ? p.colourAr : p.colourEn} · ${p.size}`,
           available,
           retailPrice: Number(p.retailPrice ?? 0),
+          image: p.image,
         });
     }
   }
@@ -122,6 +129,7 @@ export default async function ModeratorPage() {
         variantId: v.id,
         styleId: v.styleId,
         sku: v.sku,
+        image: imageUrl(v.imageName) ?? imageUrl(v.style.imageName),
         label: `${ar ? v.style.nameAr : v.style.nameEn} · ${
           ar ? v.colorCode.nameAr : v.colorCode.nameEn
         } · ${v.sizeCode.code}`,
@@ -230,6 +238,32 @@ export default async function ModeratorPage() {
           />
         )}
       </Card>
+
+      {consigned.length > 0 && (
+        <Card
+          className="mb-5"
+          title={ar ? "بضاعة الأمانة — اختارها من الصور" : "Consignment — choose by photo"}
+          description={ar ? "بضاعة أصحابها بتتسجل وتتحاسب منفصلة عن مخزون Cashmere." : "Owners' goods are sold and accounted for separately from Cashmere stock."}
+        >
+          {mayTake ? (
+            <ModeratorConsignmentForm
+              ar={ar}
+              items={consigned.map((item) => ({
+                id: item.id,
+                itemCode: item.itemCode,
+                description: item.description,
+                image: item.image,
+                colour: item.colour,
+                size: item.size,
+                consignorName: item.consignorName,
+                retailPrice: item.retailPrice,
+                left: item.left,
+              }))}
+              customers={customers}
+            />
+          ) : <p className="text-sm text-ink-500">{ar ? "مالكش صلاحية تسجل بيعة." : "You do not have permission to record a sale."}</p>}
+        </Card>
+      )}
 
       {/* ------------------------------------------ it is not on the shelf */}
       <Card

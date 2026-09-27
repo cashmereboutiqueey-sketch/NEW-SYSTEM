@@ -284,6 +284,19 @@ describe("when one sells", () => {
     ).rejects.toThrow(/none left/i);
   });
 
+  it("does not sell the last piece twice when two people submit together", async () => {
+    const item = await goods(1);
+    const sales = await Promise.allSettled([
+      sellConsignedItem({ itemId: item.id, quantity: 1, paymentMethod: "CARD", saleDate: day }, ctx),
+      sellConsignedItem({ itemId: item.id, quantity: 1, paymentMethod: "CARD", saleDate: day }, ctx),
+    ]);
+    expect(sales.filter((sale) => sale.status === "fulfilled")).toHaveLength(1);
+    expect(sales.filter((sale) => sale.status === "rejected")).toHaveLength(1);
+    expect((await db.consignmentItem.findUniqueOrThrow({ where: { id: item.id } })).quantitySold).toBe(1);
+    expect(await db.consignmentSale.count({ where: { itemId: item.id } })).toBe(1);
+    expect(await ledgerGap()).toBe(0);
+  });
+
   it("leaves nothing behind when it refuses", async () => {
     const item = await goods(1);
     const journals = await db.journalEntry.count();

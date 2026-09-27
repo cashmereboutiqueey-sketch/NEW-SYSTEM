@@ -14,7 +14,7 @@ import {
   addOperationAction, removeOperationAction,
 } from "./actions";
 import { VariantForm } from "./variant-form";
-import { PhotoForm } from "./photo-form";
+import { PhotoForm } from "@/components/photo-form";
 import { AddInline } from "@/components/add-inline";
 import { addColourAction, addSizeAction } from "../master-data-actions";
 import { imageUrl } from "@/lib/images";

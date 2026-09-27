@@ -3140,6 +3140,7 @@ model Consignor {
 model ConsignmentItem {
   id          String @id @default(cuid())
   itemCode    String @unique
+  imageName   String?
   consignorId String
   consignor   Consignor @relation(fields: [consignorId], references: [id], onDelete: Restrict)
 

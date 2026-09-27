@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
@@ -7,7 +8,7 @@ import { formatNumber } from "@/lib/money";
 import { inventoryToPublish, failedWebhookEvents } from "@/lib/shopify";
 import {
   connectShopifyAction, pullOrdersAction, publishInventoryAction, resolveExceptionAction,
-  replayWebhookAction,
+  replayWebhookAction, mapShopifyVariantsAction,
 } from "./actions";
 
 /**
@@ -42,6 +43,7 @@ export default async function IntegrationsPage() {
 
   const shopify = connections.find((c) => c.provider === "SHOPIFY");
   const unlinked = publishable.filter((p) => !p.linked);
+  const importsBlocked = exceptions.some((e) => e.provider === "SHOPIFY") || failedDeliveries.length > 0;
 
   return (
     <>
@@ -60,11 +62,13 @@ export default async function IntegrationsPage() {
           value={
             shopify
               ? shopify.isActive
-                ? ar ? "متصل" : "Connected"
+                ? importsBlocked
+                  ? ar ? "متصل — أوردرات لم تُستورد" : "Connected — imports blocked"
+                  : ar ? "متصل" : "Connected"
                 : ar ? "موقوف" : "Paused"
               : ar ? "غير مربوط" : "Not connected"
           }
-          tone={shopify?.isActive ? "good" : "neutral"}
+          tone={shopify?.isActive ? importsBlocked ? "bad" : "good" : "neutral"}
           hint={shopify?.lastSyncedAt
             ? `${ar ? "آخر مزامنة" : "last sync"} ${shopify.lastSyncedAt.toISOString().slice(0, 16).replace("T", " ")}`
             : undefined}
@@ -81,6 +85,12 @@ export default async function IntegrationsPage() {
           hint={ar ? "موجودة عندنا ومش متربطة بالموقع" : "In stock here, unlinked on the website"}
         />
       </div>
+
+      {shopify && (
+        <Link href="/integrations/shopify-orders" className="mb-5 block rounded-lg border border-ink-200 bg-panel p-4 text-sm font-medium text-ink-900 hover:border-rose-deep">
+          {ar ? "افتح أوردرات Shopify وتفاصيل الاستيراد وخصم المخزون ←" : "Open Shopify orders, import details and stock deductions →"}
+        </Link>
+      )}
 
       {/* ------------------------------------------------------ exceptions */}
       {exceptions.length > 0 && (
@@ -240,6 +250,19 @@ export default async function IntegrationsPage() {
                 },
               ]}
             />
+            <div className="mt-4">
+              <EntityForm
+                locale={locale}
+                action={mapShopifyVariantsAction}
+                hidden={{ connectionId: shopify.id }}
+                submitEn="Link matching Shopify variants"
+                submitAr="اربط موديلات Shopify اللي أكوادها مطابقة"
+                fields={[]}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                {ar ? "الربط بيتم بالكود المطابق بالضبط فقط. مش بيغيّر المخزون ولا يستورد أوردرات." : "Only exact SKU matches are linked. This does not change stock or import orders."}
+              </p>
+            </div>
 
             <div className="mt-4 border-t border-ink-100 pt-4">
               <p className="mb-2 text-xs text-ink-500">

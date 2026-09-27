@@ -21,6 +21,7 @@ type Product = {
   label: string;
   available: number;
   retailPrice: number;
+  image: string | null;
 };
 
 type Line = { variantId: string; quantity: number; retailPrice: number };
@@ -127,7 +128,7 @@ export function ModeratorOrderForm({
           placeholder={ar ? "SKU أو اسم الموديل" : "SKU or style name"}
           className={`${field} w-full`}
         />
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {matching.length === 0 ? (
             <p className="py-2 text-sm text-ink-400">
               {ar ? "مفيش صنف مطابق في المخزون." : "Nothing in stock matches."}
@@ -138,11 +139,17 @@ export function ModeratorOrderForm({
                 key={p.variantId}
                 type="button"
                 onClick={() => add(p)}
-                className="rounded-lg border border-ink-200 px-3 py-2 text-start text-sm hover:border-ink-400"
+                className="overflow-hidden rounded-lg border border-ink-200 text-start text-sm hover:border-rose-deep focus:border-rose-deep"
               >
-                <code dir="ltr" className="block text-xs text-ink-500">{p.sku}</code>
-                <span className="text-ink-700">{p.label}</span>
-                <span className="ms-2 num text-xs text-ink-400">×{p.available}</span>
+                {p.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.image} alt="" className="aspect-[3/4] w-full object-cover" />
+                ) : <div className="flex aspect-[3/4] items-center justify-center bg-ink-100 text-xs text-ink-400">{ar ? "مفيش صورة" : "No photo"}</div>}
+                <span className="block p-2">
+                  <code dir="ltr" className="block text-xs text-ink-500">{p.sku}</code>
+                  <span className="block text-ink-700">{p.label}</span>
+                  <span className="num text-xs text-ink-400">×{p.available}</span>
+                </span>
               </button>
             ))
           )}
@@ -162,6 +169,10 @@ export function ModeratorOrderForm({
               const short = p != null && l.quantity > p.available;
               return (
                 <li key={l.variantId} className="flex flex-wrap items-center gap-2">
+                  {p?.image && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.image} alt="" className="h-12 w-9 rounded object-cover" />
+                  )}
                   <span className="flex-1 text-sm">
                     <code dir="ltr" className="text-xs text-ink-500">{p?.sku}</code>
                     <span className="ms-2">{p?.label}</span>

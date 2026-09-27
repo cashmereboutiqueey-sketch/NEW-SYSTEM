@@ -8,6 +8,7 @@ import {
   publishInventory,
   verifyShopConnection,
   replayWebhookEvent,
+  syncVariantMappings,
   ShopifyError,
 } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
@@ -143,6 +144,23 @@ export async function pullOrdersAction(
     if (result.duplicates > 0) parts.push(`${result.duplicates} already had been`);
     if (result.failed > 0) parts.push(`${result.failed} need attention`);
     return { success: parts.join(", ") + "." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function mapShopifyVariantsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("settings:manage");
+    const result = await syncVariantMappings(
+      { connectionId: String(formData.get("connectionId") ?? "") },
+      { userId: session.userId },
+    );
+    revalidatePath("/integrations");
+    return { success: `${result.mapped} variants linked by exact SKU; ${result.noMatch} unmatched, ${result.noSku} without a SKU.` };
   } catch (error) {
     return { error: toMessage(error) };
   }

@@ -1,54 +1,12 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { uploadImageAction } from "./actions";
+import { uploadImageAction } from "@/app/(app)/styles/actions";
+import { uploadConsignmentPhotoAction } from "@/app/(app)/consignment/actions";
 import type { FormState } from "@/components/entity-form";
+import { shrinkPhoto } from "@/lib/photo-client";
 
 const empty: FormState = {};
-
-/** Above this a photograph is shrunk in the browser before it is sent. */
-const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
-/** Longest edge after shrinking: a till tile and a label, not a print. */
-const MAX_EDGE_PX = 2000;
-
-/**
- * A phone photograph, made small enough to send.
- *
- * Photos straight off a phone are routinely 3 to 8MB, and uploads travel as a
- * server action whose body has a hard ceiling — anything over it never reaches
- * the code that would explain the problem, and the page simply falls over.
- * Asking a shop owner to resize a picture before attaching it is asking them
- * to stop using the feature, so the browser does it.
- *
- * Returns the original when shrinking is unavailable or would not help, and
- * lets the server's own size check speak for anything that still is too big.
- */
-async function shrinkPhoto(file: File): Promise<File> {
-  if (file.size <= SHRINK_ABOVE_BYTES || typeof createImageBitmap !== "function") {
-    return file;
-  }
-  try {
-    // from-image, so a portrait taken on a phone is not stored lying down.
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const scale = Math.min(1, MAX_EDGE_PX / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.85),
-    );
-    if (!blob || blob.size >= file.size) return file;
-
-    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
-      type: "image/jpeg",
-    });
-  } catch {
-    return file;
-  }
-}
 
 /**
  * The photograph the till shows.
@@ -61,6 +19,7 @@ export function PhotoForm({
   ar,
   styleId,
   variantId,
+  consignmentItemId,
   current,
   label,
   compact,
@@ -68,11 +27,15 @@ export function PhotoForm({
   ar: boolean;
   styleId?: string;
   variantId?: string;
+  consignmentItemId?: string;
   current: string | null;
   label?: string;
   compact?: boolean;
 }) {
-  const [state, action, pending] = useActionState(uploadImageAction, empty);
+  const [state, action, pending] = useActionState(
+    consignmentItemId ? uploadConsignmentPhotoAction : uploadImageAction,
+    empty,
+  );
   const [preview, setPreview] = useState<string | null>(null);
   const [shrinking, setShrinking] = useState(false);
 
@@ -82,6 +45,7 @@ export function PhotoForm({
     <form action={action} className={compact ? "flex items-center gap-2" : "space-y-2"}>
       {styleId && <input type="hidden" name="styleId" value={styleId} />}
       {variantId && <input type="hidden" name="variantId" value={variantId} />}
+      {consignmentItemId && <input type="hidden" name="itemId" value={consignmentItemId} />}
 
       <div
         className={

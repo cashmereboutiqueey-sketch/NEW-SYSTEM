@@ -14,12 +14,15 @@ import {
 import { can } from "@/core/permissions";
 import { formCommand, CommandError } from "@/lib/command";
 import { checkConsignedPrices, SalePriceError } from "@/lib/sale-prices";
+import { db } from "@/lib/db";
+import { storeImage, ImageError } from "@/lib/images";
 
 export type ConsignmentState = { error?: string; success?: string };
 
 function toMessage(error: unknown): string {
   if (
     error instanceof ConsignmentError ||
+    error instanceof ImageError ||
     error instanceof LedgerError ||
     error instanceof SalePriceError ||
     error instanceof CommandError
@@ -40,6 +43,28 @@ function day(value: FormDataEntryValue | null): Date {
 function refresh() {
   revalidatePath("/consignment");
   revalidatePath("/pos");
+  revalidatePath("/moderator");
+}
+
+export async function uploadConsignmentPhotoAction(
+  _prev: ConsignmentState,
+  formData: FormData,
+): Promise<ConsignmentState> {
+  try {
+    await authorize("inventory:transfer");
+    const itemId = String(formData.get("itemId") ?? "");
+    const item = await db.consignmentItem.findUnique({ where: { id: itemId }, select: { id: true } });
+    if (!item) return { error: "بضاعة الأمانة دي مش موجودة." };
+    const photo = formData.get("photo");
+    if (!(photo instanceof File) || photo.size === 0) return { error: "اختار صورة الأول." };
+    const imageName = await storeImage(photo);
+    await db.consignmentItem.update({ where: { id: item.id }, data: { imageName } });
+    refresh();
+    return { success: "الصورة اتحفظت." };
+  } catch (error) {
+    if (error instanceof ImageError) return { error: error.message };
+    return { error: toMessage(error) };
+  }
 }
 
 /** Typed as a percentage on screen, stored as a fraction. */
@@ -81,11 +106,14 @@ export async function receiveConsignmentAction(
 
     const expires = String(formData.get("expiresAt") ?? "");
     const ratePct = String(formData.get("commissionPct") ?? "").trim();
+    const photo = formData.get("photo");
+    const imageName = photo instanceof File && photo.size > 0 ? await storeImage(photo) : null;
 
     const result = await receiveConsignment(
       {
         consignorId: String(formData.get("consignorId") ?? ""),
         description: String(formData.get("description") ?? ""),
+        imageName,
         size: String(formData.get("size") ?? "") || null,
         colour: String(formData.get("colour") ?? "") || null,
         quantity: Number(formData.get("quantity") ?? 0),

@@ -16,6 +16,7 @@ export type MakeableVariant = {
   styleId: string;
   sku: string;
   label: string;
+  image: string | null;
   retailPrice: string;
   /** On the shelf now. Zero is why this piece is on this form. */
   available: number;
@@ -137,7 +138,13 @@ export function MakeToOrderForm({
                         onClick={() => onPick(v.variantId)}
                         className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start hover:bg-ink-50 focus:bg-ink-50 focus:outline-none"
                       >
-                        <span><code dir="ltr" className="num text-xs text-ink-500">{v.sku}</code> · {v.label}</span>
+                        <span className="flex items-center gap-2">
+                          {v.image ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={v.image} alt="" className="h-14 w-11 rounded object-cover" />
+                          ) : <span className="flex h-14 w-11 items-center justify-center rounded bg-ink-100 text-[10px] text-ink-400">{ar ? "صورة" : "Photo"}</span>}
+                          <span><code dir="ltr" className="num text-xs text-ink-500">{v.sku}</code> · {v.label}</span>
+                        </span>
                         <span className="text-xs text-ink-500">
                           {v.makeable > 0
                             ? ar ? `القماش يكفي ${v.makeable}` : `Cloth makes ${v.makeable}`
@@ -151,7 +158,13 @@ export function MakeToOrderForm({
             </div>
           ) : chosen ? (
             <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-rose-deep bg-rose/10 px-3 py-2">
-              <span><code dir="ltr" className="num text-xs">{chosen.sku}</code> · {chosen.label}</span>
+              <span className="flex items-center gap-2">
+                {chosen.image && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={chosen.image} alt="" className="h-12 w-9 rounded object-cover" />
+                )}
+                <span><code dir="ltr" className="num text-xs">{chosen.sku}</code> · {chosen.label}</span>
+              </span>
               <button type="button" onClick={() => { setVariantId(""); setPrice(""); }} className="shrink-0 text-xs font-medium underline">
                 {ar ? "غيّر" : "Change"}
               </button>

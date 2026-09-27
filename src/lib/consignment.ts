@@ -6,6 +6,7 @@ import { writeAudit, type AuditContext } from "./audit";
 import { command } from "./command";
 import { recordTillCash } from "./till";
 import { canonicalCustomerId } from "./crm";
+import { imageUrl } from "./images";
 
 /**
  * Selling somebody else's goods for a share of the price.
@@ -125,6 +126,7 @@ export async function receiveConsignment(
   input: {
     consignorId: string;
     description: string;
+    imageName?: string | null;
     quantity: number;
     retailPrice: string;
     /** Overrides the consignor's usual rate for this piece. */
@@ -169,6 +171,7 @@ export async function receiveConsignment(
           itemCode,
           consignorId: input.consignorId,
           description: input.description.trim(),
+          imageName: input.imageName ?? null,
           size: input.size?.trim() || null,
           colour: input.colour?.trim() || null,
           retailPrice: price.toString(),
@@ -277,6 +280,15 @@ export async function sellConsignedItem(
     if (!fundsCode) throw new ConsignmentError(`Cannot take ${input.paymentMethod} here.`);
 
     return db.$transaction(async (tx) => {
+      // The preview can be stale when a cashier and moderator sell the last
+      // piece together. Claim stock atomically before posting any accounts.
+      const claimed = await tx.$executeRaw`
+        UPDATE "consignment_items"
+        SET "quantitySold" = "quantitySold" + ${input.quantity}, "updatedAt" = NOW()
+        WHERE "id" = ${item.id}
+          AND "quantityReceived" - "quantitySold" - "quantityReturned" >= ${input.quantity}
+      `;
+      if (claimed !== 1) throw new ConsignmentError("That item no longer has enough left to sell.");
       const saleNumber = await nextDocumentNumber(tx, "CSL", saleDate);
 
       const accountId = async (code: string) => {
@@ -336,11 +348,6 @@ export async function sellConsignedItem(
           saleDate,
           soldByUserId: ctx.userId,
         },
-      });
-
-      await tx.consignmentItem.update({
-        where: { id: item.id },
-        data: { quantitySold: { increment: input.quantity } },
       });
 
       // A consignor's garment sold for cash puts cash in the same drawer as
@@ -600,6 +607,7 @@ export async function consignedStock(locationId?: string | null) {
     return {
       id: i.id,
       itemCode: i.itemCode,
+      image: imageUrl(i.imageName),
       consignorId: i.consignorId,
       consignorName: i.consignor.name,
       description: i.description,
@@ -740,6 +748,7 @@ export async function sellableConsignedStock(locationId: string) {
       return {
         itemId: i.id,
         itemCode: i.itemCode,
+        image: imageUrl(i.imageName),
         description: i.description,
         size: i.size ?? "",
         colour: i.colour ?? "",

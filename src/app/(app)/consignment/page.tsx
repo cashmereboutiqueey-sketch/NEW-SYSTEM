@@ -14,6 +14,7 @@ import { ConsignorForm } from "./consignor-form";
 import { ReceiveForm } from "./receive-form";
 import { ItemActions } from "./item-actions";
 import { SettleForm } from "./settle-form";
+import { PhotoForm } from "@/components/photo-form";
 
 /**
  * بضاعة الأمانة — selling somebody else's goods for a share.
@@ -176,14 +177,28 @@ export default async function ConsignmentPage() {
               .filter((i) => i.left > 0)
               .map((i) => [
                 <span key="c" className="num text-xs" dir="ltr">{i.itemCode}</span>,
-                <span key="d">
-                  {i.description}
-                  {(i.size || i.colour) && (
-                    <span className="ms-2 text-xs text-ink-500">
-                      {[i.colour, i.size].filter(Boolean).join(" · ")}
+                <div key="d" className="min-w-48">
+                  <div className="flex items-center gap-2">
+                    {i.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={i.image} alt={i.description} className="h-14 w-11 shrink-0 rounded object-cover" />
+                    ) : <div className="flex h-14 w-11 shrink-0 items-center justify-center rounded bg-ink-100 text-[10px] text-ink-400">{ar ? "صورة" : "Photo"}</div>}
+                    <span>
+                      {i.description}
+                      {(i.size || i.colour) && (
+                        <span className="ms-2 text-xs text-ink-500">
+                          {[i.colour, i.size].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
                     </span>
+                  </div>
+                  {mayHandle && (
+                    <details className="mt-1 text-xs">
+                      <summary className="cursor-pointer text-ink-600 underline">{ar ? "ارفع أو غيّر الصورة" : "Add or change photo"}</summary>
+                      <div className="mt-2"><PhotoForm ar={ar} consignmentItemId={i.id} current={i.image} /></div>
+                    </details>
                   )}
-                </span>,
+                </div>,
                 i.consignorName,
                 <span key="p" className="num">{formatMoney(i.retailPrice)}</span>,
                 ...(seeValue
