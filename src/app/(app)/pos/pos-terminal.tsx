@@ -153,6 +153,7 @@ export function PosTerminal({
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const customerSearchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -426,6 +427,7 @@ export function PosTerminal({
           ...list,
         ]);
         setCustomerId(result.customer.id);
+        setCustomerQuery("");
         setAddingCustomer(false);
         setNewCustomer({ name: "", phone: "" });
         setDuplicate(null);
@@ -473,21 +475,17 @@ export function PosTerminal({
    * the same story — and a customer added at the counter has no limit yet,
    * which is why an absent figure counts as nil rather than as no rule.
    */
-  /** A number typed with spaces or a leading zero has to find the same person. */
+  /** Show matches on the screen while typing, not only inside a closed select. */
   const matchingPeople = useMemo(() => {
     const q = customerQuery.trim().toLowerCase();
-    if (!q) return people;
+    if (!q) return [];
     const digits = q.replace(/\D/g, "");
-    const found = people.filter((c) => {
+    return people.filter((c) => {
       if (c.name.toLowerCase().includes(q)) return true;
       if (!digits) return false;
       return (c.phone ?? "").replace(/\D/g, "").includes(digits);
-    });
-    // Whoever is already selected stays in the list, or choosing somebody and
-    // then typing would silently unselect them.
-    const chosen = people.find((c) => c.id === customerId);
-    return chosen && !found.some((c) => c.id === chosen.id) ? [chosen, ...found] : found;
-  }, [people, customerQuery, customerId]);
+    }).slice(0, 12);
+  }, [people, customerQuery]);
 
   const chosenCustomer = people.find((c) => c.id === customerId);
   const alreadyOwed = chosenCustomer?.alreadyOwed ?? 0;
@@ -1142,46 +1140,100 @@ export function PosTerminal({
             </div>
           )}
 
-          <label htmlFor="pos-customer-search" className="mb-1 block text-xs font-medium text-ink-600">
-            {ar ? "العميل — ابحث بالاسم أو التليفون" : "Customer — search by name or phone"}
-          </label>
-          <input
-            id="pos-customer-search"
-            type="search"
-            value={customerQuery}
-            onChange={(e) => setCustomerQuery(e.target.value)}
-            placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
-            className={`${field} mb-2 w-full`}
-          />
-
-          <div className="mb-2 flex items-center gap-2">
-            <select
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              className={`${field} min-w-0 flex-1`}
-            >
-              <option value="">{ar ? "بدون عميل" : "No customer"}</option>
-              {matchingPeople.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}{c.phone ? ` — ${c.phone}` : ""}
-                </option>
-              ))}
-            </select>
-
+          <div className="mb-2 flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <label htmlFor="pos-customer-search" className="mb-1 block text-xs font-medium text-ink-600">
+                {ar ? "العميل — ابحث بالاسم أو التليفون" : "Customer — search by name or phone"}
+              </label>
+              <input
+                ref={customerSearchRef}
+                id="pos-customer-search"
+                type="search"
+                value={customerQuery}
+                onChange={(e) => {
+                  setCustomerQuery(e.target.value);
+                  // A new search must not leave the previous customer on the sale.
+                  setCustomerId("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  // Enter inside the checkout form must choose a match, not sell.
+                  e.preventDefault();
+                  if (matchingPeople[0]) {
+                    setCustomerId(matchingPeople[0].id);
+                    setCustomerQuery("");
+                  }
+                }}
+                placeholder={ar ? "دوّر بالاسم أو بالتليفون" : "Search by name or phone"}
+                className={`${field} w-full`}
+              />
+            </div>
             <button
               type="button"
               onClick={() => {
                 setAddingCustomer((v) => !v);
-                setNewCustomer({ name: "", phone: "" });
+                setNewCustomer({
+                  name: /\d/.test(customerQuery) ? "" : customerQuery.trim(),
+                  phone: /\d/.test(customerQuery) ? customerQuery.trim() : "",
+                });
+                setCustomerQuery("");
                 setDuplicate(null);
                 setCustomerError(null);
               }}
               title={ar ? "عميل جديد" : "New customer"}
+              aria-label={ar ? "عميل جديد" : "New customer"}
               className="shrink-0 rounded-lg border border-ink-300 px-3 py-2 text-sm font-semibold text-ink-700"
             >
               {addingCustomer ? "×" : "+"}
             </button>
           </div>
+
+          {!addingCustomer && (customerQuery.trim() ? (
+            <div className="mb-2 max-h-44 overflow-y-auto rounded-lg border border-ink-200 bg-panel">
+              {matchingPeople.length === 0 ? (
+                <p role="status" className="px-3 py-3 text-xs text-ink-500">
+                  {ar ? "مفيش عميل بالاسم أو الرقم ده. اضغط + لإضافته." : "No customer matches. Press + to add them."}
+                </p>
+              ) : (
+                <ul className="divide-y divide-ink-100">
+                  {matchingPeople.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomerId(c.id);
+                          setCustomerQuery("");
+                        }}
+                        className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start text-sm text-ink-900 hover:bg-ink-50 focus:bg-ink-50 focus:outline-none"
+                      >
+                        <span>{c.name}</span>
+                        {c.phone && <span className="num text-xs text-ink-500" dir="ltr">{c.phone}</span>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : chosenCustomer ? (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-deep bg-rose/10 px-3 py-2 text-sm">
+              <span className="min-w-0 font-medium text-ink-900">
+                {chosenCustomer.name}
+                {chosenCustomer.phone && <span className="num ms-2 text-xs text-ink-600" dir="ltr">{chosenCustomer.phone}</span>}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomerId("");
+                  customerSearchRef.current?.focus();
+                }}
+                className="shrink-0 text-xs font-medium text-ink-700 underline"
+              >
+                {ar ? "غيّره" : "Change"}
+              </button>
+            </div>
+          ) : (
+            <p className="mb-2 text-xs text-ink-500">{ar ? "بدون عميل — اكتب اسمه أو رقمه لاختياره." : "No customer — type a name or number to choose one."}</p>
+          ))}
 
           {/* ------------------------------------------ a new face at the counter */}
           {addingCustomer && (
@@ -1222,6 +1274,7 @@ export function PosTerminal({
                       type="button"
                       onClick={() => {
                         setCustomerId(duplicate.id);
+                        setCustomerQuery("");
                         setPeople((list) =>
                           list.some((p) => p.id === duplicate.id)
                             ? list
