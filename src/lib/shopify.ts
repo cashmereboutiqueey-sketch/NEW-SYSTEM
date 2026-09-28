@@ -93,6 +93,7 @@ export type ShopifyOrder = {
     /** Shopify order and code discounts are allocated separately from this field. */
     discount_allocations?: { amount: string }[];
     title?: string;
+    variant_title?: string | null;
   }[];
 };
 

@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { OrderSource, type Prisma } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
+import { can } from "@/core/permissions";
 import { t } from "@/lib/i18n";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
@@ -24,13 +26,45 @@ import { dec, safeDiv } from "@/lib/money";
  * already promised. The desk is where an order is taken; this is where the
  * results are read.
  */
-export default async function SalesPage() {
-  await requirePermission("report:brand");
+export default async function SalesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ source?: string; q?: string; page?: string }>;
+}) {
+  const session = await requirePermission("report:brand");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
+  const params = await searchParams;
+  const source = Object.values(OrderSource).includes(params.source as OrderSource)
+    ? params.source as OrderSource : "";
+  const q = (params.q ?? "").trim().slice(0, 100);
+  const requestedPage = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const pageSize = 100;
+  const where: Prisma.SalesOrderWhereInput = {
+    ...(source ? { source } : {}),
+    ...(q ? { OR: [
+      { orderNumber: { contains: q, mode: "insensitive" } },
+      { shopifyOrderId: { contains: q, mode: "insensitive" } },
+      { customer: { is: { name: { contains: q, mode: "insensitive" } } } },
+      { customer: { is: { phone: { contains: q } } } },
+      { shippingPhone: { contains: q } },
+      { lines: { some: { variant: { sku: { contains: q, mode: "insensitive" } } } } },
+    ] } : {}),
+  };
+  const matchCount = await db.salesOrder.count({ where });
+  const pageCount = Math.max(1, Math.ceil(matchCount / pageSize));
+  const page = Math.min(requestedPage, pageCount);
+  const pageHref = (number: number) => {
+    const query = new URLSearchParams();
+    if (source) query.set("source", source);
+    if (q) query.set("q", q);
+    query.set("page", String(number));
+    return `/sales?${query.toString()}`;
+  };
 
   const [orders, sessions] = await Promise.all([
     db.salesOrder.findMany({
+      where,
       include: {
         customer: true,
         createdBy: true,
@@ -39,7 +73,8 @@ export default async function SalesPage() {
         payments: true,
       },
       orderBy: [{ orderDate: "desc" }, { createdAt: "desc" }],
-      take: 100,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }),
     db.posSession.findMany({
       include: {
@@ -90,11 +125,11 @@ export default async function SalesPage() {
 
   const sourceLabel: Record<string, string> = ar
     ? {
-        SHOPIFY: "الموقع", MODERATOR: "السوشيال", POS: "المعرض",
+        SHOPIFY: "Shopify / الموقع", MODERATOR: "السوشيال", POS: "المعرض",
         EXHIBITION: "بازار", WHOLESALE: "جملة", MANUAL: "يدوي",
       }
     : {
-        SHOPIFY: "Website", MODERATOR: "Social", POS: "Showroom",
+        SHOPIFY: "Shopify / Website", MODERATOR: "Social", POS: "Showroom",
         EXHIBITION: "Exhibition", WHOLESALE: "Wholesale", MANUAL: "Manual",
       };
 
@@ -144,12 +179,27 @@ export default async function SalesPage() {
 
       <p className="mb-4 rounded-lg border border-ink-200 bg-panel px-3 py-2.5 text-sm text-ink-600">
         {ar
-          ? "الأوردرات بتتكتب من صفحة المودريتور — دي الشاشة اللي بتقرا منها."
-          : "Orders are taken on the moderator desk. This screen is for reading them back."}{" "}
-        <Link href="/moderator" className="font-medium text-ink-900 underline">
-          {ar ? "افتح المودريتور" : "Open the moderator desk"}
-        </Link>
+          ? "دي المبيعات اللي اتسجلت في النظام من كل المصادر. أوردرات Shopify اللي لسه ما اتسجلتش بتظهر في شاشة Shopify."
+          : "These are recorded sales from every source. Shopify orders that have not been imported appear on the Shopify orders screen."}{" "}
+        {can(session.role, "settings:manage") && <Link href="/integrations/shopify-orders" className="font-medium text-ink-900 underline">{ar ? "افتح أوردرات Shopify" : "Open Shopify orders"}</Link>}
       </p>
+
+      <form action="/sales" method="get" className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-ink-200 bg-panel p-3 text-sm">
+        <label className="flex min-w-44 flex-col gap-1">
+          <span>{ar ? "مصدر الطلب" : "Order source"}</span>
+          <select name="source" defaultValue={source} className="rounded-md border border-ink-200 bg-white px-3 py-2">
+            <option value="">{ar ? "كل المصادر" : "All sources"}</option>
+            {Object.values(OrderSource).map((value) => <option key={value} value={value}>{sourceLabel[value] ?? value}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-56 flex-1 flex-col gap-1">
+          <span>{ar ? "بحث في الطلبات" : "Search orders"}</span>
+          <input name="q" defaultValue={q} placeholder={ar ? "رقم الطلب، اسم العميل، تليفونه أو SKU" : "Order number, customer, phone or SKU"} className="rounded-md border border-ink-200 bg-white px-3 py-2" />
+        </label>
+        <button type="submit" className="rounded-md bg-ink-900 px-4 py-2 text-white">{ar ? "اعرض" : "Show"}</button>
+        {(source || q) && <Link href="/sales" className="px-2 py-2 underline">{ar ? "إلغاء الفلتر" : "Clear filters"}</Link>}
+        <span className="w-full text-ink-500">{ar ? `${formatNumber(matchCount, locale)} طلب مطابق. الأرقام أدناه تخص الطلبات الظاهرة في الصفحة الحالية.` : `${formatNumber(matchCount, locale)} matching orders. Figures below cover the orders shown on this page.`}</span>
+      </form>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
@@ -179,8 +229,8 @@ export default async function SalesPage() {
         <Card>
           <p className="py-8 text-center text-sm text-ink-400">
             {ar
-              ? "لا توجد مبيعات بعد. الموقع والسوشيال والمعرض كلهم بيدخلوا نفس المحرك."
-              : "No sales yet. The website, social orders and the showroom all enter the same engine."}
+              ? (source || q ? "مفيش مبيعات مطابقة للبحث. أوردرات Shopify اللي لم تُستورد بتظهر في صفحة أوردرات Shopify." : "لا توجد مبيعات بعد. الموقع والسوشيال والمعرض كلهم بيدخلوا نفس المحرك.")
+              : (source || q ? "No matching sales. Shopify orders that were not imported appear on the Shopify orders page." : "No sales yet. The website, social orders and the showroom all enter the same engine.")}
           </p>
         </Card>
       ) : (
@@ -321,6 +371,13 @@ export default async function SalesPage() {
               })}
             />
           </Card>
+          {pageCount > 1 && (
+            <nav aria-label={ar ? "صفحات الطلبات" : "Order pages"} className="mt-4 flex items-center justify-center gap-4 text-sm">
+              {page > 1 && <Link href={pageHref(page - 1)} className="underline">{ar ? "السابق" : "Previous"}</Link>}
+              <span>{ar ? `صفحة ${page} من ${pageCount}` : `Page ${page} of ${pageCount}`}</span>
+              {page < pageCount && <Link href={pageHref(page + 1)} className="underline">{ar ? "التالي" : "Next"}</Link>}
+            </nav>
+          )}
         </>
       )}
     </>
