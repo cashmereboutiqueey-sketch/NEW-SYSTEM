@@ -124,7 +124,7 @@ export const navigation: NavSection[] = [
       // where it exists, and put on the line where the cloth allows it.
       // What one person is still waiting on. Ahead of the desk in the menu
       // because it is the screen somebody opens first in the morning.
-      { key: "myOrders", href: "/my-orders", phase: 7, scopes: ["BRAND", "GROUP"], icon: "check", shipped: true, needs: "sales_order:create" },
+      { key: "myOrders", href: "/my-orders", phase: 7, scopes: ALL_SCOPES, icon: "check", shipped: true, needs: "sales_order:create" },
       { key: "moderator", href: "/moderator", phase: 7, scopes: ["BRAND", "GROUP"], icon: "globe", shipped: true, needs: "sales_order:view" },
       // What the desk above costs. Behind the books, not behind the desk:
       // the people paid out of it must not be the people setting it.

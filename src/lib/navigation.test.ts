@@ -163,6 +163,15 @@ describe("what each role is shown", () => {
     expect(visible("ACCOUNTANT")).not.toContain("/my-orders");
   });
 
+  it("shows a cashier My Orders in every entity view", () => {
+    for (const scope of ["FACTORY", "BRAND", "GROUP"] as const) {
+      const hrefs = navigationFor("POS_CASHIER", scope).flatMap((section) =>
+        section.items.map((item) => item.href),
+      );
+      expect(hrefs, `My Orders is hidden in ${scope}`).toContain("/my-orders");
+    }
+  });
+
   it("gives a social-media moderator the same desk without the till", () => {
     const moderator = visible("MODERATOR");
     const cashier = visible("POS_CASHIER");
