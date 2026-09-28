@@ -100,6 +100,7 @@ export default async function MyOrdersPage() {
       .filter((o) => ["RETURNED", "FAILED", "NEEDS_REVIEW"].includes(o.shipments[0].status))
       .map((o) => ({
         key: `s-${o.id}`,
+        href: `/my-orders/sales/${o.id}`,
         number: o.orderNumber,
         who: o.customer?.name ?? "—",
         what: ar ? "الطرد رجع أو اتعطّل" : "the parcel came back or stalled",
@@ -109,6 +110,7 @@ export default async function MyOrdersPage() {
       .filter((p) => p.promisedDate !== null && p.promisedDate < today && p.status !== "READY")
       .map((p) => ({
         key: `p-${p.id}`,
+        href: `/my-orders/custom/${p.id}`,
         number: p.orderNumber,
         who: p.customer.name,
         what: ar ? "فات ميعاده ولسه مش جاهز" : "past its promised day and not ready",
@@ -188,7 +190,7 @@ export default async function MyOrdersPage() {
               "",
             ]}
             rows={trouble.map((t) => [
-              <span key="n" className="num text-xs" dir="ltr">{t.number}</span>,
+              <Link key="n" href={t.href} className="num text-xs font-medium text-ink-900 underline underline-offset-4 hover:text-info" dir="ltr">{t.number}</Link>,
               <span key="w" className="font-medium">{t.who}</span>,
               <span key="x" className="text-bad">{t.what}</span>,
               <span key="d" className="text-xs text-ink-500" dir="ltr">{t.detail}</span>,
@@ -217,10 +219,10 @@ export default async function MyOrdersPage() {
           ]}
           empty={ar ? "مفيش حاجة شغالة — كله اتسلّم" : "Nothing in hand"}
           rows={openSales.map((o) => [
-            <span key="n" className="num text-xs" dir="ltr">
+            <Link key="n" href={`/my-orders/sales/${o.id}`} className="num text-xs font-medium text-ink-900 underline underline-offset-4 hover:text-info" dir="ltr">
               {o.orderNumber}
               <span className="ms-2 text-[10px] text-ink-400">{o.source}</span>
-            </span>,
+            </Link>,
             <span key="d" className="num text-xs" dir="ltr">{dateText(o.orderDate)}</span>,
             <span key="c">
               {o.customer?.name ?? "—"}
@@ -278,7 +280,7 @@ export default async function MyOrdersPage() {
           ]}
           empty={ar ? "مفيش وعود مفتوحة" : "Nothing promised"}
           rows={openPromises.map((p) => [
-            <span key="n" className="num text-xs" dir="ltr">{p.orderNumber}</span>,
+            <Link key="n" href={`/my-orders/custom/${p.id}`} className="num text-xs font-medium text-ink-900 underline underline-offset-4 hover:text-info" dir="ltr">{p.orderNumber}</Link>,
             <span key="c">
               {p.customer.name}
               {p.customer.phone && (
