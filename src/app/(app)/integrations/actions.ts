@@ -10,6 +10,7 @@ import {
   replayWebhookEvent,
   syncVariantMappings,
   ensureOrderWebhooks,
+  publishFulfillments,
   ShopifyError,
 } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
@@ -208,6 +209,23 @@ export async function setShopifyAutoSyncAction(
     return { success: enabled
       ? "Automatic Shopify order recovery and stock publishing are enabled. The first pass runs within 10 minutes."
       : "Automatic Shopify stock publishing is paused." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function publishShopifyFulfillmentsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("settings:manage");
+    const result = await publishFulfillments(
+      { connectionId: String(formData.get("connectionId") ?? "") },
+      { userId: session.userId },
+    );
+    revalidatePath("/integrations");
+    return { success: `${result.created} shipped orders marked fulfilled on Shopify; ${result.alreadyFulfilled} already fulfilled; ${result.failed} need review.` };
   } catch (error) {
     return { error: toMessage(error) };
   }

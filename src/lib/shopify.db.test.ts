@@ -1,6 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
@@ -9,6 +9,7 @@ import {
   receiveWebhook,
   retryFailedWebhooks,
   failedWebhookEvents,
+  publishFulfillments,
   verifyWebhookSignature,
   type ShopifyOrder,
 } from "./shopify";
@@ -558,5 +559,56 @@ describe("the webhook inbox", () => {
     expect(event.attempts).toBe(6);
     // Still listed, so somebody is asked to look at it.
     expect((await failedWebhookEvents()).some((f) => f.id === event.id)).toBe(true);
+  });
+});
+
+describe("Shopify fulfillment after courier handoff", () => {
+  it("marks a shipped order fulfilled once and records the external fulfillment", async () => {
+    const online = order();
+    await importOrders({ connectionId, orders: [online] }, { userId });
+    const sale = await db.salesOrder.findFirstOrThrow();
+    await db.salesOrder.update({ where: { id: sale.id }, data: { status: "SHIPPED", shippedDate: day } });
+
+    const fetchBefore = globalThis.fetch;
+    const shopifyFetch = vi.fn(async (_url: unknown, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { query: string };
+      return Response.json(request.query.includes("query OrderFulfillment")
+        ? { data: { order: { id: `gid://shopify/Order/${online.id}`, cancelledAt: null,
+            displayFulfillmentStatus: "UNFULFILLED", fulfillments: [],
+            fulfillmentOrders: { nodes: [{ id: "gid://shopify/FulfillmentOrder/123", status: "OPEN" }] } } } }
+        : { data: { fulfillmentCreate: { fulfillment: { id: "gid://shopify/Fulfillment/456" }, userErrors: [] } } });
+    });
+    globalThis.fetch = shopifyFetch as typeof fetch;
+    try {
+      expect((await publishFulfillments({ connectionId }, { userId })).created).toBe(1);
+      expect((await publishFulfillments({ connectionId }, { userId })).created).toBe(0);
+      expect(shopifyFetch).toHaveBeenCalledTimes(2);
+      const mapping = await db.externalMapping.findFirstOrThrow({ where: { objectType: "fulfillment" } });
+      expect(mapping.internalId).toBe(sale.id);
+      expect(mapping.externalRef).toBe("gid://shopify/Fulfillment/456");
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
+  });
+
+  it("does not fulfill a cancelled Shopify order", async () => {
+    const online = order();
+    await importOrders({ connectionId, orders: [online] }, { userId });
+    const sale = await db.salesOrder.findFirstOrThrow();
+    await db.salesOrder.update({ where: { id: sale.id }, data: { status: "SHIPPED", shippedDate: day } });
+    const fetchBefore = globalThis.fetch;
+    const shopifyFetch = vi.fn(async () => Response.json({ data: { order: {
+      id: `gid://shopify/Order/${online.id}`, cancelledAt: day.toISOString(),
+      displayFulfillmentStatus: "UNFULFILLED", fulfillments: [], fulfillmentOrders: { nodes: [] },
+    } } }));
+    globalThis.fetch = shopifyFetch as typeof fetch;
+    try {
+      expect((await publishFulfillments({ connectionId }, { userId })).failed).toBe(1);
+      expect(shopifyFetch).toHaveBeenCalledTimes(1);
+      expect(await db.externalMapping.count({ where: { objectType: "fulfillment" } })).toBe(0);
+      expect(await db.integrationException.count({ where: { objectType: "fulfillment", status: "OPEN" } })).toBe(1);
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
   });
 });

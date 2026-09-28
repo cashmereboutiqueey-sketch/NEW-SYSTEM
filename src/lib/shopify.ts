@@ -1743,6 +1743,113 @@ export async function syncVariantMappings(
   return { mapped, alreadyMapped, noMatch, noSku, conflicts };
 }
 
+/** Marks courier handoffs fulfilled on Shopify, with an external id guard. */
+export async function publishFulfillments(
+  input: { connectionId: string },
+  ctx: AuditContext,
+): Promise<{ created: number; alreadyFulfilled: number; failed: number }> {
+  const connection = await db.integrationConnection.findUniqueOrThrow({ where: { id: input.connectionId } });
+  const pending = await db.$queryRaw<{ salesOrderId: string; externalId: string; orderNumber: string }[]>`
+    SELECT o."id" AS "salesOrderId", m."externalId", o."orderNumber"
+    FROM "sales_orders" o
+    JOIN "external_mappings" m ON m."internalId" = o."id"
+      AND m."connectionId" = ${connection.id} AND m."objectType" = 'order'
+    LEFT JOIN "external_mappings" f ON f."connectionId" = m."connectionId"
+      AND f."objectType" = 'fulfillment' AND f."externalId" = m."externalId"
+    WHERE o."source" = 'SHOPIFY' AND o."status" IN ('SHIPPED', 'DELIVERED')
+      AND f."id" IS NULL
+    ORDER BY o."shippedDate" ASC
+    LIMIT 50
+  `;
+  let created = 0;
+  let alreadyFulfilled = 0;
+  let failed = 0;
+  for (const row of pending) {
+    try {
+      type RemoteOrder = {
+        id: string;
+        cancelledAt: string | null;
+        displayFulfillmentStatus: string;
+        fulfillments: { id: string; status: string }[];
+        fulfillmentOrders: { nodes: { id: string; status: string }[] };
+      };
+      const remote = await shopifyFetch<{
+        data?: { order: RemoteOrder | null };
+        errors?: { message: string }[];
+      }>(connection, "graphql.json", { method: "POST", body: {
+        query: `query OrderFulfillment($id: ID!) {
+          order(id: $id) {
+            id cancelledAt displayFulfillmentStatus
+            fulfillments(first: 10) { id status }
+            fulfillmentOrders(first: 10) { nodes { id status } }
+          }
+        }`,
+        variables: { id: `gid://shopify/Order/${row.externalId}` },
+      } });
+      if (remote.errors?.length) throw new ShopifyError(remote.errors.map((e) => e.message).join("; "));
+      const order = remote.data?.order;
+      if (!order) throw new ShopifyError(`Shopify order ${row.externalId} was not found.`);
+      if (order.cancelledAt) throw new ShopifyError(`Shopify order ${row.externalId} is cancelled; do not fulfill it.`);
+
+      let fulfillmentId: string;
+      if (order.displayFulfillmentStatus === "FULFILLED") {
+        const active = order.fulfillments.filter((f) => f.status !== "CANCELLED");
+        if (active.length !== 1) throw new ShopifyError("Shopify has multiple fulfillments; review this order manually.");
+        fulfillmentId = active[0].id;
+        alreadyFulfilled += 1;
+      } else {
+        if (order.displayFulfillmentStatus !== "UNFULFILLED" ||
+            order.fulfillmentOrders.nodes.length !== 1 ||
+            order.fulfillmentOrders.nodes[0].status !== "OPEN") {
+          throw new ShopifyError("Shopify fulfillment is partial, held, or split across locations; review this order manually.");
+        }
+        const result = await shopifyFetch<{
+          data?: { fulfillmentCreate?: { fulfillment: { id: string } | null; userErrors: { message: string }[] } };
+          errors?: { message: string }[];
+        }>(connection, "graphql.json", { method: "POST", body: {
+          query: `mutation CreateFulfillment($fulfillment: FulfillmentInput!) {
+            fulfillmentCreate(fulfillment: $fulfillment) {
+              fulfillment { id }
+              userErrors { message }
+            }
+          }`,
+          variables: { fulfillment: {
+            lineItemsByFulfillmentOrder: [{ fulfillmentOrderId: order.fulfillmentOrders.nodes[0].id }],
+            notifyCustomer: false,
+          } },
+        } });
+        const problems = [...(result.errors ?? []), ...(result.data?.fulfillmentCreate?.userErrors ?? [])];
+        fulfillmentId = result.data?.fulfillmentCreate?.fulfillment?.id ?? "";
+        if (problems.length || !fulfillmentId) {
+          throw new ShopifyError(problems.map((e) => e.message).join("; ") || "Shopify did not create the fulfillment.");
+        }
+        created += 1;
+      }
+      await db.externalMapping.upsert({
+        where: { connectionId_objectType_externalId: {
+          connectionId: connection.id, objectType: "fulfillment", externalId: row.externalId,
+        } },
+        create: { connectionId: connection.id, objectType: "fulfillment", externalId: row.externalId,
+          internalId: row.salesOrderId, externalRef: fulfillmentId },
+        update: { externalRef: fulfillmentId },
+      });
+      await db.integrationException.updateMany({
+        where: { connectionId: connection.id, provider: "SHOPIFY", objectType: "fulfillment",
+          externalId: row.externalId, status: "OPEN" },
+        data: { status: "RESOLVED", resolvedAt: new Date(), resolvedNote: "Shopify fulfillment published." },
+      });
+      await writeAudit(db, { action: "SHOPIFY_FULFILLMENT_PUBLISHED", entityName: "SalesOrder",
+        entityId: row.salesOrderId, ctx, after: { externalId: row.externalId, fulfillmentId } });
+    } catch (error) {
+      failed += 1;
+      await raiseException({ connectionId: connection.id, objectType: "fulfillment",
+        externalId: row.externalId, reason: error instanceof Error ? error.message : "Shopify fulfillment failed.",
+        payload: { orderNumber: row.orderNumber } });
+    }
+  }
+  return { created, alreadyFulfilled, failed };
+}
+
 /** One unattended pass after the owner enables sync for a clean shop. */
 export async function reconcileEnabledShops(): Promise<void> {
   const connections = await db.integrationConnection.findMany({
@@ -1768,6 +1875,8 @@ export async function reconcileEnabledShops(): Promise<void> {
           `${imported.failed} failed imports, ${openOrders} open order issues, ${failedDeliveries} unprocessed deliveries.`,
         );
       }
+      const fulfilled = await publishFulfillments({ connectionId: connection.id }, ctx);
+      if (fulfilled.failed) throw new ShopifyError(`${fulfilled.failed} shipped orders could not be marked fulfilled on Shopify.`);
       const inventory = await publishInventory({ connectionId: connection.id }, ctx);
       if (inventory.failed) throw new ShopifyError(`${inventory.failed} inventory levels could not be published.`);
       await db.integrationConnection.update({ where: { id: connection.id }, data: { lastError: null } });

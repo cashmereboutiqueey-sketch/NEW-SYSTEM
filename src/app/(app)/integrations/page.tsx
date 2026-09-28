@@ -10,6 +10,7 @@ import {
   connectShopifyAction, pullOrdersAction, publishInventoryAction, resolveExceptionAction,
   replayWebhookAction, mapShopifyVariantsAction, configureShopifyWebhooksAction,
   setShopifyAutoSyncAction,
+  publishShopifyFulfillmentsAction,
 } from "./actions";
 
 /**
@@ -97,7 +98,7 @@ export default async function IntegrationsPage() {
       {exceptions.length > 0 && (
         <Card
           className="mb-4"
-          title={ar ? "طلبات لم تُستورد" : "Orders that were not imported"}
+          title={ar ? "مشاكل التكامل المحتاجة مراجعة" : "Integration issues needing review"}
           description={
             ar
               ? "النظام مابيخمّنش الموديل المقصود — تخمين غلط يخصم من مخزون قطعة تانية"
@@ -273,6 +274,19 @@ export default async function IntegrationsPage() {
               </p>
             </div>
 
+            <div className="mt-4 border-t border-ink-100 pt-4">
+              <EntityForm
+                locale={locale}
+                action={publishShopifyFulfillmentsAction}
+                hidden={{ connectionId: shopify.id }}
+                submitEn="Sync shipped orders to Shopify"
+                submitAr="حدّث الطلبات المشحونة على Shopify"
+                fields={[]}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                {ar ? "الطلبات اللي اتحطت في شحنة MG هتتعلّم مشحونة على Shopify. أي طلب ملغي أو شحنه مقسّم هيظهر للمراجعة." : "Orders handed to MG are marked fulfilled on Shopify. Cancelled or split fulfillments are flagged for review."}
+              </p>
+            </div>
             <div className="mt-4 border-t border-ink-100 pt-4">
               <EntityForm
                 locale={locale}
