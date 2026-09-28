@@ -88,6 +88,8 @@ export type ShopifyOrder = {
     quantity: number;
     price: string;
     total_discount?: string;
+    /** Shopify order and code discounts are allocated separately from this field. */
+    discount_allocations?: { amount: string }[];
     title?: string;
   }[];
 };
@@ -309,6 +311,17 @@ async function raiseException(input: {
   reason: string;
   payload: unknown;
 }) {
+  const existing = await db.integrationException.findFirst({
+    where: {
+      connectionId: input.connectionId,
+      provider: "SHOPIFY",
+      objectType: input.objectType,
+      externalId: input.externalId,
+      reason: input.reason,
+      status: "OPEN",
+    },
+  });
+  if (existing) return;
   await db.integrationException.create({
     data: {
       connectionId: input.connectionId,
@@ -388,6 +401,12 @@ export async function importOrders(
 
     try {
       const outcome = await inTransaction(async () => {
+      if (!Number.isSafeInteger(order.id) || order.id <= 0 || !Array.isArray(order.line_items)) {
+        throw new ShopifyError("Invalid Shopify order payload. The order was not imported.");
+      }
+      if (order.currency !== "EGP") {
+        throw new ShopifyError(`Shopify order currency ${order.currency || "unknown"} is not EGP. The order was not imported.`);
+      }
       const stateKey = { connectionId: connection.id, externalId };
       if (order.cancelled_at) {
         await db.shopifyOrderState.upsert({ where: { connectionId_externalId: stateKey },
@@ -423,6 +442,10 @@ export async function importOrders(
       const unknown: string[] = [];
 
       for (const item of order.line_items) {
+        if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0 ||
+            !/^\d+(\.\d+)?$/.test(item.price)) {
+          throw new ShopifyError(`Invalid quantity or price on Shopify line ${item.id}. The order was not imported.`);
+        }
         /**
          * The SKU first, then the variant id.
          *
@@ -465,7 +488,12 @@ export async function importOrders(
         // Shopify gives a discount amount, not a rate; converting keeps the
         // internal order in the one shape the engine understands.
         const gross = dec(item.price).times(item.quantity);
-        const discount = dec(item.total_discount ?? "0");
+        const discount = dec(item.total_discount ?? "0").plus(
+          (item.discount_allocations ?? []).reduce((sum, allocation) => sum.plus(dec(allocation.amount)), dec(0)),
+        );
+        if (discount.isNegative() || discount.greaterThan(gross)) {
+          throw new ShopifyError(`Invalid discount on Shopify line ${item.id}. The order was not imported.`);
+        }
         const discountPct = gross.isZero() ? dec(0) : discount.div(gross);
 
         // Shopify can list one garment on two lines. On the same terms they are
@@ -493,6 +521,7 @@ export async function importOrders(
       }
 
       if (unknown.length > 0) throw new ShopifyError(`Unrecognised SKU: ${unknown.join(", ")}. The order was not imported.`);
+      if (lines.length === 0) throw new ShopifyError("Shopify order has no saleable garment lines. The order was not imported.");
 
       const customerId = order.customer
         ? await resolveCustomer(connection.id, order.customer)
@@ -501,6 +530,15 @@ export async function importOrders(
       const shipping = (order.shipping_lines ?? []).reduce(
         (s, l) => s.plus(dec(l.price)), dec(0),
       );
+      const calculated = lines.reduce(
+        (sum, line) => sum.plus(dec(line.retailPrice).times(line.quantity)
+          .times(dec(1).minus(dec(line.discountPct)))), dec(0),
+      ).plus(shipping).toDecimalPlaces(2);
+      if (order.total_price != null && !calculated.equals(dec(order.total_price).toDecimalPlaces(2))) {
+        throw new ShopifyError(
+          `Shopify total ${order.total_price} does not match item and shipping total ${calculated.toFixed(2)}. Check discounts, tax, or edits before importing.`,
+        );
+      }
 
       const sale = await createSale(
         {
@@ -522,17 +560,7 @@ export async function importOrders(
               ? [
                   {
                     method: "CARD" as const,
-                    amount: Number(
-                      lines.reduce(
-                        (s, l) =>
-                          s.plus(
-                            dec(l.retailPrice)
-                              .times(dec(1).minus(dec(l.discountPct)))
-                              .times(l.quantity),
-                          ),
-                        dec(0),
-                      ).plus(shipping),
-                    ),
+                    amount: Number(calculated),
                     fee: 0,
                     collected: true,
                   },
@@ -555,15 +583,17 @@ export async function importOrders(
       });
       // A previously missing SKU may have been corrected before this retry.
       // Keep the attention list aligned with what actually imported.
-      try {
-        await db.integrationException.updateMany({
-          where: { connectionId: connection.id, provider: "SHOPIFY", objectType: "order", externalId, status: "OPEN" },
-          data: { status: "RESOLVED", resolvedAt: new Date(), resolvedNote: "Resolved by a successful Shopify retry." },
-        });
-      } catch (error) {
-        // The sale and stock move have committed; an attention-list error must
-        // never make Shopify retry an already imported order.
-        console.error("Could not close resolved Shopify order exception:", error);
+      if (outcome === "CREATED") {
+        try {
+          await db.integrationException.updateMany({
+            where: { connectionId: connection.id, provider: "SHOPIFY", objectType: "order", externalId, status: "OPEN" },
+            data: { status: "RESOLVED", resolvedAt: new Date(), resolvedNote: "Resolved by a successful Shopify retry." },
+          });
+        } catch (error) {
+          // The sale and stock move have committed; an attention-list error must
+          // never make Shopify retry an already imported order.
+          console.error("Could not close resolved Shopify order exception:", error);
+        }
       }
       if (outcome === "CREATED") created += 1;
       else if (outcome === "UPDATED") updated += 1;
@@ -592,7 +622,7 @@ export async function importOrders(
     where: { id: log.id },
     data: {
       created, duplicates, failed,
-      status: failed === 0 ? "SUCCESS" : created > 0 ? "PARTIAL" : "FAILED",
+      status: failed === 0 ? "SUCCESS" : created + updated > 0 ? "PARTIAL" : "FAILED",
       errors: errors.length > 0 ? JSON.parse(JSON.stringify(errors)) : undefined,
       finishedAt: new Date(),
     },
@@ -619,7 +649,45 @@ export async function importOrders(
   return { created, updated, duplicates, failed, exceptions };
 }
 
-const ORDER_TOPICS = new Set(["orders/create", "orders/updated", "orders/paid", "orders/cancelled"]);
+const ORDER_TOPIC_LIST = ["orders/create", "orders/updated", "orders/paid", "orders/cancelled", "orders/edited"] as const;
+const ORDER_TOPICS = new Set<string>(ORDER_TOPIC_LIST);
+
+/** Registers this app's order deliveries on the public HTTPS address. */
+export async function ensureOrderWebhooks(
+  input: { connectionId: string; siteAddress?: string },
+  ctx: AuditContext,
+): Promise<{ existing: number; created: number; address: string }> {
+  const connection = await db.integrationConnection.findUniqueOrThrow({ where: { id: input.connectionId } });
+  if (!connection.webhookSecret) throw new ShopifyError("Save the Shopify webhook signing secret first.");
+  const host = (input.siteAddress ?? process.env.SITE_ADDRESS ?? "").trim().toLowerCase();
+  if (!/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/.test(host)) {
+    throw new ShopifyError("SITE_ADDRESS must be the public HTTPS domain before Shopify webhooks can be registered.");
+  }
+  const address = `https://${host}/api/webhooks/shopify`;
+  const webhooks = await shopifyFetchAll<{ id: number; topic: string; address: string }>(
+    connection, "webhooks.json?limit=250", "webhooks",
+  );
+  let existing = 0;
+  let created = 0;
+  for (const topic of ORDER_TOPIC_LIST) {
+    if (webhooks.some((hook) => hook.topic === topic && hook.address === address)) {
+      existing += 1;
+      continue;
+    }
+    await shopifyFetch(connection, "webhooks.json", {
+      method: "POST", body: { webhook: { topic, address, format: "json" } },
+    });
+    created += 1;
+  }
+  await writeAudit(db, {
+    action: "SHOPIFY_WEBHOOKS_CONFIGURED",
+    entityName: "IntegrationConnection",
+    entityId: connection.id,
+    ctx,
+    after: { existing, created, address },
+  });
+  return { existing, created, address };
+}
 
 /**
  * Takes a signed delivery in: records it, then acts on it.
@@ -665,15 +733,28 @@ async function processWebhookEvent(eventId: string): Promise<"TAKEN" | "BUSY"> {
   const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { id: eventId } });
   try {
     if (ORDER_TOPICS.has(event.topic)) {
-      await importOrders(
+      let order = event.payload as unknown as ShopifyOrder;
+      if (event.topic === "orders/edited") {
+        const edited = event.payload as { order_edit?: { order_id?: number } };
+        const orderId = edited.order_edit?.order_id;
+        if (!Number.isSafeInteger(orderId) || !orderId || orderId <= 0) {
+          throw new ShopifyError("The Shopify order edit has no valid order ID.");
+        }
+        const connection = await db.integrationConnection.findUniqueOrThrow({ where: { id: event.connectionId } });
+        ({ order } = await shopifyFetch<{ order: ShopifyOrder }>(connection, `orders/${orderId}.json`));
+      }
+      const result = await importOrders(
         {
           connectionId: event.connectionId,
-          orders: [event.payload as unknown as ShopifyOrder],
+          orders: [order],
           throwUnexpected: true,
         },
         // No human triggered this, so the audit trail records the system.
         { userId: null, reason: `Shopify webhook: ${event.topic}` },
       );
+      if (result.failed > 0) {
+        throw new ShopifyError(result.exceptions.join("; ") || "Shopify order import failed.");
+      }
     }
     await db.shopifyWebhookEvent.update({
       where: { id: event.id },
@@ -778,6 +859,48 @@ async function applyOrderUpdate(
     const reason = "Cancelled on Shopify. Verify refund transactions and physical receipt before recording the return; cancellation alone moves neither money nor stock.";
     const raised = await db.integrationException.findFirst({ where: { connectionId, objectType: "order", externalId, reason } });
     if (raised) return "UNCHANGED";
+    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
+    return "UPDATED";
+  }
+
+  // Shopify can edit an order after creation. The original sale already moved
+  // stock and posted revenue, so a changed basket must be reviewed before a
+  // later paid webhook settles the old amount.
+  const saleLines = await db.salesOrderLine.findMany({
+    where: { salesOrderId }, select: { variantId: true, quantity: true },
+  });
+  const imported = new Map(saleLines.map((line) => [line.variantId, line.quantity]));
+  const incoming = new Map<string, number>();
+  let unmatchedLine = false;
+  for (const item of order.line_items) {
+    let variant = item.sku
+      ? await db.variant.findUnique({ where: { sku: item.sku.trim().toUpperCase() }, select: { id: true } })
+      : null;
+    if (!variant && item.variant_id != null) {
+      const mapping = await db.externalMapping.findUnique({
+        where: { connectionId_objectType_externalId: {
+          connectionId, objectType: "variant", externalId: String(item.variant_id),
+        } },
+      });
+      if (mapping) variant = { id: mapping.internalId };
+    }
+    if (!variant) { unmatchedLine = true; continue; }
+    incoming.set(variant.id, (incoming.get(variant.id) ?? 0) + item.quantity);
+  }
+  const basketChanged = unmatchedLine || imported.size !== incoming.size ||
+    [...imported].some(([id, qty]) => incoming.get(id) !== qty);
+  const sale = await db.salesOrder.findUniqueOrThrow({
+    where: { id: salesOrderId }, select: { netAmount: true, shippingAmount: true },
+  });
+  const totalChanged = order.total_price != null &&
+    !dec(order.total_price).toDecimalPlaces(2)
+      .equals(dec(sale.netAmount).plus(dec(sale.shippingAmount)).toDecimalPlaces(2));
+  if (basketChanged || totalChanged) {
+    const reason = "Shopify order was edited after import. Review the changed garments or total before settling payment; stock and accounting still reflect the original order.";
+    const existing = await db.integrationException.findFirst({
+      where: { connectionId, objectType: "order", externalId, reason, status: "OPEN" },
+    });
+    if (existing) return "UNCHANGED";
     await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
     return "UPDATED";
   }
@@ -1329,6 +1452,13 @@ export async function publishInventory(
     where: { connectionId: connection.id, objectType: "variant" },
     select: { externalId: true, internalId: true },
   });
+  const claimed = new Set<string>();
+  for (const link of links) {
+    if (claimed.has(link.internalId)) {
+      throw new ShopifyError("Two Shopify variants are linked to one Cashmere SKU. Resolve the duplicate mapping before publishing stock.");
+    }
+    claimed.add(link.internalId);
+  }
   const localByShopifyVariant = new Map(links.map((l) => [l.externalId, l.internalId]));
 
   // The catalogue, for inventory_item_id — Shopify's own handle for a thing
@@ -1416,14 +1546,43 @@ export async function publishInventory(
     if (input.dryRun) continue;
 
     try {
-      await shopifyFetch(connection, "inventory_levels/set.json", {
+      if (now === null) {
+        throw new ShopifyError(`No Shopify inventory level exists for ${target.sku} at ${active[0].name}. Enable inventory tracking at that location first.`);
+      }
+      // The 2026-04 GraphQL API requires an idempotency key and supports
+      // changeFromQuantity. If a checkout changes Shopify's available stock
+      // after our read, the mutation fails instead of overwriting the sale.
+      const result = await shopifyFetch<{
+        data?: { inventorySetQuantities?: { userErrors: { message: string }[] } };
+        errors?: { message: string }[];
+      }>(connection, "graphql.json", {
         method: "POST",
         body: {
-          location_id: shopLocationId,
-          inventory_item_id: target.inventoryItemId,
-          available: target.want,
+          query: `mutation InventorySet($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+            inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+              userErrors { message }
+            }
+          }`,
+          variables: {
+            idempotencyKey: crypto.randomUUID(),
+            input: {
+              name: "available",
+              reason: "correction",
+              referenceDocumentUri: `cashmere-os://inventory/${log.id}`,
+              quantities: [{
+                inventoryItemId: `gid://shopify/InventoryItem/${target.inventoryItemId}`,
+                locationId: `gid://shopify/Location/${shopLocationId}`,
+                quantity: target.want,
+                changeFromQuantity: now,
+              }],
+            },
+          },
         },
       });
+      const problems = [...(result.errors ?? []), ...(result.data?.inventorySetQuantities?.userErrors ?? [])];
+      if (!result.data?.inventorySetQuantities || problems.length > 0) {
+        throw new ShopifyError(problems.map((error) => error.message).join("; ") || "Shopify inventory update failed.");
+      }
       pushed += 1;
     } catch (error) {
       // One garment failing must not abandon the rest: the others are still
@@ -1492,7 +1651,7 @@ export async function publishInventory(
 export async function syncVariantMappings(
   input: { connectionId: string },
   ctx: AuditContext,
-): Promise<{ mapped: number; alreadyMapped: number; noMatch: number; noSku: number }> {
+): Promise<{ mapped: number; alreadyMapped: number; noMatch: number; noSku: number; conflicts: number }> {
   const connection = await db.integrationConnection.findUniqueOrThrow({
     where: { id: input.connectionId },
   });
@@ -1517,6 +1676,12 @@ export async function syncVariantMappings(
   let alreadyMapped = 0;
   let noMatch = 0;
   let noSku = 0;
+  let conflicts = 0;
+  const skuCounts = new Map<string, number>();
+  for (const variant of variants) {
+    const sku = (variant.sku ?? "").trim().toUpperCase();
+    if (sku) skuCounts.set(sku, (skuCounts.get(sku) ?? 0) + 1);
+  }
 
   // The mappings and the audit of them commit together, after the fetching:
   // a half-written mapping table points some garments at the wrong variant.
@@ -1525,6 +1690,10 @@ export async function syncVariantMappings(
       const sku = (variant.sku ?? "").trim().toUpperCase();
       if (!sku) {
         noSku += 1;
+        continue;
+      }
+      if ((skuCounts.get(sku) ?? 0) > 1) {
+        conflicts += 1;
         continue;
       }
 
@@ -1545,7 +1714,8 @@ export async function syncVariantMappings(
       });
 
       if (existing) {
-        alreadyMapped += 1;
+        if (existing.internalId === local.id) alreadyMapped += 1;
+        else conflicts += 1;
         continue;
       }
 
@@ -1566,9 +1736,47 @@ export async function syncVariantMappings(
       entityName: "IntegrationConnection",
       entityId: connection.id,
       ctx,
-      after: { mapped, alreadyMapped, noMatch, noSku },
+      after: { mapped, alreadyMapped, noMatch, noSku, conflicts },
     });
   });
 
-  return { mapped, alreadyMapped, noMatch, noSku };
+  return { mapped, alreadyMapped, noMatch, noSku, conflicts };
+}
+
+/** One unattended pass after the owner enables sync for a clean shop. */
+export async function reconcileEnabledShops(): Promise<void> {
+  const connections = await db.integrationConnection.findMany({
+    where: { provider: "SHOPIFY", isActive: true, autoSyncEnabled: true },
+    select: { id: true },
+  });
+  for (const connection of connections) {
+    try {
+      const ctx: AuditContext = { userId: null, reason: "Scheduled Shopify reconciliation" };
+      const mapped = await syncVariantMappings({ connectionId: connection.id }, ctx);
+      const imported = await pullOrders({ connectionId: connection.id, sinceDays: 59 }, ctx);
+      const [openOrders, failedDeliveries] = await Promise.all([
+        db.integrationException.count({ where: {
+          connectionId: connection.id, provider: "SHOPIFY", objectType: "order", status: "OPEN",
+        } }),
+        db.shopifyWebhookEvent.count({ where: {
+          connectionId: connection.id, status: { not: "PROCESSED" },
+        } }),
+      ]);
+      if (mapped.noMatch || mapped.noSku || mapped.conflicts || imported.failed || openOrders || failedDeliveries) {
+        throw new ShopifyError(
+          `Inventory publish paused: ${mapped.noMatch} unmatched, ${mapped.noSku} missing SKUs, ${mapped.conflicts} mapping conflicts, ` +
+          `${imported.failed} failed imports, ${openOrders} open order issues, ${failedDeliveries} unprocessed deliveries.`,
+        );
+      }
+      const inventory = await publishInventory({ connectionId: connection.id }, ctx);
+      if (inventory.failed) throw new ShopifyError(`${inventory.failed} inventory levels could not be published.`);
+      await db.integrationConnection.update({ where: { id: connection.id }, data: { lastError: null } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Shopify reconciliation failed.";
+      await db.integrationConnection.update({
+        where: { id: connection.id }, data: { lastError: message.slice(0, 1000) },
+      });
+      console.error(`Shopify reconciliation failed for connection ${connection.id}:`, error);
+    }
+  }
 }

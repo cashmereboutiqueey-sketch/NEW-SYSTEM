@@ -2021,6 +2021,8 @@ model IntegrationConnection {
   servedApiVersion String?
 
   isActive     Boolean   @default(true)
+  /// Enabled only after the clean stock and Shopify catalogue have been checked.
+  autoSyncEnabled Boolean @default(false)
   lastSyncedAt DateTime?
   lastError    String?
 

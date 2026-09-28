@@ -103,6 +103,7 @@ services:
       # there, so a copy of the database or a backup does not give them away.
       INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:?set INTEGRATION_SECRET_KEY in .env}
       DEFAULT_LOCALE: ${DEFAULT_LOCALE:-ar}
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
       NODE_ENV: production
       UPLOAD_DIR: /app/data/uploads
       TZ: Africa/Cairo

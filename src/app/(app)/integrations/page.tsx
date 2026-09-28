@@ -8,7 +8,8 @@ import { formatNumber } from "@/lib/money";
 import { inventoryToPublish, failedWebhookEvents } from "@/lib/shopify";
 import {
   connectShopifyAction, pullOrdersAction, publishInventoryAction, resolveExceptionAction,
-  replayWebhookAction, mapShopifyVariantsAction,
+  replayWebhookAction, mapShopifyVariantsAction, configureShopifyWebhooksAction,
+  setShopifyAutoSyncAction,
 } from "./actions";
 
 /**
@@ -236,6 +237,14 @@ export default async function IntegrationsPage() {
             </p>
             <EntityForm
               locale={locale}
+              action={configureShopifyWebhooksAction}
+              hidden={{ connectionId: shopify.id }}
+              submitEn="Register order webhooks"
+              submitAr="سجّل إشعارات طلبات Shopify"
+              fields={[]}
+            />
+            <EntityForm
+              locale={locale}
               action={pullOrdersAction}
               hidden={{ connectionId: shopify.id }}
               columns={2}
@@ -264,6 +273,21 @@ export default async function IntegrationsPage() {
               </p>
             </div>
 
+            <div className="mt-4 border-t border-ink-100 pt-4">
+              <EntityForm
+                locale={locale}
+                action={setShopifyAutoSyncAction}
+                hidden={{ connectionId: shopify.id, enabled: String(!shopify.autoSyncEnabled) }}
+                submitEn={shopify.autoSyncEnabled ? "Pause automatic sync" : "Enable automatic order and stock sync"}
+                submitAr={shopify.autoSyncEnabled ? "وقّف المزامنة التلقائية" : "شغّل مزامنة الطلبات والمخزون تلقائيًا"}
+                fields={[]}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                {shopify.autoSyncEnabled
+                  ? ar ? "المزامنة شغالة كل ١٠ دقائق، وبتتوقف عن نشر المخزون لو فيه طلبات أو أكواد محتاجة مراجعة." : "Runs every 10 minutes; stock publishing pauses if orders or SKUs need review."
+                  : ar ? "شغّلها بعد ما تراجع أكواد Shopify ورصيد المخزن الجديد. قبل التشغيل هنتأكد من إشعارات الطلبات والربط." : "Enable after checking the clean Shopify catalog and warehouse stock. Order webhooks and mappings are checked first."}
+              </p>
+            </div>
             <div className="mt-4 border-t border-ink-100 pt-4">
               <p className="mb-2 text-xs text-ink-500">
                 {ar

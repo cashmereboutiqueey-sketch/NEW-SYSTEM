@@ -9,6 +9,7 @@ import {
   verifyShopConnection,
   replayWebhookEvent,
   syncVariantMappings,
+  ensureOrderWebhooks,
   ShopifyError,
 } from "@/lib/shopify";
 import { writeAudit } from "@/lib/audit";
@@ -160,7 +161,53 @@ export async function mapShopifyVariantsAction(
       { userId: session.userId },
     );
     revalidatePath("/integrations");
-    return { success: `${result.mapped} variants linked by exact SKU; ${result.noMatch} unmatched, ${result.noSku} without a SKU.` };
+    return { success: `${result.mapped} variants linked by exact SKU; ${result.noMatch} unmatched, ${result.noSku} without a SKU, ${result.conflicts} conflicting.` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function configureShopifyWebhooksAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("settings:manage");
+    const result = await ensureOrderWebhooks(
+      { connectionId: String(formData.get("connectionId") ?? "") },
+      { userId: session.userId },
+    );
+    revalidatePath("/integrations");
+    return { success: `${result.created} Shopify order webhooks registered, ${result.existing} already registered. Destination: ${result.address}` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function setShopifyAutoSyncAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("settings:manage");
+    const connectionId = String(formData.get("connectionId") ?? "");
+    const enabled = String(formData.get("enabled") ?? "") === "true";
+    if (enabled) {
+      await ensureOrderWebhooks({ connectionId }, { userId: session.userId });
+      const mapping = await syncVariantMappings({ connectionId }, { userId: session.userId });
+      if (mapping.noMatch || mapping.noSku || mapping.conflicts) {
+        return { error: `${mapping.noMatch} Shopify variants have no matching Cashmere SKU, ${mapping.noSku} have no SKU, and ${mapping.conflicts} conflict. Fix these before enabling automatic stock publishing.` };
+      }
+      const inventory = await publishInventory({ connectionId, dryRun: true }, { userId: session.userId });
+      if (inventory.checked === 0) {
+        return { error: "No linked Shopify inventory was found. Check the catalog and stock location before enabling automatic sync." };
+      }
+    }
+    await db.integrationConnection.update({ where: { id: connectionId }, data: { autoSyncEnabled: enabled } });
+    revalidatePath("/integrations");
+    return { success: enabled
+      ? "Automatic Shopify order recovery and stock publishing are enabled. The first pass runs within 10 minutes."
+      : "Automatic Shopify stock publishing is paused." };
   } catch (error) {
     return { error: toMessage(error) };
   }

@@ -168,6 +168,36 @@ describe("importing website orders", () => {
     expect(Number(sale.discountAmount)).toBe(300);
   });
 
+  it("books an allocated Shopify code discount and verifies the paid total", async () => {
+    const result = await importOrders({ connectionId, orders: [order({
+      total_price: "1825.00",
+      shipping_lines: [{ price: "75.00" }],
+      line_items: [{ id: 1, sku, quantity: 2, price: "1000.00", total_discount: "0.00",
+        discount_allocations: [{ amount: "250.00" }] }],
+    })] }, { userId });
+    expect(result.created).toBe(1);
+    const sale = await db.salesOrder.findFirstOrThrow({ include: { payments: true } });
+    expect(Number(sale.discountAmount)).toBe(250);
+    expect(Number(sale.netAmount)).toBe(1750);
+    expect(Number(sale.payments[0].amount)).toBe(1825);
+  });
+
+  it("quarantines a Shopify total that would book the wrong payment", async () => {
+    const result = await importOrders({ connectionId, orders: [order({
+      total_price: "3100.00",
+    })] }, { userId });
+    expect(result.failed).toBe(1);
+    expect(await db.salesOrder.count()).toBe(0);
+    expect((await db.integrationException.findFirstOrThrow()).reason).toMatch(/does not match/i);
+  });
+
+  it("quarantines a foreign-currency order before deducting stock", async () => {
+    const result = await importOrders({ connectionId, orders: [order({ currency: "USD" })] }, { userId });
+    expect(result.failed).toBe(1);
+    expect(await db.salesOrder.count()).toBe(0);
+    expect(await onHand()).toBe(100);
+  });
+
   it("charges shipping as revenue", async () => {
     await importOrders(
       { connectionId, orders: [order({ shipping_lines: [{ price: "75.00" }] })] },
@@ -450,6 +480,17 @@ describe("what happens to an order after it is imported", () => {
 });
 
 describe("the webhook inbox", () => {
+  it("leaves a stock failure retryable and records one attention item", async () => {
+    const missing = order({ line_items: [{ id: 1, sku: "MISSING-XL", quantity: 1, price: "100.00" }] });
+    await expect(receiveWebhook({ connectionId, webhookId: "wh-missing", topic: "orders/create", payload: missing }))
+      .rejects.toThrow(/Unrecognised SKU/);
+    await retryFailedWebhooks();
+    const event = await db.shopifyWebhookEvent.findUniqueOrThrow({ where: { webhookId: "wh-missing" } });
+    expect(event.status).toBe("FAILED");
+    expect(event.attempts).toBe(2);
+    expect(await db.integrationException.count({ where: { objectType: "order", externalId: String(missing.id) } })).toBe(1);
+    expect(await db.salesOrder.count()).toBe(0);
+  });
   it("records a delivery and answers a repeat of it without doing anything twice", async () => {
     const o = order();
     const first = await receiveWebhook({ connectionId, webhookId: "wh-1", topic: "orders/create", payload: o });
