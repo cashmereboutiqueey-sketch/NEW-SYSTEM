@@ -142,8 +142,8 @@ export default async function MyOrdersPage() {
         title={ar ? "أوردراتي" : "My orders"}
         subtitle={
           ar
-            ? "اللي انتي سجّلتيه ولسه مخلصش — إيه اللي مستني شحن، وإيه اللي مستني المصنع، وإيه اللي جاهز تسلّميه."
-            : "What you took and has not finished — waiting on the courier, waiting on the factory, or ready to hand over."
+            ? "كل طلباتك: اللي لسه عليها شغل واللي اتسلّمت."
+            : "All the orders you recorded, whether still in progress or already handed over."
         }
       />
 
