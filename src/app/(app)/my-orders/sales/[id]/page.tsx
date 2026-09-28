@@ -81,7 +81,7 @@ export default async function MySalesOrderPage({
       </div>
       <PageHeader
         title={ar ? `تفاصيل الطلب ${order.orderNumber}` : `Order ${order.orderNumber}`}
-        subtitle={`${date(order.orderDate)} · ${sourceLabels[order.source] ?? order.source} · ${name(order.channel)}`}
+        subtitle={`${date(order.orderDate)} · ${sourceLabels[order.source] ?? order.source} · ${name(inPerson ? order.location ?? order.channel : order.channel)}`}
         actions={<Badge tone={statusTone}>{statusText}</Badge>}
       />
 
