@@ -85,6 +85,8 @@ export async function createModeratorSaleAction(
             recipientName: (formData.get("recipientName") as string) || null,
             phone: (formData.get("shippingPhone") as string) || null,
             secondPhone: (formData.get("secondPhone") as string) || null,
+            governorate: (formData.get("governorate") as string) || null,
+            region: (formData.get("region") as string) || null,
             courierZoneId: (formData.get("courierZoneId") as string) || null,
             addressLine: (formData.get("addressLine") as string) || null,
           },

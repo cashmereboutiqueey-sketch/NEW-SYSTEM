@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
+import { formCommand } from "@/lib/command";
 import {
   recordSettlement,
+  correctDirectBankPayment,
   importStatement,
   autoMatch,
   matchLine,
@@ -18,6 +20,30 @@ function toMessage(error: unknown): string {
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   console.error("Unhandled reconciliation error:", error);
   return "Something went wrong. Nothing was saved.";
+}
+
+export async function correctDirectBankPaymentAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const session = await authorize("payment:create");
+    if (formData.get("receivedConfirmed") !== "yes") {
+      throw new ReconciliationError("Confirm that the full transfer arrived in the bank before correcting the payment.");
+    }
+    const result = await formCommand("reconciliation.directBankPayment", formData, { userId: session.userId }, () =>
+      correctDirectBankPayment({
+        orderNumber: String(formData.get("orderNumber") ?? ""),
+        method: String(formData.get("method") ?? "INSTAPAY") as "INSTAPAY" | "BANK_TRANSFER",
+        receivedOn: new Date(String(formData.get("receivedOn") ?? "")),
+        reference: String(formData.get("reference") ?? ""),
+      }, { userId: session.userId }),
+    );
+    for (const path of ["/reconciliation", "/shipping", "/sales", "/my-orders", "/cash-flow", "/"]) revalidatePath(path);
+    return {
+      success: `${result.orderNumber}: ${Number(result.amount).toFixed(2)} اتسجلت واصلة البنك بدل ${result.wasCod ? "مستحق عند شركة الشحن" : "كاش في الدرج"}.` +
+        (result.shipmentUpdated ? " حدّث مبلغ التحصيل عند MG إلى صفر قبل تسليم الطرد، أو بلّغهم بالتعديل لو خرج بالفعل." : ""),
+    };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
 }
 
 export async function recordSettlementAction(

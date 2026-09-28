@@ -6,6 +6,7 @@ import { nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 import { command } from "./command";
 import type { ShipmentStatus } from "@/generated/prisma/client";
+import { EGYPT_GOVERNORATES, mgBranchForGovernorate } from "./egypt-governorates";
 
 /**
  * Handing parcels to the courier, and hearing back from it.
@@ -52,6 +53,43 @@ export async function courierZones(courier = MG_EXPRESS) {
     byGovernorate.set(z.governorate, list);
   }
   return [...byGovernorate.entries()].map(([governorate, regions]) => ({ governorate, regions }));
+}
+
+/** Add one verified MG area and its quoted price without a private price-list file. */
+export async function createCourierZone(
+  input: { governorate: string; region: string; price: string },
+  ctx: AuditContext,
+): Promise<{ id: string; governorate: string; region: string; price: string; created: boolean }> {
+  return command("shipping.createCourierZone", input, ctx, async () => {
+    const governorate = input.governorate.trim();
+    const region = input.region.trim();
+    if (!(EGYPT_GOVERNORATES as readonly string[]).includes(governorate)
+      && !(await db.courierZone.findFirst({ where: { courier: MG_EXPRESS, governorate } }))) {
+      throw new ShippingError("Choose an Egyptian governorate.");
+    }
+    if (!region || region.length > 120) throw new ShippingError("Enter the courier's area name (up to 120 characters).");
+    if (!/^\d+(?:\.\d{1,2})?$/.test(input.price.trim())) throw new ShippingError("Enter the courier's price in pounds and piastres.");
+    const price = roundMoney(dec(input.price)).toString();
+    if (dec(price).greaterThan(1_000_000)) throw new ShippingError("Check the courier price; it is too large.");
+    const existing = await db.courierZone.findUnique({
+      where: { courier_governorate_region: { courier: MG_EXPRESS, governorate, region } },
+    });
+    if (existing?.isActive) {
+      return { id: existing.id, governorate, region, price: dec(existing.price).toString(), created: false };
+    }
+    const zone = existing
+      ? await db.courierZone.update({ where: { id: existing.id }, data: { isActive: true, price, branch: mgBranchForGovernorate(governorate) } })
+      : await db.courierZone.create({ data: { courier: MG_EXPRESS, governorate, region, price, branch: mgBranchForGovernorate(governorate) } });
+    await writeAudit(db, {
+      action: "COURIER_ZONE_CREATED",
+      entityName: "CourierZone",
+      entityId: zone.id,
+      before: existing ? { isActive: false, price: dec(existing.price).toString() } : null,
+      after: { courier: MG_EXPRESS, governorate, region, price, branch: zone.branch },
+      ctx,
+    });
+    return { id: zone.id, governorate, region, price, created: true };
+  });
 }
 
 /**
@@ -660,7 +698,10 @@ export async function applyCourierReport(
       const mapped = mgStatus(row.status);
       if (!mapped) unknownStatuses.add(row.status);
       // A word this does not know is not a delivery; somebody reads it.
-      const status: ShipmentStatus = mapped ?? "NEEDS_REVIEW";
+      const courierClaimsCollection = [row.collected, row.dueToUs, row.remittedToUs]
+        .some((value) => dec(amount(value) ?? 0).greaterThan(0));
+      const prepaidMismatch = dec(shipment.codAmount).isZero() && courierClaimsCollection;
+      const status: ShipmentStatus = prepaidMismatch ? "NEEDS_REVIEW" : mapped ?? "NEEDS_REVIEW";
 
       const next = {
         status,
@@ -670,7 +711,9 @@ export async function applyCourierReport(
         dueToUs: amount(row.dueToUs),
         remittedToUs: amount(row.remittedToUs),
         attempts: row.attempts != null && row.attempts !== "" ? Number(String(row.attempts).replace(/\D/g, "")) || 0 : null,
-        followUp: row.followUp || null,
+        followUp: prepaidMismatch
+          ? ["MG reported a collection on a prepaid parcel; verify the COD change with MG.", row.followUp].filter(Boolean).join(" ")
+          : row.followUp || null,
       };
 
       const same =
@@ -711,7 +754,7 @@ export async function applyCourierReport(
       }
 
       if (status === "NEEDS_REVIEW" || status === "RETURNED") {
-        needsAttention.push(`${row.reference}: ${row.status}`);
+        needsAttention.push(`${row.reference}: ${prepaidMismatch ? "MG reported collection on a prepaid parcel" : row.status}`);
       }
     }
 

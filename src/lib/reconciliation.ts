@@ -2,9 +2,10 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import { db } from "./db";
 import { postEntry, nextDocumentNumber } from "./ledger";
-import { dec, type Decimal } from "./money";
+import { dec, roundMoney, type Decimal } from "./money";
 import { writeAudit, type AuditContext } from "./audit";
 import { command } from "./command";
+import { cairoDateKey } from "./cairo-date";
 
 /**
  * Proving the books against what the bank and the couriers actually did.
@@ -36,6 +37,7 @@ export class ReconciliationError extends Error {
 
 const ACC = {
   BANK: "1120",
+  POS_DRAWER: "1115",
   GATEWAY_CLEARING: "1130",
   COD_CLEARING: "1135",
   PAYMENT_FEES: "6230",
@@ -121,6 +123,120 @@ export async function clearingBalance(
     WHERE a."code" = ${code} AND e."status" = 'POSTED' AND l."entityId" = ${entityId}
   `;
   return dec(rows[0]?.balance ?? 0);
+}
+
+/**
+ * A customer paid the shop by bank after a moderator order was marked COD or cash.
+ * Reclassify the original payment; a second payment would count the sale twice.
+ */
+export async function correctDirectBankPayment(
+  input: { orderNumber: string; method: "INSTAPAY" | "BANK_TRANSFER"; receivedOn: Date; reference: string },
+  ctx: AuditContext,
+): Promise<{ orderNumber: string; amount: string; shipmentUpdated: boolean; wasCod: boolean }> {
+  return command("reconciliation.correctDirectBankPayment", input, ctx, async () => db.$transaction(async (tx) => {
+    const reference = input.reference.trim();
+    if (!reference) throw new ReconciliationError("Enter the bank or InstaPay transaction reference.");
+    if (reference.length > 120) throw new ReconciliationError("The transfer reference is too long.");
+    if (!Number.isFinite(input.receivedOn.getTime())) throw new ReconciliationError("Enter a valid payment date.");
+    if (cairoDateKey(input.receivedOn) > cairoDateKey()) throw new ReconciliationError("The payment date cannot be in the future.");
+    if (!["INSTAPAY", "BANK_TRANSFER"].includes(input.method)) throw new ReconciliationError("Choose a bank payment method.");
+
+    const order = await tx.salesOrder.findUnique({
+      where: { orderNumber: input.orderNumber.trim() },
+      include: { payments: { include: { settlementLine: true } }, shipments: true },
+    });
+    if (!order || order.payments.length !== 1) {
+      throw new ReconciliationError("Choose an order with one recorded cash or COD payment.");
+    }
+    const payment = order.payments[0];
+    const sameReference = await tx.salesPayment.findFirst({
+      where: { reference: { equals: reference, mode: "insensitive" }, method: { in: ["INSTAPAY", "BANK_TRANSFER"] }, status: "COLLECTED" },
+      select: { id: true },
+    });
+    if (sameReference && sameReference.id !== payment.id) {
+      throw new ReconciliationError("This transfer reference is already recorded on another order.");
+    }
+    const wasCod = payment.method === "COD" && payment.status === "PENDING";
+    const wasCash = payment.method === "CASH" && payment.status === "COLLECTED" && order.source === "MODERATOR" && !order.posSessionId;
+    if ((!wasCod && !wasCash) || payment.settlementLine) {
+      throw new ReconciliationError("This order's payment has already been changed or settled. Refresh before recording it again.");
+    }
+    if (!order.entityId || ["CANCELLED", "RETURNED"].includes(order.status)) {
+      throw new ReconciliationError("This order cannot take a direct payment correction.");
+    }
+    if (cairoDateKey(input.receivedOn) < cairoDateKey(order.orderDate)) {
+      throw new ReconciliationError("The payment date cannot be before the order date.");
+    }
+    if (wasCod && order.shipments.some((shipment) => dec(shipment.collectedAmount ?? 0).greaterThan(0)
+      || dec(shipment.dueToUs ?? 0).greaterThan(0)
+      || dec(shipment.remittedToUs ?? 0).greaterThan(0))) {
+      throw new ReconciliationError("The courier has already reported money on this parcel. Reconcile that report first.");
+    }
+
+    const amount = roundMoney(dec(payment.amount));
+    const fee = roundMoney(dec(payment.fee));
+    const clearing = amount.minus(fee);
+    if (clearing.lessThan(0)) throw new ReconciliationError("The recorded collection fee exceeds the payment.");
+    const before = { method: payment.method, status: payment.status, fee: fee.toString(), reference: payment.reference };
+    const cashEvents = wasCash
+      ? await tx.tillCashEvent.findMany({ where: { reference: order.orderNumber, kind: "SALE" } })
+      : [];
+    if (cashEvents.length > 1) throw new ReconciliationError("This order has multiple till cash events and needs individual review.");
+
+    await postEntry(tx, {
+      entityId: order.entityId,
+      postingDate: input.receivedOn,
+      sourceType: "PAYMENT",
+      sourceId: payment.id,
+      memo: `Customer paid ${order.orderNumber} directly by ${input.method}`,
+      ctx,
+      lines: [
+        { accountId: await accountId(tx, ACC.BANK), debit: amount, entityId: order.entityId, description: `Direct payment ${order.orderNumber} · ${reference}` },
+        ...(clearing.greaterThan(0) ? [{ accountId: await accountId(tx, wasCod ? ACC.COD_CLEARING : ACC.POS_DRAWER), credit: clearing, entityId: order.entityId, description: `Correct original ${payment.method} ${order.orderNumber}` }] : []),
+        ...(fee.greaterThan(0) ? [{ accountId: await accountId(tx, ACC.PAYMENT_FEES), credit: fee, entityId: order.entityId, description: `Reverse original collection fee ${order.orderNumber}` }] : []),
+      ],
+    });
+
+    if (cashEvents[0]) {
+      await tx.tillCashEvent.create({
+        data: {
+          posSessionId: cashEvents[0].posSessionId,
+          kind: "SALE",
+          amount: amount.negated().toString(),
+          reference: `${order.orderNumber} bank correction`,
+          occurredAt: input.receivedOn,
+        },
+      });
+    }
+
+    await tx.salesPayment.update({
+      where: { id: payment.id },
+      data: { method: input.method, status: "COLLECTED", fee: "0", collectedAt: input.receivedOn, reference },
+    });
+    if (wasCod) {
+      await tx.shipment.updateMany({
+        where: { salesOrderId: order.id, status: { notIn: ["RETURNED", "FAILED"] } },
+        data: { codAmount: "0" },
+      });
+    }
+    const stillPending = await tx.salesPayment.count({ where: { salesOrderId: order.id, status: "PENDING" } });
+    await tx.salesOrder.update({
+      where: { id: order.id },
+      data: {
+        paymentFee: dec(order.paymentFee).minus(fee).toString(),
+        ...(stillPending === 0 ? { collectedDate: input.receivedOn } : {}),
+      },
+    });
+    await writeAudit(tx, {
+      action: "ORDER_PAID_DIRECTLY",
+      entityName: "SalesPayment",
+      entityId: payment.id,
+      before,
+      after: { method: input.method, status: "COLLECTED", amount: amount.toString(), reference, receivedOn: input.receivedOn.toISOString(), shipmentCod: "0", tillCashReversed: cashEvents.length === 1 },
+      ctx,
+    });
+    return { orderNumber: order.orderNumber, amount: amount.toString(), shipmentUpdated: wasCod && order.shipments.length > 0, wasCod };
+  }, { isolationLevel: "Serializable" }));
 }
 
 /* ──────────────────────────────────────────────────────────── settlements */

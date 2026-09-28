@@ -122,14 +122,16 @@ export const createSaleSchema = z.object({
   notes: z.string().nullable().optional(),
   /**
    * Where the parcel goes, for anything a courier delivers. The area is the
-   * courier's own (a zone), because a region typed freehand is a row their
-   * import rejects; the governorate is taken from the zone rather than typed.
+   * courier's own (a zone). A typed governorate and area can be saved while
+   * the courier's price list is missing, then mapped before making its sheet.
    */
   destination: z
     .object({
       recipientName: z.string().trim().max(120).nullable().optional(),
       phone: z.string().trim().max(40).nullable().optional(),
       secondPhone: z.string().trim().max(40).nullable().optional(),
+      governorate: z.string().trim().max(80).nullable().optional(),
+      region: z.string().trim().max(120).nullable().optional(),
       courierZoneId: z.string().min(1).nullable().optional(),
       addressLine: z.string().trim().max(500).nullable().optional(),
     })
@@ -419,12 +421,12 @@ export async function createSale(
           shippingAmount: shipping.toString(),
           paymentFee: totalFees.toString(),
           cogsAmount: totalCogs.toString(),
-          city: zone?.region ?? data.city ?? null,
+          city: zone?.region ?? data.destination?.region ?? data.city ?? null,
           notes: data.notes ?? null,
           recipientName: data.destination?.recipientName || null,
           shippingPhone: data.destination?.phone || null,
           secondPhone: data.destination?.secondPhone || null,
-          governorate: zone?.governorate ?? null,
+          governorate: zone?.governorate ?? data.destination?.governorate ?? null,
           addressLine: data.destination?.addressLine || null,
           courierZoneId: zone?.id ?? null,
           lines: {

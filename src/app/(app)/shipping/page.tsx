@@ -9,6 +9,7 @@ import {
   readyToShip, shipmentBatches, shipmentsNeedingAttention, courierOwesUs, courierZones, MG_EXPRESS,
 } from "@/lib/shipping";
 import { ReadyToShipForm, ReportUploadForm, DestinationForm } from "./shipping-forms";
+import { CourierZoneCreate } from "@/components/courier-zone-create";
 
 /**
  * الشحن — handing the day's parcels to MG Express and hearing back.
@@ -56,9 +57,19 @@ export default async function ShippingPage() {
         <div className="mb-4 rounded-lg border border-warn/30 bg-warn/5 p-3 text-sm">
           <strong>{ar ? "مناطق MG لسه ماتحمّلتش." : "MG's delivery areas are not loaded yet."}</strong>{" "}
           {ar
-            ? "من غيرها مفيش أوردر يقدر يتشحن. شغّل scripts/import-courier-zones.ts مرة واحدة على السيرفر."
-            : "No order can ship without them. Run scripts/import-courier-zones.ts once on the server."}
+            ? "تقدر تضيف كل منطقة وسعر MG الخاص بيها من هنا أو أثناء تسجيل الأوردر."
+            : "Add each area and its MG price here or while entering an order."}
         </div>
+      )}
+
+      {mayShip && (
+        <Card
+          className="mb-4"
+          title={ar ? "مناطق الشحن" : "Delivery areas"}
+          description={ar ? `${zones} منطقة MG متاحة. أضف المحافظة والمنطقة بسعر MG المؤكد.` : `${zones} MG areas available. Add an area with MG's confirmed rate.`}
+        >
+          <CourierZoneCreate ar={ar} />
+        </Card>
       )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

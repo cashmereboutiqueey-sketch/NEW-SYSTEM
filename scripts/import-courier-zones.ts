@@ -21,9 +21,7 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { db } from "../src/lib/db";
 import { importCourierZones } from "../src/lib/shipping";
-
-/** Served by MG Cairo (branch 5). Everything else goes through MG Express (branch 1). */
-const CAIRO_BRANCH = new Set(["القاهرة", "الجيزة", "القليوبية"]);
+import { mgBranchForGovernorate } from "../src/lib/egypt-governorates";
 
 const file = process.argv[2] ?? "data/private/mg-express-zones.json";
 
@@ -45,7 +43,7 @@ const result = await importCourierZones(
   {
     courier: parsed.courier ?? "MG_EXPRESS",
     zones,
-    branchFor: (governorate) => (CAIRO_BRANCH.has(governorate.trim()) ? "5" : "1"),
+    branchFor: mgBranchForGovernorate,
   },
   { userId: null, reason: `Courier price list from ${file}` },
 );

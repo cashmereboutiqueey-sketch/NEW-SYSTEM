@@ -7,6 +7,8 @@ import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
 import { CustomerPicker, type Person } from "@/components/customer-picker";
 import { StyleVariantPicker } from "@/components/style-variant-picker";
+import { CourierZoneCreate } from "@/components/courier-zone-create";
+import { EGYPT_GOVERNORATES } from "@/lib/egypt-governorates";
 
 const initial: FormState = {};
 const field =
@@ -69,12 +71,14 @@ export function ModeratorOrderForm({
   const [addedCustomer, setAddedCustomer] = useState<Person | null>(null);
   const [governorate, setGovernorate] = useState("");
   const [zoneId, setZoneId] = useState("");
+  const [localZones, setLocalZones] = useState(zones);
+  const [region, setRegion] = useState("");
   const ar = locale === "ar";
 
   const customer = addedCustomer?.id === customerId
     ? addedCustomer
     : customers.find((c) => c.id === customerId);
-  const regions = zones.find((z) => z.governorate === governorate)?.regions ?? [];
+  const regions = localZones.find((z) => z.governorate === governorate)?.regions ?? [];
   const zone = regions.find((r) => r.id === zoneId);
 
   const byId = useMemo(() => new Map(products.map((p) => [p.variantId, p])), [products]);
@@ -238,15 +242,16 @@ export function ModeratorOrderForm({
           <div>
             <label className={label} htmlFor="mod-gov">{ar ? "المحافظة" : "Governorate"}</label>
             <select
-              id="mod-gov" className={`${field} w-full`} value={governorate}
+              id="mod-gov" name="governorate" className={`${field} w-full`} value={governorate}
               onChange={(e) => {
                 setGovernorate(e.target.value);
                 setZoneId("");
+                setRegion("");
               }}
             >
               <option value="">{ar ? "اختار" : "Choose"}</option>
-              {zones.map((z) => (
-                <option key={z.governorate} value={z.governorate}>{z.governorate}</option>
+              {[...new Set([...EGYPT_GOVERNORATES, ...localZones.map((z) => z.governorate)])].map((name) => (
+                <option key={name} value={name}>{name}</option>
               ))}
             </select>
           </div>
@@ -272,7 +277,34 @@ export function ModeratorOrderForm({
                 {ar ? `MG بتاخد ${Number(zone.price)} جنيه` : `MG charges ${Number(zone.price)}`}
               </p>
             )}
+            {governorate && (
+              <div className="mt-2">
+                <CourierZoneCreate
+                  ar={ar}
+                  governorate={governorate}
+                  onCreated={(added) => {
+                    setLocalZones((current) => {
+                      const found = current.find((group) => group.governorate === added.governorate);
+                      if (!found) return [...current, { governorate: added.governorate, regions: [added] }];
+                      return current.map((group) => group.governorate === added.governorate
+                        ? { ...group, regions: [...group.regions.filter((item) => item.id !== added.id), added] }
+                        : group);
+                    });
+                    setZoneId(added.id);
+                    setRegion(added.region);
+                    if (!shipping) setShipping(Number(added.price));
+                  }}
+                />
+              </div>
+            )}
           </div>
+          {governorate && !zoneId && (
+            <div>
+              <label className={label} htmlFor="mod-region">{ar ? "المدينة / المنطقة" : "City / area"}</label>
+              <input id="mod-region" name="region" value={region} onChange={(event) => setRegion(event.target.value)} className={`${field} w-full`} />
+              <p className="mt-1 text-xs text-warn">{ar ? "العنوان هيتحفظ، لكن شيت MG محتاج إضافة منطقة الشحن وسعرها." : "The address will be saved; the MG sheet needs a delivery area and its price."}</p>
+            </div>
+          )}
           <div className="sm:col-span-3">
             <label className={label} htmlFor="mod-address">{ar ? "العنوان بالتفصيل" : "Full address"}</label>
             <input
@@ -314,10 +346,10 @@ export function ModeratorOrderForm({
           <p className={label}>{ar ? "الدفع" : "Payment"}</p>
           <div className="flex flex-wrap gap-2">
             {([
-              ["COD", ar ? "عند الاستلام" : "On delivery"],
-              ["BANK_TRANSFER", ar ? "تحويل بنكي" : "Bank transfer"],
-              ["INSTAPAY", ar ? "إنستاباي" : "InstaPay"],
-              ["CASH", ar ? "كاش" : "Cash"],
+              ["COD", ar ? "المندوب يحصّل عند الاستلام" : "Courier collects on delivery"],
+              ["BANK_TRANSFER", ar ? "تحويل بنكي وصل" : "Bank transfer received"],
+              ["INSTAPAY", ar ? "InstaPay وصل" : "InstaPay received"],
+              ["CASH", ar ? "كاش استلمناه فعلًا" : "Cash already received"],
             ] as const).map(([value, text]) => (
               <button
                 key={value}
@@ -331,15 +363,16 @@ export function ModeratorOrderForm({
               </button>
             ))}
           </div>
+          <p className="mt-1 text-xs text-ink-500">{ar ? "اختار طريقة الدفع اللي حصلت فعلًا. لو العميل حوّل بعد تسجيل الأوردر، صحّحها من التسويات." : "Choose what actually happened. If the customer transfers after the order is recorded, correct it in Reconciliation."}</p>
         </div>
 
-        <div>
+        {method === "COD" && <div>
           <label className={label} htmlFor="mod-fee">{ar ? "رسوم التحصيل" : "Collection fee"}</label>
           <input
             id="mod-fee" name="fee" type="number" min="0" step="0.01" defaultValue={0}
             dir="ltr" className={`${field} num w-28`}
           />
-        </div>
+        </div>}
 
         <div className="ms-auto text-end">
           <p className="text-xs text-ink-500">{ar ? "الإجمالي" : "Total"}</p>

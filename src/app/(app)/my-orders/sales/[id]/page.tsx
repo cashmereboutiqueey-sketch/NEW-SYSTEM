@@ -189,6 +189,17 @@ export default async function MySalesOrderPage({
               ))}
             </div>
           )}
+          {order.payments.some((payment) => payment.method === "COD" && payment.status === "PENDING"
+            || payment.method === "CASH" && order.source === "MODERATOR") && (
+            <p className="mt-3 rounded-lg bg-ink-50 px-3 py-2 text-xs text-ink-600">
+              {ar
+                ? "لو العميل حوّل InstaPay بدل الكاش أو الدفع للمندوب، صحّح طريقة الدفع من شاشة التسويات بعد التأكد إن التحويل وصل. ما تسجّلش تحصيل تاني على نفس الأوردر."
+                : "If the customer transferred by InstaPay instead of cash or COD, correct the payment in Reconciliation after confirming receipt. Do not record a second collection for this order."}
+              {can(session.role, "payment:create") && can(session.role, "journal:view") && (
+                <> <Link href="/reconciliation" className="font-medium text-rose-deep underline">{ar ? "افتح التسويات" : "Open Reconciliation"}</Link></>
+              )}
+            </p>
+          )}
         </Card>
         <Card title={ar ? "الشحن وحركة الطلب" : "Shipping and fulfilment"}>
           <dl>

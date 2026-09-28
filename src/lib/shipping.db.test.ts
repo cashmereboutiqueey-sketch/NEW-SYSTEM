@@ -5,8 +5,9 @@ import { PrismaClient } from "@/generated/prisma/client";
 import ExcelJS from "exceljs";
 import { receiveFinishedGoods } from "./inventory";
 import { createSale } from "./sales";
+import { correctDirectBankPayment } from "./reconciliation";
 import {
-  importCourierZones, readyToShip, createShipmentBatches, manifestWorkbook,
+  importCourierZones, createCourierZone, readyToShip, createShipmentBatches, manifestWorkbook,
   parseCourierReport, applyCourierReport, shipmentsNeedingAttention, courierOwesUs,
   updateDestination, mgStatus, MG_EXPRESS, ShippingError,
 } from "./shipping";
@@ -104,7 +105,7 @@ beforeEach(async () => {
 afterAll(async () => { await wipe(); await db.$disconnect(); });
 
 /** A social order paid on delivery: 2 × 880 plus 45 shipping. */
-async function codOrder(courierZoneId: string | null, over: { address?: string | null; phone?: string | null } = {}) {
+async function codOrder(courierZoneId: string | null, over: { address?: string | null; phone?: string | null; governorate?: string; region?: string } = {}) {
   return createSale(
     {
       source: "MODERATOR",
@@ -117,6 +118,8 @@ async function codOrder(courierZoneId: string | null, over: { address?: string |
         recipientName: "منى أحمد",
         phone: over.phone === undefined ? "01001234567" : over.phone,
         secondPhone: "01229876543",
+        governorate: over.governorate ?? null,
+        region: over.region ?? null,
         courierZoneId,
         addressLine: over.address === undefined ? "١٢ شارع فوزي معاذ، الدور التالت" : over.address,
       },
@@ -126,6 +129,26 @@ async function codOrder(courierZoneId: string | null, over: { address?: string |
 }
 
 describe("the courier's areas", () => {
+  it("lets staff add an area with a verified price from the screen", async () => {
+    const first = await createCourierZone({ governorate: "الجيزة", region: "الدقي", price: "63.50" }, ctx());
+    expect(first.created).toBe(true);
+    expect(first.price).toBe("63.5");
+    const saved = await db.courierZone.findUniqueOrThrow({ where: { id: first.id } });
+    expect(saved.branch).toBe("5");
+    const again = await createCourierZone({ governorate: "الجيزة", region: "الدقي", price: "70" }, ctx());
+    expect(again.created).toBe(false);
+    expect(again.price).toBe("63.5");
+  });
+
+  it("keeps a typed governorate and area until an MG zone is added", async () => {
+    const sale = await codOrder(null, { governorate: "الفيوم", region: "سنورس" });
+    const order = await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } });
+    expect(order.governorate).toBe("الفيوم");
+    expect(order.city).toBe("سنورس");
+    const ready = (await readyToShip()).find((item) => item.id === order.id)!;
+    expect(ready.problems).toContain("no delivery area");
+  });
+
   it("loads the price list, and deactivates an area the courier dropped rather than deleting it", async () => {
     await givenZones();
     expect(await db.courierZone.count({ where: { isActive: true } })).toBe(3);
@@ -161,6 +184,18 @@ describe("the courier's areas", () => {
 });
 
 describe("the day's sheet", () => {
+  it("updates the parcel's COD to zero when the customer pays InstaPay after dispatch", async () => {
+    const { smouha } = await givenZones();
+    const sale = await codOrder(smouha);
+    await createShipmentBatches({ salesOrderIds: [sale.salesOrderId] }, ctx());
+    const result = await correctDirectBankPayment(
+      { orderNumber: sale.orderNumber, method: "INSTAPAY", receivedOn: day, reference: "IP-SHIPPED" }, ctx(),
+    );
+    expect(result.shipmentUpdated).toBe(true);
+    const shipment = await db.shipment.findFirstOrThrow({ where: { salesOrderId: sale.salesOrderId } });
+    expect(Number(shipment.codAmount)).toBe(0);
+  });
+
   it("lists what is ready, with what the driver collects", async () => {
     const { smouha } = await givenZones();
     const sale = await codOrder(smouha);

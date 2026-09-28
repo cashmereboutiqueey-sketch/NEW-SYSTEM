@@ -13,6 +13,7 @@ import {
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, dec } from "@/lib/money";
 import { SettlementForm } from "./settlement-form";
+import { DirectPaymentForm } from "./direct-payment-form";
 import {
   ImportStatementForm,
   AutoMatchForm,
@@ -51,7 +52,7 @@ export default async function ReconciliationPage({
 
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 
-  const [courier, gateway, courierOwed, gatewayOwed, settlements, statements, entities, accounts] =
+  const [courier, gateway, courierOwed, gatewayOwed, settlements, statements, entities, accounts, cashOrders] =
     await Promise.all([
       awaitingSettlement("COURIER"),
       awaitingSettlement("PAYMENT_GATEWAY"),
@@ -63,6 +64,12 @@ export default async function ReconciliationPage({
       db.account.findMany({
         where: { reportingCategory: { in: ["CASH", "CASH_CLEARING"] }, isPostable: true },
         orderBy: { code: "asc" },
+      }),
+      db.salesOrder.findMany({
+        where: { source: "MODERATOR", payments: { some: { method: "CASH", status: "COLLECTED" } } },
+        select: { orderNumber: true, customer: { select: { name: true } }, payments: { select: { amount: true, method: true, status: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 200,
       }),
     ]);
 
@@ -168,6 +175,20 @@ export default async function ReconciliationPage({
 
           {maySettle && (
             <>
+              <Card
+                className="mb-4"
+                title={ar ? "العميل حوّل بدل الكاش أو المندوب" : "Customer transferred instead of paying cash or COD"}
+                description={ar ? "صحّح الدفعة الأصلية بعد وصول تحويل InstaPay أو البنك" : "Correct the original payment after an InstaPay or bank transfer arrives"}
+              >
+                <DirectPaymentForm
+                  ar={ar}
+                  today={cairoDateKey()}
+                  payments={[
+                    ...courier.map((payment) => ({ orderNumber: payment.orderNumber, customer: payment.customer, gross: payment.gross.toString(), original: "COD" as const })),
+                    ...cashOrders.filter((order) => order.payments.length === 1).map((order) => ({ orderNumber: order.orderNumber, customer: order.customer?.name ?? null, gross: order.payments[0].amount.toString(), original: "CASH" as const })),
+                  ]}
+                />
+              </Card>
               <Card
                 className="mb-4"
                 title={ar ? "توريد من شركة شحن" : "Courier remittance"}

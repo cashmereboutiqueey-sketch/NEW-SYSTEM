@@ -8,6 +8,7 @@ import {
   awaitingSettlement,
   clearingBalance,
   recordSettlement,
+  correctDirectBankPayment,
   importStatement,
   reconciliationView,
   matchLine,
@@ -31,6 +32,7 @@ let showroomId: string;
 let variantId: string;
 let channelId: string;
 let day: Date;
+let ownerId: string;
 
 const ctx = { userId: null as string | null, reason: null };
 
@@ -39,6 +41,7 @@ beforeAll(async () => {
   showroomId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
   variantId = (await db.variant.findFirstOrThrow()).id;
   channelId = (await db.salesChannel.findFirstOrThrow()).id;
+  ownerId = (await db.user.findFirstOrThrow({ where: { email: "owner@cashmere.eg" } })).id;
 
   const period = await db.fiscalPeriod.findFirstOrThrow({
     where: { status: "OPEN" }, orderBy: { startDate: "asc" },
@@ -54,6 +57,7 @@ async function wipe() {
     await db.settlement.deleteMany({});
     await db.bankStatementLine.deleteMany({});
     await db.bankStatement.deleteMany({});
+    await db.tillCashEvent.deleteMany({});
     await db.garmentUnit.deleteMany({});
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
@@ -119,6 +123,46 @@ async function ledgerBalances(): Promise<boolean> {
 }
 
 describe("what the courier owes", () => {
+  it("moves a COD order paid by InstaPay from courier clearing to bank once", async () => {
+    await givenStock(2);
+    const sale = await codSale(1000, 30);
+    const corrected = await correctDirectBankPayment(
+      { orderNumber: sale.orderNumber, method: "INSTAPAY", receivedOn: day, reference: "IP-123" }, ctx,
+    );
+    expect(corrected.wasCod).toBe(true);
+    expect(await accountBalance("1135")).toBeCloseTo(0, 2);
+    expect(await accountBalance("1120")).toBeCloseTo(1000, 2);
+    expect(await accountBalance("6230")).toBeCloseTo(0, 2);
+    expect(await awaitingSettlement("COURIER")).toHaveLength(0);
+    const order = await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId }, include: { payments: true } });
+    expect(order.payments[0].method).toBe("INSTAPAY");
+    expect(order.payments[0].status).toBe("COLLECTED");
+    expect(order.payments[0].reference).toBe("IP-123");
+    expect(Number(order.paymentFee)).toBe(0);
+    expect(await ledgerBalances()).toBe(true);
+    await expect(correctDirectBankPayment(
+      { orderNumber: sale.orderNumber, method: "INSTAPAY", receivedOn: day, reference: "IP-123" }, ctx,
+    )).rejects.toThrow(/already been changed or settled/i);
+  });
+
+  it("corrects moderator cash to the bank without counting another sale", async () => {
+    await givenStock(2);
+    const sale = await createSale({
+      source: "MODERATOR", channelId, entityId: brandId, locationId: showroomId,
+      orderDate: day,
+      lines: [{ variantId, quantity: 1, retailPrice: 1200, discountPct: 0 }],
+      payments: [{ method: "CASH", amount: 1200, fee: 0, collected: true }],
+    }, { userId: ownerId, reason: null });
+    await correctDirectBankPayment(
+      { orderNumber: sale.orderNumber, method: "BANK_TRANSFER", receivedOn: day, reference: "BANK-44" }, ctx,
+    );
+    expect(await accountBalance("1115")).toBeCloseTo(0, 2);
+    expect(await accountBalance("1120")).toBeCloseTo(1200, 2);
+    expect(await ledgerBalances()).toBe(true);
+    const payment = await db.salesPayment.findFirstOrThrow({ where: { salesOrderId: sale.salesOrderId } });
+    expect(payment.method).toBe("BANK_TRANSFER");
+  });
+
   it("matches the clearing account to the piastre", async () => {
     await givenStock(5);
     await codSale(1000, 30);

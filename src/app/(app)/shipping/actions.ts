@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { formCommand } from "@/lib/command";
 import {
-  createShipmentBatches, parseCourierReport, applyCourierReport, updateDestination, ShippingError,
+  createShipmentBatches, parseCourierReport, applyCourierReport, updateDestination, createCourierZone, ShippingError,
 } from "@/lib/shipping";
 import type { FormState } from "@/components/entity-form";
 
@@ -13,6 +13,19 @@ function toMessage(error: unknown): string {
   if (error instanceof ForbiddenError) return "You do not have permission to hand orders to the courier.";
   console.error("Unhandled shipping error:", error);
   return "Something went wrong. Nothing was saved.";
+}
+
+/** Add an MG area from an order or the shipping desk. */
+export async function createCourierZoneAction(input: { governorate: string; region: string; price: string }) {
+  try {
+    const session = await authorize("sales_order:create");
+    const zone = await createCourierZone(input, { userId: session.userId, reason: null });
+    revalidatePath("/moderator");
+    revalidatePath("/shipping");
+    return { ok: true as const, zone };
+  } catch (error) {
+    return { ok: false as const, message: toMessage(error) };
+  }
 }
 
 export type BatchState = FormState & {
