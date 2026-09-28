@@ -10,6 +10,8 @@ import {
   retryFailedWebhooks,
   failedWebhookEvents,
   publishFulfillments,
+  publishInventory,
+  ensureOrderWebhooks,
   verifyWebhookSignature,
   type ShopifyOrder,
 } from "./shopify";
@@ -607,6 +609,56 @@ describe("Shopify fulfillment after courier handoff", () => {
       expect(shopifyFetch).toHaveBeenCalledTimes(1);
       expect(await db.externalMapping.count({ where: { objectType: "fulfillment" } })).toBe(0);
       expect(await db.integrationException.count({ where: { objectType: "fulfillment", status: "OPEN" } })).toBe(1);
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
+  });
+});
+
+describe("Shopify setup and stock publishing", () => {
+  it("registers only missing order webhook topics", async () => {
+    const fetchBefore = globalThis.fetch;
+    const shopifyFetch = vi.fn(async (_url: unknown, init: { body?: string }) =>
+      Response.json(init.body
+        ? { webhook: { id: 1 } }
+        : { webhooks: ["orders/create", "orders/paid", "orders/updated"].map((topic) => ({
+          id: 1, topic, address: "https://os.example.com/api/webhooks/shopify",
+        })) }));
+    globalThis.fetch = shopifyFetch as typeof fetch;
+    try {
+      const result = await ensureOrderWebhooks({ connectionId, siteAddress: "os.example.com" }, { userId });
+      expect(result).toMatchObject({ existing: 3, created: 2 });
+      const createdTopics = shopifyFetch.mock.calls.filter(([, init]) => init.body)
+        .map(([, init]) => JSON.parse(init.body!).webhook.topic);
+      expect(createdTopics).toEqual(["orders/cancelled", "orders/edited"]);
+    } finally {
+      globalThis.fetch = fetchBefore;
+    }
+  });
+
+  it("compares Shopify quantity before publishing and reports a stale write", async () => {
+    await db.externalMapping.create({ data: {
+      connectionId, objectType: "variant", externalId: "123", internalId: variantId,
+    } });
+    const fetchBefore = globalThis.fetch;
+    const mutations: { changeFromQuantity: number; quantity: number }[] = [];
+    globalThis.fetch = vi.fn(async (url: unknown, init: { body?: string }) => {
+      const path = String(url);
+      if (path.includes("locations.json")) return Response.json({ locations: [{ id: 333, name: "Shop", active: true }] });
+      if (path.includes("products.json")) return Response.json({ products: [{ variants: [{ id: 123, sku, inventory_item_id: 789 }] }] });
+      if (path.includes("inventory_levels.json")) return Response.json({ inventory_levels: [{ inventory_item_id: 789, available: 102 }] });
+      const body = JSON.parse(init.body!) as { variables: { input: { quantities: { changeFromQuantity: number; quantity: number }[] } } };
+      mutations.push(body.variables.input.quantities[0]);
+      return Response.json({ data: { inventorySetQuantities: {
+        userErrors: [{ message: "CHANGE_FROM_QUANTITY_STALE" }],
+      } } });
+    }) as typeof fetch;
+    try {
+      const result = await publishInventory({ connectionId }, { userId });
+      expect(mutations).toMatchObject([{ changeFromQuantity: 102, quantity: 100 }]);
+      expect(result.failed).toBe(1);
+      expect(result.pushed).toBe(0);
+      expect((await db.syncLog.findFirstOrThrow({ where: { objectType: "inventory" } })).status).toBe("FAILED");
     } finally {
       globalThis.fetch = fetchBefore;
     }
