@@ -4,6 +4,7 @@ import { cairoDateKey, cairoDatePlusDays } from "@/lib/cairo-date";
 import { useActionState, useMemo, useState } from "react";
 import { RequestIdField } from "@/components/request-id";
 import { CustomerPicker } from "@/components/customer-picker";
+import { StyleVariantPicker } from "@/components/style-variant-picker";
 import { takeOrderToMakeAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
 
@@ -14,9 +15,11 @@ const field =
 export type MakeableVariant = {
   variantId: string;
   styleId: string;
+  styleName: string;
   sku: string;
   label: string;
   image: string | null;
+  styleImage: string | null;
   retailPrice: string;
   /** On the shelf now. Zero is why this piece is on this form. */
   available: number;
@@ -60,7 +63,6 @@ export function MakeToOrderForm({
   const [state, action, pending] = useActionState(takeOrderToMakeAction, empty);
   const [customerId, setCustomerId] = useState("");
   const [variantId, setVariantId] = useState("");
-  const [variantQuery, setVariantQuery] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
   const [deposit, setDeposit] = useState("");
@@ -70,14 +72,6 @@ export function MakeToOrderForm({
 
   const byId = useMemo(() => new Map(variants.map((v) => [v.variantId, v])), [variants]);
   const chosen = variantId ? byId.get(variantId) : undefined;
-  const matchingVariants = useMemo(() => {
-    const q = variantQuery.trim().toLowerCase();
-    if (!q) return [];
-    return variants
-      .filter((v) => v.sku.toLowerCase().includes(q) || v.label.toLowerCase().includes(q))
-      .slice(0, 12);
-  }, [variants, variantQuery]);
-
   const qty = Number(quantity || 0);
   const total = (Number(price || 0) * qty) || 0;
   const held = Number(deposit || 0);
@@ -91,7 +85,6 @@ export function MakeToOrderForm({
     const v = byId.get(id);
     // A price suggested for the previous garment must not follow a new one.
     setPrice(v?.retailPrice ?? "");
-    setVariantQuery("");
   };
 
   return (
@@ -103,60 +96,11 @@ export function MakeToOrderForm({
 
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="text-sm lg:col-span-2">
-          <label htmlFor="make-variant-search" className="mb-1 block text-ink-600">
+          <p className="mb-1 block text-ink-600">
             {ar ? "المطلوب — ابحث بالكود أو الموديل" : "What they asked for — search by SKU or style"}
-          </label>
-          <input
-            id="make-variant-search"
-            type="search"
-            value={variantQuery}
-            onChange={(e) => {
-              setVariantQuery(e.target.value);
-              setVariantId("");
-              setPrice("");
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              if (matchingVariants[0]) onPick(matchingVariants[0].variantId);
-            }}
-            placeholder={ar ? "اكتب جزء من SKU أو اسم الموديل" : "Type part of a SKU or style name"}
-            className={field}
-          />
-          {variantQuery.trim() ? (
-            <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-ink-200 bg-panel">
-              {matchingVariants.length === 0 ? (
-                <p role="status" className="px-3 py-3 text-xs text-ink-500">
-                  {ar ? "مفيش صنف مطابق." : "No matching garment."}
-                </p>
-              ) : (
-                <ul className="divide-y divide-ink-100">
-                  {matchingVariants.map((v) => (
-                    <li key={v.variantId}>
-                      <button
-                        type="button"
-                        onClick={() => onPick(v.variantId)}
-                        className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start hover:bg-ink-50 focus:bg-ink-50 focus:outline-none"
-                      >
-                        <span className="flex items-center gap-2">
-                          {v.image ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={v.image} alt="" className="h-14 w-11 rounded object-cover" />
-                          ) : <span className="flex h-14 w-11 items-center justify-center rounded bg-ink-100 text-[10px] text-ink-400">{ar ? "صورة" : "Photo"}</span>}
-                          <span><code dir="ltr" className="num text-xs text-ink-500">{v.sku}</code> · {v.label}</span>
-                        </span>
-                        <span className="text-xs text-ink-500">
-                          {v.makeable > 0
-                            ? ar ? `القماش يكفي ${v.makeable}` : `Cloth makes ${v.makeable}`
-                            : ar ? "مفيش قماش" : "No cloth"}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ) : chosen ? (
+          </p>
+          <StyleVariantPicker ar={ar} variants={variants} kind="make" onSelect={(variant) => onPick(variant.variantId)} />
+          {chosen && (
             <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-rose-deep bg-rose/10 px-3 py-2">
               <span className="flex items-center gap-2">
                 {chosen.image && (
@@ -169,8 +113,6 @@ export function MakeToOrderForm({
                 {ar ? "غيّر" : "Change"}
               </button>
             </div>
-          ) : (
-            <p className="mt-1 text-xs text-ink-500">{ar ? "اكتب الكود أو اسم الموديل لاختيار القطعة." : "Type a SKU or style name to choose a garment."}</p>
           )}
         </div>
 

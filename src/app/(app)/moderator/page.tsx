@@ -96,7 +96,7 @@ export default async function ModeratorPage() {
   const shelves = await Promise.all(brandLocations.map((l) => sellableStock(l.id, brand.id)));
   const sellable = new Map<
     string,
-    { variantId: string; sku: string; label: string; available: number; retailPrice: number; image: string | null }
+    { variantId: string; styleId: string; styleName: string; sku: string; label: string; available: number; retailPrice: number; image: string | null; styleImage: string | null }
   >();
   for (const shelf of shelves) {
     for (const p of shelf) {
@@ -106,11 +106,14 @@ export default async function ModeratorPage() {
       else
         sellable.set(p.variantId, {
           variantId: p.variantId,
+          styleId: p.styleId,
+          styleName: ar ? p.styleAr : p.styleEn,
           sku: p.sku,
           label: `${ar ? p.styleAr : p.styleEn} · ${ar ? p.colourAr : p.colourEn} · ${p.size}`,
           available,
           retailPrice: Number(p.retailPrice ?? 0),
           image: p.image,
+          styleImage: p.styleImage,
         });
     }
   }
@@ -128,8 +131,10 @@ export default async function ModeratorPage() {
       return {
         variantId: v.id,
         styleId: v.styleId,
+        styleName: ar ? v.style.nameAr : v.style.nameEn,
         sku: v.sku,
         image: imageUrl(v.imageName) ?? imageUrl(v.style.imageName),
+        styleImage: imageUrl(v.style.imageName),
         label: `${ar ? v.style.nameAr : v.style.nameEn} · ${
           ar ? v.colorCode.nameAr : v.colorCode.nameEn
         } · ${v.sizeCode.code}`,

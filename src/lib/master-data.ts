@@ -307,14 +307,7 @@ export const customerSchema = z.object({
     .optional(),
   marketingConsent: z.boolean().nullable().optional(),
   notes: z.string().nullable().optional(),
-  /**
-   * What this customer may owe at once, and for how long.
-   *
-   * Zero is the default and the right one: credit is something granted to a
-   * particular person, not a property of being a customer. But it was also
-   * unreachable — nothing in the application could set it — so a part payment
-   * was refused for every customer alive, and the rule read as a fault.
-   */
+  /** What this customer may owe at once, and for how long. */
   creditLimit: z.coerce.number().min(0, "A credit limit cannot be negative.").optional(),
   creditDays: z.coerce.number().int().min(0, "Credit days cannot be negative.").optional(),
 });

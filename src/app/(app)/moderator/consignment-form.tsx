@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { sellConsignedAction, type ConsignmentState } from "@/app/(app)/consignment/actions";
 import { RequestIdField } from "@/components/request-id";
+import { CustomerPicker } from "@/components/customer-picker";
 import { cairoDateKey } from "@/lib/cairo-date";
 
 type Item = {
@@ -51,7 +52,6 @@ export function ModeratorConsignmentForm({
       <input type="hidden" name="itemId" value={selectedId} />
       <input type="hidden" name="saleDate" value={cairoDateKey()} />
       <input type="hidden" name="soldPrice" value={price} />
-      <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="paymentMethod" value={method} />
 
       <label className="block text-sm">
@@ -89,12 +89,10 @@ export function ModeratorConsignmentForm({
           <label className="text-sm"><span className="mb-1 block text-ink-600">{ar ? "سعر القطعة" : "Unit price"}</span>
             <input type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} className={field} />
           </label>
-          <label className="text-sm"><span className="mb-1 block text-ink-600">{ar ? "العميل" : "Customer"}</span>
-            <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className={field}>
-              <option value="">{ar ? "بدون عميل" : "No customer"}</option>
-              {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{customer.phone ? ` · ${customer.phone}` : ""}</option>)}
-            </select>
-          </label>
+          <div className="text-sm">
+            <p className="mb-1 block text-ink-600">{ar ? "العميل" : "Customer"}</p>
+            <CustomerPicker ar={ar} people={customers} value={customerId} onChange={(id) => setCustomerId(id)} source="MODERATOR" name="customerId" />
+          </div>
           <label className="text-sm"><span className="mb-1 block text-ink-600">{ar ? "طريقة التحصيل" : "Payment method"}</span>
             <select value={method} onChange={(event) => setMethod(event.target.value)} className={field}>
               <option value="COD">{ar ? "عند الاستلام" : "Cash on delivery"}</option>

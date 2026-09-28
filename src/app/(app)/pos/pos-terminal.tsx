@@ -424,7 +424,7 @@ export function PosTerminal({
 
       if (result.ok) {
         setPeople((list) => [
-          { id: result.customer.id, name: result.customer.name, phone: result.customer.phone },
+          { ...result.customer, alreadyOwed: 0 },
           ...list,
         ]);
         setCustomerId(result.customer.id);

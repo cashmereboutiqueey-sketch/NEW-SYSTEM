@@ -444,7 +444,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
 }
 
 export type QuickCustomerResult =
-  | { ok: true; customer: { id: string; name: string; phone: string | null } }
+  | { ok: true; customer: { id: string; name: string; phone: string | null; creditLimit: number } }
   | {
       /** Somebody already has that number. The cashier decides who it is. */
       ok: false;
@@ -500,11 +500,12 @@ export async function quickAddCustomerAction(input: {
     );
 
     revalidatePath("/pos");
+    revalidatePath("/moderator");
     revalidatePath("/customers");
 
     return {
       ok: true,
-      customer: { id: customer.id, name: customer.name, phone: customer.phone },
+      customer: { id: customer.id, name: customer.name, phone: customer.phone, creditLimit: Number(customer.creditLimit) },
     };
   } catch (error) {
     if (error instanceof ForbiddenError) {

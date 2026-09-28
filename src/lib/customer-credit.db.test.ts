@@ -38,13 +38,13 @@ describe("a customer's credit", () => {
    *
    * The limit was nothing by default, which meant the counter could not take
    * part of a price until somebody went and raised it one customer at a time.
-   * By the owner's instruction it is fifty thousand. The terms stay at nought
+   * By the owner's instruction it is twenty thousand. The terms stay at nought
    * days: how much somebody may owe and how long they may take over it are
    * different decisions, and only the first was made for everybody.
    */
   it("starts able to owe, and due immediately", async () => {
     const customer = await db.customer.findUniqueOrThrow({ where: { id: customerId } });
-    expect(Number(customer.creditLimit)).toBe(50_000);
+    expect(Number(customer.creditLimit)).toBe(20_000);
     expect(customer.creditDays).toBe(0);
   });
 
@@ -77,7 +77,7 @@ describe("a customer's credit", () => {
     // Unchanged, whatever it was. The point is that the refusal left the
     // record alone, not what the record happened to say.
     const customer = await db.customer.findUniqueOrThrow({ where: { id: customerId } });
-    expect(Number(customer.creditLimit)).toBe(50_000);
+    expect(Number(customer.creditLimit)).toBe(20_000);
   });
 
   it("refuses part of a day", async () => {

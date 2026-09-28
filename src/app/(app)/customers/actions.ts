@@ -41,12 +41,16 @@ export async function createCustomerAction(
         // than becoming a no.
         marketingConsent: consentRaw === "on" ? true : null,
         notes: (formData.get("notes") as string) || null,
-        // Only where the person adding them may give credit at all; a cashier
-        // filling in a walk-in cannot set a limit for them.
+        // An absent field uses the database's new-customer default. Only a
+        // credit-authorized user may explicitly override it.
         ...(can(session.role, "sales_order:credit")
           ? {
-              creditLimit: Number(formData.get("creditLimit") ?? 0) || 0,
-              creditDays: Number(formData.get("creditDays") ?? 0) || 0,
+              ...(formData.has("creditLimit") && String(formData.get("creditLimit")).trim() !== ""
+                ? { creditLimit: Number(formData.get("creditLimit")) }
+                : {}),
+              ...(formData.has("creditDays") && String(formData.get("creditDays")).trim() !== ""
+                ? { creditDays: Number(formData.get("creditDays")) }
+                : {}),
             }
           : {}),
       } as never,

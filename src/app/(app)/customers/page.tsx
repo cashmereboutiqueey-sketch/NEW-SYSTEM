@@ -275,8 +275,8 @@ export default async function CustomersPage({
           title={ar ? "حد الائتمان" : "Credit limit"}
           description={
             ar
-              ? "العميل مايقدرش يدفع جزء من الحساب غير لو ليه حد هنا — الافتراضي صفر، يعني كاش كامل"
-              : "A customer cannot pay part of a sale without a limit here — the default is zero, meaning cash in full"
+              ? "العميل الجديد بيبدأ بحد ائتمان ٢٠٬٠٠٠ جنيه. تقدر تعدّل حد أي عميل من هنا."
+              : "New customers start with a 20,000 credit limit. You can adjust each customer's limit here."
           }
         >
           <CreditForm

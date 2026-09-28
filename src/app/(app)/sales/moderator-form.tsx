@@ -5,6 +5,8 @@ import { createModeratorSaleAction } from "./actions";
 import type { FormState } from "@/components/entity-form";
 import { RequestIdField } from "@/components/request-id";
 import type { Locale } from "@/lib/i18n";
+import { CustomerPicker, type Person } from "@/components/customer-picker";
+import { StyleVariantPicker } from "@/components/style-variant-picker";
 
 const initial: FormState = {};
 const field =
@@ -17,11 +19,14 @@ const money = (n: number) => Math.round(n * 100) / 100;
 
 type Product = {
   variantId: string;
+  styleId: string;
+  styleName: string;
   sku: string;
   label: string;
   available: number;
   retailPrice: number;
   image: string | null;
+  styleImage: string | null;
 };
 
 type Line = { variantId: string; quantity: number; retailPrice: number };
@@ -57,28 +62,22 @@ export function ModeratorOrderForm({
 }) {
   const [state, formAction, pending] = useActionState(createModeratorSaleAction, initial);
   const [lines, setLines] = useState<Line[]>([]);
-  const [query, setQuery] = useState("");
   const [discountPct, setDiscountPct] = useState(0);
   const [shipping, setShipping] = useState(0);
   const [method, setMethod] = useState("COD");
   const [customerId, setCustomerId] = useState("");
+  const [addedCustomer, setAddedCustomer] = useState<Person | null>(null);
   const [governorate, setGovernorate] = useState("");
   const [zoneId, setZoneId] = useState("");
   const ar = locale === "ar";
 
-  const customer = customers.find((c) => c.id === customerId);
+  const customer = addedCustomer?.id === customerId
+    ? addedCustomer
+    : customers.find((c) => c.id === customerId);
   const regions = zones.find((z) => z.governorate === governorate)?.regions ?? [];
   const zone = regions.find((r) => r.id === zoneId);
 
   const byId = useMemo(() => new Map(products.map((p) => [p.variantId, p])), [products]);
-
-  const matching = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return products.slice(0, 8);
-    return products
-      .filter((p) => p.sku.toLowerCase().includes(q) || p.label.toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [products, query]);
 
   const add = (p: Product) =>
     setLines((prev) => {
@@ -117,43 +116,10 @@ export function ModeratorOrderForm({
 
       {/* ------------------------------------------------------ what they want */}
       <div>
-        <label className={label} htmlFor="mod-search">
+        <p className={label}>
           {ar ? "دوّر على الصنف" : "Find the item"}
-        </label>
-        <input
-          id="mod-search"
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={ar ? "SKU أو اسم الموديل" : "SKU or style name"}
-          className={`${field} w-full`}
-        />
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {matching.length === 0 ? (
-            <p className="py-2 text-sm text-ink-400">
-              {ar ? "مفيش صنف مطابق في المخزون." : "Nothing in stock matches."}
-            </p>
-          ) : (
-            matching.map((p) => (
-              <button
-                key={p.variantId}
-                type="button"
-                onClick={() => add(p)}
-                className="overflow-hidden rounded-lg border border-ink-200 text-start text-sm hover:border-rose-deep focus:border-rose-deep"
-              >
-                {p.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.image} alt="" className="aspect-[3/4] w-full object-cover" />
-                ) : <div className="flex aspect-[3/4] items-center justify-center bg-ink-100 text-xs text-ink-400">{ar ? "مفيش صورة" : "No photo"}</div>}
-                <span className="block p-2">
-                  <code dir="ltr" className="block text-xs text-ink-500">{p.sku}</code>
-                  <span className="block text-ink-700">{p.label}</span>
-                  <span className="num text-xs text-ink-400">×{p.available}</span>
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+        </p>
+        <StyleVariantPicker ar={ar} variants={products} kind="stock" onSelect={add} />
       </div>
 
       {/* ------------------------------------------------------------- the order */}
@@ -214,18 +180,15 @@ export function ModeratorOrderForm({
       {/* -------------------------------------------------------- who and where */}
       <div className="grid gap-3 sm:grid-cols-4">
         <div>
-          <label className={label} htmlFor="mod-customer">{ar ? "العميلة" : "Customer"}</label>
-          <select
-            id="mod-customer" name="customerId" className={`${field} w-full`}
-            value={customerId} onChange={(e) => setCustomerId(e.target.value)}
-          >
-            <option value="">{ar ? "بدون عميل" : "No customer"}</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.phone ? ` — ${c.phone}` : ""}
-              </option>
-            ))}
-          </select>
+          <p className={label}>{ar ? "العميلة" : "Customer"}</p>
+          <CustomerPicker
+            ar={ar}
+            people={customers}
+            value={customerId}
+            onChange={(id, person) => { setCustomerId(id); setAddedCustomer(person); }}
+            source="MODERATOR"
+            name="customerId"
+          />
         </div>
         <div>
           <label className={label} htmlFor="mod-channel">{ar ? "القناة" : "Channel"}</label>
