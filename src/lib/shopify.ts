@@ -418,10 +418,6 @@ export async function importOrders(
         return "UNCHANGED";
       }
 
-      if (order.total_price != null && order.current_total_price != null &&
-          !dec(order.total_price).toDecimalPlaces(2).equals(dec(order.current_total_price).toDecimalPlaces(2))) {
-        throw new ShopifyError("Shopify order was edited or refunded before import. Review its current items and payment before deducting stock.");
-      }
       const mapped = await db.externalMapping.findUnique({
         where: {
           connectionId_objectType_externalId: {
@@ -442,6 +438,11 @@ export async function importOrders(
         // Cancelled before it ever reached us: recorded, not imported, since
         // importing then reversing would move stock that never left.
         return "UNCHANGED";
+      }
+
+      if (order.total_price != null && order.current_total_price != null &&
+          !dec(order.total_price).toDecimalPlaces(2).equals(dec(order.current_total_price).toDecimalPlaces(2))) {
+        throw new ShopifyError("Shopify order was edited or refunded before import. Review its current items and payment before deducting stock.");
       }
 
       if (!new Set(["paid", "pending", "authorized"]).has(order.financial_status ?? "")) {
