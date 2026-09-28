@@ -233,6 +233,10 @@ export async function createSale(
     if (data.source === "POS" && !data.posSessionId) {
       throw new SalesError("A POS sale must belong to an open till session.");
     }
+    if ((data.source === "POS" || data.source === "EXHIBITION")
+      && data.payments.some((payment) => payment.method === "COD")) {
+      throw new SalesError("Courier collection belongs to a shipping order, not an in-person sale.");
+    }
 
     // Idempotency for imports: the same external order can arrive twice.
     if (data.externalId) {

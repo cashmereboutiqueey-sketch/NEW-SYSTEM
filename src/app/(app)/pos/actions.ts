@@ -274,9 +274,9 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     }
 
     const method = String(formData.get("method") ?? "CASH") as
-      | "CASH" | "CARD" | "INSTAPAY" | "COD";
-    if (!["CASH", "CARD", "INSTAPAY", "COD"].includes(method)) {
-      throw new CheckoutError("Choose a supported till payment method.");
+      | "CASH" | "CARD" | "INSTAPAY";
+    if (!["CASH", "CARD", "INSTAPAY"].includes(method)) {
+      throw new CheckoutError("At the till, choose cash, card, or InstaPay. Use the moderator desk for courier collection.");
     }
     const tendered = Number(formData.get("tendered") ?? 0);
 
@@ -382,9 +382,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
                       // Only the share belonging to the shop.
                       amount: Decimal.min(paidNow, ownTotal).toNumber(),
                       fee: 0,
-                      // Cash and card at the till are collected there and then;
-                      // a COD sale from the shop floor is not money in hand yet.
-                      collected: method !== "COD",
+                      collected: true,
                     },
                   ]
                 : [],

@@ -322,6 +322,18 @@ describe("Shopify import idempotency", () => {
 });
 
 describe("POS till sessions", () => {
+  it("rejects courier collection on a sale handed over at the till", async () => {
+    const session = await openPosSession({ locationId, cashierUserId: cashierId, openingFloat: "0" }, ctx);
+    await expect(createSale(
+      saleInput({
+        source: "POS", posSessionId: session.posSessionId,
+        payments: [{ method: "COD", amount: RETAIL * 2, fee: 0, collected: false }],
+      }),
+      { userId: cashierId },
+    )).rejects.toThrow(/courier collection belongs to a shipping order/i);
+    expect(await db.salesOrder.count()).toBe(0);
+  });
+
   it("records a counter sale as handed over without a shipment", async () => {
     const session = await openPosSession({ locationId, cashierUserId: cashierId, openingFloat: "0" }, ctx);
     const result = await createSale(

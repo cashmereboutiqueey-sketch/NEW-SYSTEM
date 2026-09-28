@@ -119,7 +119,7 @@ export function PosTerminal({
   const [state, formAction, pending] = useActionState(checkoutAction, initial);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [query, setQuery] = useState("");
-  const [method, setMethod] = useState("CASH");
+  const [method, setMethod] = useState<"CASH" | "CARD" | "INSTAPAY">("CASH");
   const [tendered, setTendered] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [openStyleId, setOpenStyleId] = useState<string | null>(null);
@@ -1106,8 +1106,8 @@ export function PosTerminal({
 
         {/* ------------------------------------------------------- payment */}
         <div className="rounded-xl border border-ink-200 bg-panel p-3">
-          <div className="mb-2 grid grid-cols-4 gap-1.5">
-            {(["CASH", "CARD", "INSTAPAY", "COD"] as const).map((m) => (
+          <div className="mb-2 grid grid-cols-3 gap-1.5">
+            {(["CASH", "CARD", "INSTAPAY"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -1120,8 +1120,8 @@ export function PosTerminal({
                 }
               >
                 {ar
-                  ? { CASH: "كاش", CARD: "بطاقة", INSTAPAY: "إنستاباي", COD: "عند الاستلام" }[m]
-                  : { CASH: "Cash", CARD: "Card", INSTAPAY: "InstaPay", COD: "On delivery" }[m]}
+                  ? { CASH: "كاش", CARD: "بطاقة", INSTAPAY: "إنستاباي" }[m]
+                  : { CASH: "Cash", CARD: "Card", INSTAPAY: "InstaPay" }[m]}
               </button>
             ))}
           </div>
