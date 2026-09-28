@@ -53,6 +53,7 @@ export type ShopifyOrder = {
   created_at: string;
   currency: string;
   total_price?: string;
+  current_total_price?: string;
   fulfillment_status?: string | null;
   total_discounts?: string;
   shipping_lines?: { price: string }[];
@@ -86,6 +87,7 @@ export type ShopifyOrder = {
     /** Stable, and present even when the SKU snapshot on the line is empty. */
     variant_id?: number | null;
     quantity: number;
+    current_quantity?: number;
     price: string;
     total_discount?: string;
     /** Shopify order and code discounts are allocated separately from this field. */
@@ -415,6 +417,11 @@ export async function importOrders(
       } else if (await db.shopifyOrderState.findUnique({ where: { connectionId_externalId: stateKey } })) {
         return "UNCHANGED";
       }
+
+      if (order.total_price != null && order.current_total_price != null &&
+          !dec(order.total_price).toDecimalPlaces(2).equals(dec(order.current_total_price).toDecimalPlaces(2))) {
+        throw new ShopifyError("Shopify order was edited or refunded before import. Review its current items and payment before deducting stock.");
+      }
       const mapped = await db.externalMapping.findUnique({
         where: {
           connectionId_objectType_externalId: {
@@ -437,11 +444,21 @@ export async function importOrders(
         return "UNCHANGED";
       }
 
+      if (!new Set(["paid", "pending", "authorized"]).has(order.financial_status ?? "")) {
+        throw new ShopifyError(`Shopify payment status ${order.financial_status || "unknown"} needs review before import.`);
+      }
+      if (order.fulfillment_status) {
+        throw new ShopifyError(`Shopify order is already ${order.fulfillment_status}; review shipment before importing it.`);
+      }
+
       // --- resolve every SKU before touching stock --------------------
       const lines: { variantId: string; quantity: number; retailPrice: number; discountPct: number }[] = [];
       const unknown: string[] = [];
 
       for (const item of order.line_items) {
+        if (item.current_quantity != null && item.current_quantity !== item.quantity) {
+          throw new ShopifyError(`Shopify line ${item.id} was edited or refunded before import. Review it before deducting stock.`);
+        }
         if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0 ||
             !/^\d+(\.\d+)?$/.test(item.price)) {
           throw new ShopifyError(`Invalid quantity or price on Shopify line ${item.id}. The order was not imported.`);
@@ -835,10 +852,8 @@ export async function replayWebhookEvent(eventId: string): Promise<void> {
  *
  *   paid       the money this order was waiting on is recorded as collected:
  *              DR bank, CR the receivable the unpaid import left behind.
- *   cancelled  every garment still on the order comes back as a return, so
- *              stock, revenue and cost of sales all reverse through the one
- *              path that already knows how — refunded to the card if it was
- *              paid for, set against the open balance if it was not.
+ *   cancelled  raised for review: neither a physical return nor a refund is
+ *              proven by cancellation alone.
  *   refunded   raised for a person, not applied: Shopify says money went back
  *              but not which garments, if any, came back, and guessing would
  *              restock the wrong thing.
@@ -859,6 +874,25 @@ async function applyOrderUpdate(
     const reason = "Cancelled on Shopify. Verify refund transactions and physical receipt before recording the return; cancellation alone moves neither money nor stock.";
     const raised = await db.integrationException.findFirst({ where: { connectionId, objectType: "order", externalId, reason } });
     if (raised) return "UNCHANGED";
+    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
+    return "UPDATED";
+  }
+
+  if (order.financial_status === "refunded" || order.financial_status === "partially_refunded") {
+    const reason = `Refunded on Shopify (${order.financial_status.replace("_", " ")}). Record the return here so stock and money follow it.`;
+    const raised = await db.integrationException.findFirst({
+      where: { connectionId, objectType: "order", externalId, reason },
+    });
+    if (raised) return "UNCHANGED";
+    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
+    return "UPDATED";
+  }
+  if (!new Set(["paid", "pending", "authorized"]).has(order.financial_status ?? "")) {
+    const reason = `Shopify payment status ${order.financial_status || "unknown"} needs manual reconciliation.`;
+    const existing = await db.integrationException.findFirst({
+      where: { connectionId, objectType: "order", externalId, reason, status: "OPEN" },
+    });
+    if (existing) return "UNCHANGED";
     await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
     return "UPDATED";
   }
@@ -885,15 +919,16 @@ async function applyOrderUpdate(
       if (mapping) variant = { id: mapping.internalId };
     }
     if (!variant) { unmatchedLine = true; continue; }
-    incoming.set(variant.id, (incoming.get(variant.id) ?? 0) + item.quantity);
+    incoming.set(variant.id, (incoming.get(variant.id) ?? 0) + (item.current_quantity ?? item.quantity));
   }
   const basketChanged = unmatchedLine || imported.size !== incoming.size ||
     [...imported].some(([id, qty]) => incoming.get(id) !== qty);
   const sale = await db.salesOrder.findUniqueOrThrow({
     where: { id: salesOrderId }, select: { netAmount: true, shippingAmount: true },
   });
-  const totalChanged = order.total_price != null &&
-    !dec(order.total_price).toDecimalPlaces(2)
+  const latestTotal = order.current_total_price ?? order.total_price;
+  const totalChanged = latestTotal != null &&
+    !dec(latestTotal).toDecimalPlaces(2)
       .equals(dec(sale.netAmount).plus(dec(sale.shippingAmount)).toDecimalPlaces(2));
   if (basketChanged || totalChanged) {
     const reason = "Shopify order was edited after import. Review the changed garments or total before settling payment; stock and accounting still reflect the original order.";
@@ -961,16 +996,6 @@ async function applyOrderUpdate(
         return "UPDATED";
       });
     });
-  }
-
-  if (order.financial_status === "refunded" || order.financial_status === "partially_refunded") {
-    const reason = `Refunded on Shopify (${order.financial_status.replace("_", " ")}). Record the return here so stock and money follow it.`;
-    const raised = await db.integrationException.findFirst({
-      where: { connectionId, objectType: "order", externalId, reason },
-    });
-    if (raised) return "UNCHANGED";
-    await raiseException({ connectionId, objectType: "order", externalId, reason, payload: order });
-    return "UPDATED";
   }
 
   return "UNCHANGED";

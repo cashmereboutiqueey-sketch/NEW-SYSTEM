@@ -201,6 +201,23 @@ describe("importing website orders", () => {
     expect(await onHand()).toBe(100);
   });
 
+  it("does not import a basket edited before the first delivery", async () => {
+    const result = await importOrders({ connectionId, orders: [order({
+      total_price: "3000.00", current_total_price: "1500.00",
+      line_items: [{ id: 1, sku, quantity: 2, current_quantity: 1, price: "1500.00" }],
+    })] }, { userId });
+    expect(result.failed).toBe(1);
+    expect(await db.salesOrder.count()).toBe(0);
+    expect(await onHand()).toBe(100);
+  });
+
+  it("holds a partially paid Shopify order for payment review", async () => {
+    const result = await importOrders({ connectionId, orders: [order({ financial_status: "partially_paid" })] }, { userId });
+    expect(result.failed).toBe(1);
+    expect(await db.salesOrder.count()).toBe(0);
+    expect(await onHand()).toBe(100);
+  });
+
   it("charges shipping as revenue", async () => {
     await importOrders(
       { connectionId, orders: [order({ shipping_lines: [{ price: "75.00" }] })] },
@@ -412,6 +429,18 @@ describe("what happens to an order after it is imported", () => {
     );
     expect(again.updated).toBe(0);
     expect(await db.salesPayment.count()).toBe(1);
+  });
+
+  it("holds payment when Shopify edits the total after import", async () => {
+    const pending = order({ financial_status: "pending", total_price: "3000.00",
+      current_total_price: "3000.00" });
+    await importOrders({ connectionId, orders: [pending] }, { userId });
+    const result = await importOrders({ connectionId, orders: [{ ...pending,
+      financial_status: "paid", current_total_price: "2500.00" }] }, { userId });
+    expect(result.updated).toBe(1);
+    expect(await db.salesPayment.count()).toBe(0);
+    expect(await receivable()).toBeCloseTo(3000, 2);
+    expect(await db.integrationException.count({ where: { status: "OPEN" } })).toBe(1);
   });
 
   it("asks somebody to look at a cancelled order rather than reversing it alone", async () => {
