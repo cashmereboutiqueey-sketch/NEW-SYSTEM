@@ -1,5 +1,4 @@
 import { db } from "@/lib/db";
-import Link from "next/link";
 import { getPrefs } from "@/lib/session";
 import { requirePermission } from "@/lib/auth";
 import { can } from "@/core/permissions";
@@ -355,15 +354,9 @@ export default async function SalesPage() {
               rows={orders.map((o) => {
                 const gm = dec(o.netAmount).minus(dec(o.cogsAmount));
                 return [
-                  <Link
-                    key={`${o.id}-n`}
-                    href={`/sales/${o.id}`}
-                    className="inline-flex items-center gap-1 font-medium text-ink-900 underline decoration-ink-300 underline-offset-4 hover:text-info focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-info"
-                    aria-label={ar ? `تفاصيل الطلب ${o.orderNumber}` : `View order ${o.orderNumber}`}
-                  >
-                    <code dir="ltr" className="text-xs">{o.orderNumber}</code>
-                    <span aria-hidden="true">↗</span>
-                  </Link>,
+                  <code key={`${o.id}-n`} dir="ltr" className="text-xs text-ink-500">
+                    {o.orderNumber}
+                  </code>,
                   <Badge key={`${o.id}-s`} tone={o.source === "MODERATOR" ? "info" : "neutral"}>
                     {sourceLabel[o.source] ?? o.source}
                   </Badge>,
