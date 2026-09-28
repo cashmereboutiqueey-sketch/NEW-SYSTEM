@@ -84,11 +84,12 @@ export default async function MyOrdersPage() {
   // Done is delivered, or cancelled. Everything else is still somebody's
   // problem, and while it is, it is the problem of whoever promised it.
   const openSales = sales.filter((o) => !["DELIVERED", "CANCELLED"].includes(o.status));
+  const completedSales = sales.filter((o) => o.status === "DELIVERED");
   const openPromises = promises.filter((p) =>
     ["PENDING", "IN_PRODUCTION", "READY"].includes(p.status),
   );
 
-  const awaitingDespatch = openSales.filter((o) => o.shipments.length === 0 && !o.shippedDate);
+  const awaitingDespatch = openSales.filter((o) => !["POS", "EXHIBITION"].includes(o.source) && o.shipments.length === 0 && !o.shippedDate);
   const onTheRoad = openSales.filter((o) => o.shipments.length > 0);
   const awaitingFactory = openPromises.filter((p) => p.status !== "READY");
   const readyToHandOver = openPromises.filter((p) => p.status === "READY");
@@ -252,12 +253,33 @@ export default async function MyOrdersPage() {
                 </Badge>
                 <span className="ms-2 text-ink-400">{o.shipments[0].courier}</span>
               </span>
+            ) : ["POS", "EXHIBITION"].includes(o.source) ? (
+              <span key="p" className="text-xs text-ink-500">{ar ? "تسليم من المحل" : "In person"}</span>
             ) : (
               <span key="p" className="text-xs text-warn">{ar ? "لسه ماخرجش" : "not out yet"}</span>
             ),
           ])}
         />
       </Card>
+
+      {completedSales.length > 0 && (
+        <Card
+          className="mb-5"
+          title={ar ? "بيعاتي اللي اتسلّمت" : "My completed sales"}
+          description={ar ? "بيعات المحل والبازار والطلبات اللي وصلت للعميل. افتحي أي أوردر لتفاصيله." : "In-person handovers and delivered orders. Open any order for its details."}
+        >
+          <DataTable
+            headers={[ar ? "الأوردر" : "Order", ar ? "يوم" : "Day", ar ? "العميل" : "Customer", ar ? "قطع" : "Pieces", ar ? "التسليم" : "Handover"]}
+            rows={completedSales.map((o) => [
+              <Link key="n" href={`/my-orders/sales/${o.id}`} className="num text-xs font-medium text-ink-900 underline underline-offset-4 hover:text-info" dir="ltr">{o.orderNumber}</Link>,
+              <span key="d" className="num text-xs" dir="ltr">{dateText(o.deliveredDate ?? o.orderDate)}</span>,
+              <span key="c">{o.customer?.name ?? "—"}</span>,
+              <span key="q" className="num">{formatNumber(piecesOf(o), locale)}</span>,
+              <Badge key="s" tone="good">{o.source === "POS" ? ar ? "اتسلّم من المحل" : "Handed over in store" : o.source === "EXHIBITION" ? ar ? "اتسلّم من البازار" : "Handed over at exhibition" : ar ? "اتسلّم" : "Delivered"}</Badge>,
+            ])}
+          />
+        </Card>
+      )}
 
       <Card
         title={ar ? "اللي وعدت بيه" : "What I promised"}

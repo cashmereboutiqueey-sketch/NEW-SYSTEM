@@ -64,6 +64,10 @@ export default async function MySalesOrderPage({
   const shipmentLabels: Record<string, string> = ar
     ? { SENT: "اترسل", IN_TRANSIT: "في الطريق", DELIVERED: "اتسلّم", NEEDS_REVIEW: "محتاج مراجعة", RETURNED: "راجع", FAILED: "فشل التسليم", POSTPONED: "اتأجل" }
     : { SENT: "Sent", IN_TRANSIT: "In transit", DELIVERED: "Delivered", NEEDS_REVIEW: "Needs review", RETURNED: "Returned", FAILED: "Failed", POSTPONED: "Postponed" };
+  const inPerson = order.source === "POS" || order.source === "EXHIBITION";
+  const statusText = inPerson && order.status === "DELIVERED"
+    ? ar ? order.source === "EXHIBITION" ? "اتسلّم من البازار" : "اتسلّم من المحل" : "Handed over in person"
+    : statusLabels[order.status] ?? order.status;
   const statusTone = order.status === "DELIVERED" ? "good" : order.status === "CANCELLED" || order.status === "RETURNED" ? "warn" : "info";
   const quantity = order.lines.reduce((total, line) => total + line.quantity, 0);
   const totalDue = dec(order.netAmount).plus(dec(order.shippingAmount));
@@ -78,7 +82,7 @@ export default async function MySalesOrderPage({
       <PageHeader
         title={ar ? `تفاصيل الطلب ${order.orderNumber}` : `Order ${order.orderNumber}`}
         subtitle={`${date(order.orderDate)} · ${sourceLabels[order.source] ?? order.source} · ${name(order.channel)}`}
-        actions={<Badge tone={statusTone}>{statusLabels[order.status] ?? order.status}</Badge>}
+        actions={<Badge tone={statusTone}>{statusText}</Badge>}
       />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
@@ -92,7 +96,7 @@ export default async function MySalesOrderPage({
         </div>
         <div className="card p-4">
           <p className="text-xs text-ink-500">{ar ? "الحالة" : "Status"}</p>
-          <div className="mt-2"><Badge tone={statusTone}>{statusLabels[order.status] ?? order.status}</Badge></div>
+          <div className="mt-2"><Badge tone={statusTone}>{statusText}</Badge></div>
         </div>
       </div>
 
@@ -144,16 +148,16 @@ export default async function MySalesOrderPage({
       </Card>
 
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Card title={ar ? "العميل والتوصيل" : "Customer and delivery"}>
+        <Card title={inPerson ? ar ? "العميل" : "Customer" : ar ? "العميل والتوصيل" : "Customer and delivery"}>
           <dl>
             <Detail label={ar ? "العميل" : "Customer"}>{order.customer?.name ?? order.recipientName}</Detail>
-            <Detail label={ar ? "اسم المستلم" : "Recipient"}>{order.recipientName}</Detail>
+            {!inPerson && <Detail label={ar ? "اسم المستلم" : "Recipient"}>{order.recipientName}</Detail>}
             <Detail label={ar ? "رقم الهاتف" : "Phone"}>{order.shippingPhone ?? order.customer?.phone}</Detail>
             {order.secondPhone && <Detail label={ar ? "رقم بديل" : "Other phone"}>{order.secondPhone}</Detail>}
             {order.customer?.email && <Detail label={ar ? "البريد الإلكتروني" : "Email"}>{order.customer.email}</Detail>}
-            <Detail label={ar ? "العنوان" : "Address"}>{order.addressLine}</Detail>
-            <Detail label={ar ? "المدينة / المنطقة" : "City / area"}>{[order.governorate, order.city].filter(Boolean).join(" · ")}</Detail>
-            {order.courierZone && <Detail label={ar ? "منطقة الشحن" : "Courier zone"}>{order.courierZone.region}</Detail>}
+            {!inPerson && <Detail label={ar ? "العنوان" : "Address"}>{order.addressLine}</Detail>}
+            {!inPerson && <Detail label={ar ? "المدينة / المنطقة" : "City / area"}>{[order.governorate, order.city].filter(Boolean).join(" · ")}</Detail>}
+            {!inPerson && order.courierZone && <Detail label={ar ? "منطقة الشحن" : "Courier zone"}>{order.courierZone.region}</Detail>}
           </dl>
         </Card>
         <Card title={ar ? "ملخص الحساب" : "Payment summary"}>
@@ -201,11 +205,11 @@ export default async function MySalesOrderPage({
             </p>
           )}
         </Card>
-        <Card title={ar ? "الشحن وحركة الطلب" : "Shipping and fulfilment"}>
+        <Card title={inPerson ? ar ? "التسليم المباشر" : "In-person handover" : ar ? "الشحن وحركة الطلب" : "Shipping and fulfilment"}>
           <dl>
-            <Detail label={ar ? "مكان التجهيز" : "Fulfilment location"}>{name(order.location)}</Detail>
-            <Detail label={ar ? "تاريخ الشحن" : "Shipped"}>{date(order.shippedDate)}</Detail>
-            <Detail label={ar ? "تاريخ التسليم" : "Delivered"}>{date(order.deliveredDate)}</Detail>
+            <Detail label={inPerson ? ar ? "مكان البيع" : "Sale location" : ar ? "مكان التجهيز" : "Fulfilment location"}>{name(order.location)}</Detail>
+            {!inPerson && <Detail label={ar ? "تاريخ الشحن" : "Shipped"}>{date(order.shippedDate)}</Detail>}
+            <Detail label={inPerson ? ar ? "تاريخ الاستلام" : "Handed over on" : ar ? "تاريخ التسليم" : "Delivered"}>{date(order.deliveredDate)}</Detail>
             {order.dueDate && <Detail label={ar ? "ميعاد التحصيل" : "Payment due"}>{date(order.dueDate)}</Detail>}
             {order.collectedDate && <Detail label={ar ? "تاريخ التحصيل" : "Collected"}>{date(order.collectedDate)}</Detail>}
             {order.shipments.map((shipment) => (

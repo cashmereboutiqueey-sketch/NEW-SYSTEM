@@ -398,6 +398,7 @@ export async function createSale(
     return db.$transaction(async (tx) => {
       const orderNumber = await nextDocumentNumber(tx, "SO", data.orderDate);
       const totalFees = sum(payments.map((p) => p.fee));
+      const handedOverAtCounter = data.source === "POS" || data.source === "EXHIBITION";
 
       const order = await tx.salesOrder.create({
         data: {
@@ -412,8 +413,10 @@ export async function createSale(
           createdByUserId: ctx.userId,
           externalId: data.externalId ?? null,
           shopifyOrderId: data.source === "SHOPIFY" ? data.externalId ?? null : null,
-          status: "CONFIRMED",
+          // A till sale leaves with the customer at checkout. It has no courier step.
+          status: handedOverAtCounter ? "DELIVERED" : "CONFIRMED",
           orderDate: data.orderDate,
+          deliveredDate: handedOverAtCounter ? data.orderDate : null,
           dueDate: owed.greaterThan(0) ? dueDate : null,
           grossAmount: grossAmount.toString(),
           discountAmount: discountAmount.toString(),
