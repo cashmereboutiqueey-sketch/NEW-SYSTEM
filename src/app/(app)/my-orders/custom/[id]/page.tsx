@@ -38,7 +38,7 @@ export default async function MyCustomOrderPage({ params }: { params: Promise<{ 
   const colourName = ar ? variant.colorCode.nameAr : variant.colorCode.nameEn;
   const photo = imageUrl(variant.imageName) ?? imageUrl(variant.style.imageName);
   const date = (value: Date | null) => value?.toISOString().slice(0, 10) ?? "—";
-  const displayStatus = order.salesOrder && order.salesOrder.status !== "DELIVERED"
+  const displayStatus = order.status === "READY" && order.salesOrder && order.salesOrder.status !== "DELIVERED"
     ? "SHIPPING" : order.status;
   const statusLabels: Record<string, string> = ar
     ? { PENDING: "مستني أمر إنتاج", IN_PRODUCTION: "بيتصنّع", READY: "جاهز للتسليم", SHIPPING: "في الشحن", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }

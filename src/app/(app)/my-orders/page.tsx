@@ -83,7 +83,8 @@ export default async function MyOrdersPage() {
   const piecesOf = (o: { lines: { quantity: number }[] }) =>
     o.lines.reduce((s, l) => s + l.quantity, 0);
   const promiseState = (p: (typeof promises)[number]) =>
-    p.salesOrderId && p.salesOrder?.status !== "DELIVERED" ? "SHIPPING" : p.status;
+    p.status === "READY" && p.salesOrderId && p.salesOrder?.status !== "DELIVERED"
+      ? "SHIPPING" : p.status;
 
   // Done is delivered, or cancelled. Everything else is still somebody's
   // problem, and while it is, it is the problem of whoever promised it.

@@ -202,6 +202,7 @@ export async function readyToShip(courier = MG_EXPRESS) {
     orderBy: { orderDate: "asc" },
     take: 500,
     include: {
+      customOrder: { select: { status: true } },
       customer: { select: { name: true, phone: true } },
       courierZone: { select: { governorate: true, region: true, price: true, branch: true, courier: true } },
       payments: { select: { method: true, status: true, amount: true } },
@@ -210,7 +211,7 @@ export async function readyToShip(courier = MG_EXPRESS) {
   });
 
   return orders
-    .filter((o) => !o.courierZone || o.courierZone.courier === courier)
+    .filter((o) => o.customOrder?.status !== "DELIVERED" && (!o.courierZone || o.courierZone.courier === courier))
     .map((o) => ({
       id: o.id,
       orderNumber: o.orderNumber,
@@ -316,6 +317,7 @@ export async function createShipmentBatches(
     const orders = await db.salesOrder.findMany({
       where: { id: { in: ids } },
       include: {
+        customOrder: { select: { status: true } },
         customer: { select: { name: true, phone: true } },
         courierZone: true,
         payments: { select: { method: true, status: true, amount: true } },
@@ -325,6 +327,9 @@ export async function createShipmentBatches(
     if (orders.length !== ids.length) throw new ShippingError("One of those orders no longer exists.");
 
     for (const o of orders) {
+      if (o.customOrder?.status === "DELIVERED") {
+        throw new ShippingError(`${o.orderNumber} was handed to the customer in the shop.`);
+      }
       if (o.status !== "CONFIRMED") {
         throw new ShippingError(`${o.orderNumber} is ${o.status.toLowerCase()}, not waiting to ship.`);
       }

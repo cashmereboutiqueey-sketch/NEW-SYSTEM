@@ -307,6 +307,11 @@ describe("handing it over", () => {
     });
     expect(handedOver.salesOrder?.status).toBe("DELIVERED");
     expect((await readyToShip()).some((item) => item.orderNumber === handedOver.salesOrder?.orderNumber)).toBe(false);
+    // Older handovers can still have a CONFIRMED sale from before this fix.
+    // They must stay finished promises, never appear as newly shipped ones.
+    await db.salesOrder.update({ where: { id: handedOver.salesOrder!.id }, data: { status: "CONFIRMED" } });
+    expect((await customOrderList(true)).find((item) => item.id === taken.id)?.status).toBe("DELIVERED");
+    expect((await readyToShip()).some((item) => item.id === handedOver.salesOrder!.id)).toBe(false);
 
     // The liability is discharged: the promise was kept.
     expect(await accountBalance("2400")).toBeCloseTo(0, 2);

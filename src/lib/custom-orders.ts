@@ -719,7 +719,8 @@ export async function customOrderList(includeFinished = false) {
   return orders.map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber,
-    status: o.salesOrderId && o.salesOrder?.status !== "DELIVERED" ? "SHIPPING" : o.status,
+    status: o.status === "READY" && o.salesOrderId && o.salesOrder?.status !== "DELIVERED"
+      ? "SHIPPING" : o.status,
     customerName: o.customer.name,
     customerPhone: o.customer.phone,
     sku: o.variant.sku,
