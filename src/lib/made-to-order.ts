@@ -6,6 +6,7 @@ import { dec } from "./money";
 import { makeabilityFrom, type MaterialNeed, type Makeability } from "@/core/makeability";
 import { takeCustomOrder, linkProductionOrder, CustomOrderError } from "./custom-orders";
 import { createProductionOrder } from "./production";
+import { cairoDateKey } from "./cairo-date";
 
 /**
  * Somebody asks for a garment the shop has not got.
@@ -123,6 +124,22 @@ export async function makeabilityOfStyle(styleId: string): Promise<StyleMakeabil
   return (await makeabilityByStyle()).get(styleId) ?? null;
 }
 
+function runBlocker(verdict: StyleMakeability | null, quantity: number): string | null {
+  if (!verdict || !verdict.hasBom) {
+    return "This style has no bill of materials, so no run can be raised against it.";
+  }
+  if (!verdict.hasOperations) {
+    return "This style has no operations, so it has no SMV and no run can be raised.";
+  }
+  if (verdict.makeable < quantity) {
+    const short = verdict.limitedBy;
+    return short
+      ? `The cloth on hand makes ${verdict.makeable}, not ${quantity}. ${short.materialCode} runs out first.`
+      : `The cloth on hand makes ${verdict.makeable}, not ${quantity}.`;
+  }
+  return null;
+}
+
 /**
  * Takes the promise and, where the cloth allows it, raises the run in the
  * same breath.
@@ -192,15 +209,8 @@ export async function takeOrderToMake(
     let runSkippedBecause: string | null = null;
     if (!input.raiseRun) {
       runSkippedBecause = "No run was asked for.";
-    } else if (!verdict || !verdict.hasBom) {
-      runSkippedBecause = "This style has no bill of materials, so no run can be raised against it.";
-    } else if (!verdict.hasOperations) {
-      runSkippedBecause = "This style has no operations, so it has no SMV and no run can be raised.";
-    } else if (verdict.makeable < input.quantity) {
-      const short = verdict.limitedBy;
-      runSkippedBecause = short
-        ? `The cloth on hand makes ${verdict.makeable}, not ${input.quantity}. ${short.materialCode} runs out first.`
-        : `The cloth on hand makes ${verdict.makeable}, not ${input.quantity}.`;
+    } else {
+      runSkippedBecause = runBlocker(verdict, input.quantity);
     }
 
     const taken = {
@@ -232,5 +242,42 @@ export async function takeOrderToMake(
     );
 
     return { ...taken, runNumber: run.orderNumber, runSkippedBecause: null };
+  });
+}
+
+/** A pending customer promise may be sent to a draft factory run once ready. */
+export async function startCustomOrderRun(
+  input: { customOrderId: string },
+  ctx: AuditContext,
+): Promise<{ runNumber: string }> {
+  return command("made-to-order.startCustomOrderRun", input, ctx, async () => {
+    const order = await db.customOrder.findUnique({
+      where: { id: input.customOrderId },
+      include: { variant: true },
+    });
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status !== "PENDING" || order.productionOrderId) {
+      throw new CustomOrderError(`${order.orderNumber} is no longer waiting for production.`);
+    }
+
+    const blocker = runBlocker(await makeabilityOfStyle(order.variant.styleId), order.quantity);
+    if (blocker) throw new CustomOrderError(blocker);
+
+    const run = await createProductionOrder(
+      {
+        styleId: order.variant.styleId,
+        plannedQty: order.quantity,
+        orderDate: new Date(`${cairoDateKey()}T00:00:00.000Z`),
+        plannedFinish: order.promisedDate,
+        lines: [{ variantId: order.variantId, plannedQty: order.quantity }],
+        notes: `Made to order against ${order.orderNumber}`,
+      },
+      ctx,
+    );
+    await linkProductionOrder(
+      { customOrderId: order.id, productionOrderId: run.productionOrderId },
+      ctx,
+    );
+    return { runNumber: run.orderNumber };
   });
 }

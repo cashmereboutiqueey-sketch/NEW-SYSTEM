@@ -14,6 +14,8 @@ import {
   CustomOrderError,
 } from "@/lib/custom-orders";
 import { formCommand, CommandError } from "@/lib/command";
+import { startCustomOrderRun } from "@/lib/made-to-order";
+import { ProductionError } from "@/lib/production";
 
 export type CustomOrderState = { error?: string; success?: string };
 
@@ -23,7 +25,8 @@ function toMessage(error: unknown): string {
     error instanceof SalesError ||
     error instanceof InventoryError ||
     error instanceof LedgerError ||
-    error instanceof CommandError
+    error instanceof CommandError ||
+    error instanceof ProductionError
   ) {
     return error.message;
   }
@@ -91,6 +94,29 @@ export async function linkRunAction(
     refresh();
     revalidatePath("/production");
     return { success: "الأوردر اتربط بأمر الإنتاج." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+/** Cashiers may start a draft run only for an existing customer promise. */
+export async function startCustomOrderRunAction(
+  _prev: CustomOrderState,
+  formData: FormData,
+): Promise<CustomOrderState> {
+  try {
+    const session = await authorize("sales_order:create");
+    const result = await formCommand(
+      "moderator.startCustomOrderRun",
+      formData,
+      { userId: session.userId },
+      () => startCustomOrderRun(
+        { customOrderId: String(formData.get("customOrderId") ?? "") },
+        { userId: session.userId, reason: null },
+      ),
+    );
+    refresh();
+    return { success: `اتعمل أمر إنتاج ${result.runNumber} في المصنع.` };
   } catch (error) {
     return { error: toMessage(error) };
   }

@@ -40,9 +40,8 @@ export type MakeableVariant = {
  * the cloth exists. Finding that out by pressing submit is finding it out too
  * late, in front of the customer.
  *
- * The run is offered, not assumed. A shop that wants the promise on the books
- * and the cut decided by the factory in the morning is doing something
- * reasonable, and the form should not argue with it.
+ * A ready style creates a draft factory run with the customer promise. The
+ * factory still confirms costing and starts the work separately.
  */
 export function MakeToOrderForm({
   ar,
@@ -50,15 +49,12 @@ export function MakeToOrderForm({
   customers,
   variants,
   locations,
-  mayPlan,
 }: {
   ar: boolean;
   entityId: string;
   customers: { id: string; name: string; phone: string | null }[];
   variants: MakeableVariant[];
   locations: { id: string; name: string }[];
-  /** Whether this person may commit the factory, not merely promise a customer. */
-  mayPlan: boolean;
 }) {
   const [state, action, pending] = useActionState(takeOrderToMakeAction, empty);
   const [customerId, setCustomerId] = useState("");
@@ -269,27 +265,15 @@ export function MakeToOrderForm({
         </p>
       )}
 
-      {mayPlan ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox" name="raiseRun"
-            defaultChecked
-            disabled={!enough || !!blocked}
-            className="h-4 w-4"
-          />
-          <span className={!enough || blocked ? "text-ink-400" : ""}>
-            {ar
-              ? "اعمل أمر إنتاج في المصنع على طول"
-              : "Raise the production run at the factory now"}
-          </span>
-        </label>
-      ) : (
-        <p className="text-xs text-ink-500">
-          {ar
-            ? "الأوردر هيتسجّل كوعد. أمر الإنتاج بيعمله حد من الإنتاج."
-            : "The order is recorded as a promise. Somebody in production raises the run."}
-        </p>
-      )}
+      <p className={`text-xs ${enough && !blocked ? "text-good" : "text-ink-500"}`}>
+        {enough && !blocked
+          ? ar
+            ? "هينزل أمر إنتاج مسودة في المصنع تلقائيًا مع تسجيل الأوردر."
+            : "A draft factory run will be created automatically with this order."
+          : ar
+            ? "الأوردر هيتسجّل، وأمر الإنتاج يستنى لحد ما القماش وتجهيزات الموديل يبقوا جاهزين."
+            : "The order will be recorded; its run waits until cloth and style setup are ready."}
+      </p>
 
       <div className="flex items-center gap-3">
         <button

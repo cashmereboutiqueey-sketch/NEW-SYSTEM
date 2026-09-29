@@ -305,7 +305,6 @@ export default async function ModeratorPage() {
             customers={customers}
             variants={toMake}
             locations={collectLocations.map((l) => ({ id: l.id, name: ar ? l.nameAr : l.nameEn }))}
-            mayPlan={mayPlan}
           />
         )}
       </Card>
@@ -374,6 +373,7 @@ export default async function ModeratorPage() {
               }))}
               mayHandleMoney={mayHandleMoney}
               mayPlan={mayPlan}
+              mayStartRun={mayTake}
               mayDeliver={mayTake}
             />,
           ])}

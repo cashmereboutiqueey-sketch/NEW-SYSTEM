@@ -6,6 +6,7 @@ import { RequestIdField } from "@/components/request-id";
 import {
   addDepositAction,
   linkRunAction,
+  startCustomOrderRunAction,
   markReadyAction,
   deliverAction,
   cancelAction,
@@ -33,6 +34,7 @@ export function OrderActions({
   runs,
   mayHandleMoney,
   mayPlan,
+  mayStartRun,
   mayDeliver,
 }: {
   ar: boolean;
@@ -41,11 +43,13 @@ export function OrderActions({
   runs: { id: string; label: string }[];
   mayHandleMoney: boolean;
   mayPlan: boolean;
+  mayStartRun: boolean;
   mayDeliver: boolean;
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [depositState, depositAction, depositPending] = useActionState(addDepositAction, empty);
   const [runState, runAction, runPending] = useActionState(linkRunAction, empty);
+  const [startState, startAction, startPending] = useActionState(startCustomOrderRunAction, empty);
   const [readyState, readyAction, readyPending] = useActionState(markReadyAction, empty);
   const [deliverState, deliverActionFn, deliverPending] = useActionState(deliverAction, empty);
   const [cancelState, cancelActionFn, cancelPending] = useActionState(cancelAction, empty);
@@ -54,10 +58,10 @@ export function OrderActions({
   const owing = Number(order.atRisk);
 
   const message =
-    depositState.error ?? runState.error ?? readyState.error ??
+    depositState.error ?? runState.error ?? startState.error ?? readyState.error ??
     deliverState.error ?? cancelState.error;
   const done =
-    depositState.success ?? runState.success ?? readyState.success ??
+    depositState.success ?? runState.success ?? startState.success ?? readyState.success ??
     deliverState.success ?? cancelState.success;
 
   if (panel === "deposit") {
@@ -178,6 +182,17 @@ export function OrderActions({
     <div className="flex flex-wrap items-center gap-1.5">
       {mayHandleMoney && owing > 0 && (
         <Chip onClick={() => setPanel("deposit")}>{ar ? "عربون" : "Deposit"}</Chip>
+      )}
+
+      {mayStartRun && order.status === "PENDING" && (
+        <form action={startAction} className="inline">
+          <RequestIdField state={startState} />
+          <input type="hidden" name="customOrderId" value={order.id} />
+          <button type="submit" disabled={startPending}
+            className="rounded-lg border border-ink-300 px-2 py-1 text-xs font-medium text-ink-700 disabled:opacity-50">
+            {ar ? "اعمل أمر إنتاج" : "Create run"}
+          </button>
+        </form>
       )}
 
       {mayPlan && order.status === "PENDING" && (
