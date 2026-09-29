@@ -6,6 +6,7 @@ import {
   setActiveAction,
   resetPasswordAction,
   unlockAction,
+  setCashierPinAction,
   type UserState,
 } from "./actions";
 
@@ -13,7 +14,7 @@ const empty: UserState = {};
 const small =
   "w-full rounded-lg border border-ink-200 bg-panel px-2 py-1.5 text-sm outline-none focus:border-rose-deep";
 
-type Panel = null | "role" | "password";
+type Panel = null | "role" | "password" | "pin";
 
 /**
  * What can be done to one account.
@@ -31,7 +32,7 @@ export function UserActions({
   roles,
 }: {
   ar: boolean;
-  user: { id: string; name: string; role: string; isActive: boolean; isLocked: boolean };
+  user: { id: string; name: string; role: string; isActive: boolean; isLocked: boolean; hasQuickPin: boolean };
   isSelf: boolean;
   isLastOwner: boolean;
   roles: { role: string; label: string }[];
@@ -41,9 +42,36 @@ export function UserActions({
   const [activeState, activeAction, activePending] = useActionState(setActiveAction, empty);
   const [pwState, pwAction, pwPending] = useActionState(resetPasswordAction, empty);
   const [unlockState, unlockActionFn, unlockPending] = useActionState(unlockAction, empty);
+  const [pinState, pinAction, pinPending] = useActionState(setCashierPinAction, empty);
 
   const message =
-    roleState.error ?? activeState.error ?? pwState.error ?? unlockState.error;
+    roleState.error ?? activeState.error ?? pwState.error ?? unlockState.error ?? pinState.error;
+
+  if (panel === "pin") {
+    return (
+      <div className="min-w-[13rem] space-y-2">
+        <form action={pinAction} className="space-y-2">
+          <input type="hidden" name="userId" value={user.id} />
+          <input name="pin" type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required
+            autoComplete="off" placeholder={ar ? "رمز من ٦ أرقام" : "Six-digit PIN"} className={`${small} num`} />
+          <input name="confirmPin" type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required
+            autoComplete="off" placeholder={ar ? "تأكيد الرمز" : "Confirm PIN"} className={`${small} num`} />
+          <Buttons ar={ar} pending={pinPending} onBack={() => setPanel(null)} label={ar ? "احفظ الرمز" : "Save PIN"} />
+        </form>
+        {user.hasQuickPin && (
+          <form action={pinAction}>
+            <input type="hidden" name="userId" value={user.id} />
+            <input type="hidden" name="remove" value="true" />
+            <button type="submit" disabled={pinPending} className="text-xs text-bad underline">
+              {ar ? "إلغاء الرمز" : "Remove PIN"}
+            </button>
+          </form>
+        )}
+        {pinState.error && <p className="text-xs text-bad">{pinState.error}</p>}
+        {pinState.success && <p className="text-xs text-good">{pinState.success}</p>}
+      </div>
+    );
+  }
 
   if (panel === "role") {
     return (
@@ -110,6 +138,13 @@ export function UserActions({
       >
         {ar ? "باسورد" : "Password"}
       </button>
+
+      {user.role === "POS_CASHIER" && (
+        <button type="button" onClick={() => setPanel("pin")}
+          className="rounded-lg border border-ink-300 px-2 py-1 text-xs text-ink-700">
+          {ar ? user.hasQuickPin ? "غيّر PIN" : "حط PIN" : user.hasQuickPin ? "Change PIN" : "Set PIN"}
+        </button>
+      )}
 
       {user.isLocked && (
         <form action={unlockActionFn} className="inline">

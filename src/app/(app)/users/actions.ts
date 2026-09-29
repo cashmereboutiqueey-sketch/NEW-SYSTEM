@@ -8,6 +8,7 @@ import {
   setUserActive,
   resetPassword,
   unlockUser,
+  setCashierQuickPin,
   UserError,
 } from "@/lib/users";
 
@@ -128,6 +129,29 @@ export async function unlockAction(
     );
     refresh();
     return { success: "الحساب اتفتح." };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function setCashierPinAction(
+  _prev: UserState,
+  formData: FormData,
+): Promise<UserState> {
+  try {
+    const session = await authorize("user:manage");
+    const remove = formData.get("remove") === "true";
+    const pin = String(formData.get("pin") ?? "");
+    if (!remove && pin !== String(formData.get("confirmPin") ?? "")) {
+      return { error: "الرمزين مش متطابقين." };
+    }
+    await setCashierQuickPin(
+      { userId: String(formData.get("userId") ?? ""), pin: remove ? null : pin },
+      { userId: session.userId, reason: null },
+    );
+    refresh();
+    revalidatePath("/", "layout");
+    return { success: remove ? "اتلغى رمز الكاشير." : "اتحفظ رمز الكاشير." };
   } catch (error) {
     return { error: toMessage(error) };
   }

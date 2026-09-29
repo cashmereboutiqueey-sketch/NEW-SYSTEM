@@ -289,7 +289,7 @@ export default async function SalesPage({
                 headers={[
                   ar ? "الوردية" : "Session",
                   ar ? "الموقع" : "Location",
-                  ar ? "البياع" : "Sold by",
+                  ar ? "فاتح الوردية" : "Opened by",
                   ar ? "اللي عدّ" : "Counted by",
                   ar ? "طلبات" : "Orders",
                   ar ? "المتوقع" : "Expected",
@@ -301,7 +301,9 @@ export default async function SalesPage({
                     {s.sessionNumber}
                   </code>,
                   <span key={`${s.id}-l`}>{name(s.location)}</span>,
-                  <span key={`${s.id}-c`}>{s.cashier.name}</span>,
+                  <span key={`${s.id}-c`}>{s.cashier.name}{s.sharedWithCashiers && (
+                    <span className="ms-1 text-xs text-ink-500">{ar ? "· مشتركة" : "· shared"}</span>
+                  )}</span>,
                   // One person sells, another counts. Both names sit on the
                   // same row so the owner reads the pair, not just the total.
                   <span key={`${s.id}-cb`} className={s.closedBy ? "" : "text-ink-300"}>

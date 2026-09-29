@@ -100,6 +100,14 @@ export default async function UsersPage() {
         </Card>
       </div>
 
+      <Card title={ar ? "لابتوب المحل المشترك" : "Shared shop computer"} className="mb-5">
+        <p className="text-sm text-ink-600">
+          {ar
+            ? "اعمل حساب كاشير لكل بائع، وعيّن له PIN من ٦ أرقام بعد ما يغير الباسورد المؤقت. من نقطة البيع، المدير يفتح الوردية للفريق. بعدها زر «بدّل البائع» يبدّل الحساب بسرعة، وكل طلب يتسجل باسم الشخص اللي شغال."
+            : "Create a cashier account for each person and set a six-digit PIN after they replace their temporary password. A supervisor can share the open till with the team from POS. Switch cashier changes the signed-in person, so each new order carries their name."}
+        </p>
+      </Card>
+
       <Card title={ar ? "الحسابات" : "Accounts"}>
         <DataTable
           headers={[
@@ -149,6 +157,7 @@ export default async function UsersPage() {
                 role: u.role,
                 isActive: u.isActive,
                 isLocked: u.isLocked,
+                hasQuickPin: u.hasQuickPin,
               }}
               isSelf={u.id === session.userId}
               isLastOwner={u.role === "OWNER" && owners.length === 1}

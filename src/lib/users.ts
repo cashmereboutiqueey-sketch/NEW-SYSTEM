@@ -263,6 +263,36 @@ export async function unlockUser(
   });
 }
 
+/** Owner-managed code for changing cashier identity at a shared register. */
+export async function setCashierQuickPin(
+  input: { userId: string; pin: string | null },
+  ctx: AuditContext,
+): Promise<void> {
+  const user = await db.user.findUnique({ where: { id: input.userId } });
+  if (!user || user.role !== "POS_CASHIER") {
+    throw new UserError("Choose a cashier account for the quick PIN.");
+  }
+  if (input.pin !== null && !/^[0-9]{6}$/.test(input.pin)) {
+    throw new UserError("The cashier PIN must have exactly six digits.");
+  }
+
+  const quickPinHash = input.pin === null ? null : await hashPassword(input.pin);
+  await db.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user.id },
+      data: { quickPinHash, failedQuickPins: 0, quickPinLockedUntil: null },
+    });
+    await writeAudit(tx, {
+      action: input.pin === null ? "CASHIER_PIN_REMOVED" : "CASHIER_PIN_SET",
+      entityName: "User",
+      entityId: user.id,
+      // Neither the PIN nor its hash belongs in the audit log.
+      after: { name: user.name },
+      ctx,
+    });
+  });
+}
+
 /**
  * Somebody changing their own password.
  *
@@ -321,13 +351,15 @@ export async function listUsers() {
       failedLogins: true,
       lockedUntil: true,
       mustChangePassword: true,
+      quickPinHash: true,
       createdAt: true,
     },
   });
 
   const now = new Date();
-  return users.map((u) => ({
+  return users.map(({ quickPinHash, ...u }) => ({
     ...u,
+    hasQuickPin: quickPinHash !== null,
     isLocked: !!u.lockedUntil && u.lockedUntil > now,
     /** How much this role can reach, so an owner can see what they are granting. */
     permissionCount: permissionsFor(u.role as Role).length,

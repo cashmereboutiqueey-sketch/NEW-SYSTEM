@@ -1,10 +1,9 @@
 /**
  * Which till a person is standing at, and which they may not touch.
  *
- * One drawer takes one shift. That is the rule the whole thing turns on: a
- * difference between what was counted in and what was counted out has to have
- * exactly one name against it, and it stops meaning anything the moment two
- * people have been in the same drawer.
+ * One drawer takes one shift. A supervisor may share that shift with other
+ * signed-in cashiers; the sale keeps the actual cashier's name, while a cash
+ * variance belongs to the shared drawer and must be investigated as a team.
  *
  * Pure, because getting it wrong is silent in two directions. Hand somebody
  * a till that is not theirs and they build a basket and are refused with the
@@ -15,6 +14,7 @@
 export type OpenTill = {
   locationId: string;
   cashierUserId: string;
+  sharedWithCashiers?: boolean;
 };
 
 export type ShiftView<T> = {
@@ -23,6 +23,17 @@ export type ShiftView<T> = {
   /** Somebody else's, when that is why `use` is null. Null otherwise. */
   blockedBy: T | null;
 };
+
+/** Same rule for choosing a till and for accepting the sale at checkout. */
+export function mayWorkTill(
+  till: OpenTill,
+  userId: string,
+  mayClose: boolean,
+  isCashier: boolean,
+): boolean {
+  return till.cashierUserId === userId || mayClose ||
+    (isCashier && till.sharedWithCashiers === true);
+}
 
 /**
  * Sorts the open tills into the one this person works with.
@@ -34,16 +45,21 @@ export type ShiftView<T> = {
  * name is on it — counting somebody else's till at the end of their shift is
  * the entire reason that right exists.
  *
- * Everybody else gets nothing and is told whose it is, which is the part that
- * was missing: the refusal used to arrive at the moment of sale.
+ * A cashier may use a supervisor-shared drawer. Everybody else gets nothing
+ * and is told whose it is, before a basket is built.
  */
 export function shiftFor<T extends OpenTill>(
   open: T[],
   userId: string,
   mayClose: boolean,
+  maySellOnShared = false,
 ): ShiftView<T> {
   const mine = open.find((t) => t.cashierUserId === userId) ?? null;
   if (mine) return { use: mine, blockedBy: null };
+
+  const shared = maySellOnShared
+    ? open.find((t) => mayWorkTill(t, userId, false, true)) ?? null : null;
+  if (shared) return { use: shared, blockedBy: null };
 
   const other = open[0] ?? null;
   if (mayClose && other) return { use: other, blockedBy: null };

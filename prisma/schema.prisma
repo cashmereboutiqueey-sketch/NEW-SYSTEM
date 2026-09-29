@@ -75,6 +75,12 @@ model User {
   failedLogins Int       @default(0)
   lockedUntil  DateTime?
 
+  /// Six-digit code for switching cashier identity on a shared shop computer.
+  /// The full password is still required for a normal sign-in.
+  quickPinHash        String?
+  failedQuickPins     Int       @default(0)
+  quickPinLockedUntil DateTime?
+
   /// Set when somebody hands this person a password rather than the person
   /// choosing one: a new account, or a reset. They cannot reach any screen
   /// until they replace it, because a password two people know is not a
@@ -2801,6 +2807,9 @@ model PosSession {
   location   Location  @relation(fields: [locationId], references: [id])
   cashierUserId String
   cashier    User      @relation(fields: [cashierUserId], references: [id])
+  /// When enabled by a supervisor, cashiers with their own PIN may work this
+  /// one drawer while every sale remains attributed to the signed-in cashier.
+  sharedWithCashiers Boolean @default(false)
 
   openedAt   DateTime  @default(now())
   closedAt   DateTime?

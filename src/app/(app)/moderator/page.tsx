@@ -182,6 +182,14 @@ export default async function ModeratorPage() {
         }
       />
 
+      {mayTake && session.role === "POS_CASHIER" && (
+        <p className="mb-4 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-sm text-ink-700">
+          {ar
+            ? `الأوردر الجديد هيتسجل باسم ${session.name}. لو شخص تاني هيعمله، استخدم «بدّل البائع» الأول.`
+            : `A new order will be recorded under ${session.name}. Switch cashier before someone else takes it.`}
+        </p>
+      )}
+
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <StatTile
           label={ar ? "قطع على الرف" : "Pieces on the shelf"}

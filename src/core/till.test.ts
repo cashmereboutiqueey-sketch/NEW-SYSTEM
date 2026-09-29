@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shiftFor, locationsFree } from "./till";
+import { shiftFor, locationsFree, mayWorkTill } from "./till";
 
 /** One drawer, one shift, and being told so before a basket is built. */
 
@@ -22,6 +22,15 @@ describe("which till somebody is standing at", () => {
     // Named, so the screen can say whose rather than refusing at the moment of
     // sale with the customer standing there.
     expect(view.blockedBy?.sessionNumber).toBe("TILL-2");
+  });
+
+  it("allows another cashier to use a supervisor-shared drawer", () => {
+    const view = shiftFor([{ ...alexandria, sharedWithCashiers: true }], ahmed, false, true);
+    expect(view.use?.sessionNumber).toBe("TILL-1");
+    expect(view.blockedBy).toBeNull();
+    expect(shiftFor([{ ...alexandria, sharedWithCashiers: true }], ahmed, false).use).toBeNull();
+    expect(mayWorkTill({ ...alexandria, sharedWithCashiers: true }, ahmed, false, true)).toBe(true);
+    expect(mayWorkTill({ ...alexandria, sharedWithCashiers: true }, ahmed, false, false)).toBe(false);
   });
 
   it("gives whoever counts the drawer the one that is open, whosever it is", () => {

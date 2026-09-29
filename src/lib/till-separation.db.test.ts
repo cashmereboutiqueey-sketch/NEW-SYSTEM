@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
-import { createSale, openPosSession, closePosSession, SalesError } from "./sales";
+import { createSale, openPosSession, closePosSession, setPosSessionShared, SalesError } from "./sales";
 import { createUser } from "./users";
 import { can } from "@/core/permissions";
 
@@ -222,5 +222,24 @@ describe("the two rights are held by different people", () => {
   it("gives the owner both, as the way out of a dead end", () => {
     expect(can("OWNER", "pos:operate")).toBe(true);
     expect(can("OWNER", "pos:close_shift")).toBe(true);
+  });
+});
+
+describe("a shared register", () => {
+  it("lets a supervisor share the open drawer and records the change", async () => {
+    const opened = await openPosSession(
+      { locationId, cashierUserId: cashierId, openingFloat: "0" },
+      { userId: cashierId, reason: null },
+    );
+    await setPosSessionShared(
+      { posSessionId: opened.posSessionId, shared: true },
+      { userId: ownerId, reason: null },
+    );
+    const till = await db.posSession.findUniqueOrThrow({ where: { id: opened.posSessionId } });
+    expect(till.sharedWithCashiers).toBe(true);
+    expect(await db.auditLog.count({
+      where: { action: "POS_TILL_SHARED", entityId: till.id, userId: ownerId },
+    })).toBe(1);
+    await db.posSession.delete({ where: { id: till.id } });
   });
 });

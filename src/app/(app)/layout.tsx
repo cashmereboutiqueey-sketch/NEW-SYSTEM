@@ -7,6 +7,8 @@ import { MobileMenu } from "@/components/mobile-menu";
 import { EntitySwitcher } from "@/components/entity-switcher";
 import { LocaleToggle } from "@/components/locale-toggle";
 import { Icon } from "@/components/icon";
+import { QuickSwitch } from "@/components/quick-switch";
+import { quickSwitchCashiers } from "@/lib/quick-switch";
 import { logoutAction } from "../actions";
 
 export default async function AppLayout({
@@ -27,6 +29,7 @@ export default async function AppLayout({
   if (user.mustChangePassword) redirect("/change-password");
 
   const { locale, scope } = await getPrefs();
+  const cashiers = user.role === "POS_CASHIER" ? await quickSwitchCashiers() : [];
 
   return (
     <div className="app-shell flex h-screen overflow-hidden bg-cream">
@@ -43,6 +46,9 @@ export default async function AppLayout({
 
           <div className="ms-auto flex items-center gap-3">
             <LocaleToggle locale={locale} />
+            {user.role === "POS_CASHIER" && (
+              <QuickSwitch ar={locale === "ar"} cashiers={cashiers} currentUserId={user.userId} />
+            )}
 
             <div className="flex items-center gap-2 border-s border-ink-200 ps-3">
               <div className="text-end leading-tight">

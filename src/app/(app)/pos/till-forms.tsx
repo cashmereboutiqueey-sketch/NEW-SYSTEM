@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { openTillAction, closeTillAction, type PosState } from "./actions";
+import { openTillAction, closeTillAction, setTillSharedAction, type PosState } from "./actions";
 import type { Locale } from "@/lib/i18n";
 
 const initial: PosState = {};
@@ -111,6 +111,37 @@ export function CloseTillForm({
           {state.success}
         </p>
       )}
+    </form>
+  );
+}
+
+export function SharedTillForm({
+  locale, posSessionId, shared,
+}: {
+  locale: Locale;
+  posSessionId: string;
+  shared: boolean;
+}) {
+  const [state, formAction, pending] = useActionState(setTillSharedAction, initial);
+  const ar = locale === "ar";
+  return (
+    <form action={formAction} className="flex flex-wrap items-center gap-3">
+      <input type="hidden" name="posSessionId" value={posSessionId} />
+      <input type="hidden" name="shared" value={String(!shared)} />
+      <span className="text-sm text-ink-700">
+        {shared ? ar ? "الدرج مشترك بين الكاشيرز" : "Cashier team shares this drawer"
+          : ar ? "الدرج باسم فاتح الوردية فقط" : "Only the opener can sell on this drawer"}
+      </span>
+      <button type="submit" disabled={pending}
+        className="rounded-lg border border-ink-300 px-3 py-1.5 text-xs font-medium text-ink-700 disabled:opacity-50">
+        {shared ? ar ? "اقفل المشاركة" : "Stop sharing" : ar ? "افتحها للفريق" : "Share with cashiers"}
+      </button>
+      <p className="w-full text-xs text-ink-500">
+        {ar ? "كل بائع يدخل برمزه من «بدّل البائع»، فتتسجل البيعة باسمه. فرق الدرج بيتراجع على الوردية المشتركة."
+          : "Each cashier switches with their own PIN, so their sales carry their name. Cash variance belongs to the shared shift."}
+      </p>
+      {state.error && <p role="alert" className="w-full text-xs text-bad">{state.error}</p>}
+      {state.success && <p role="status" className="w-full text-xs text-good">{state.success}</p>}
     </form>
   );
 }

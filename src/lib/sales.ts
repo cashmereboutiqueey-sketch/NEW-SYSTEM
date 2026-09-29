@@ -678,6 +678,31 @@ export async function openPosSession(
   });
 }
 
+/** Supervisor opts an open drawer into team use without restarting the shift. */
+export async function setPosSessionShared(
+  input: { posSessionId: string; shared: boolean },
+  ctx: AuditContext,
+): Promise<void> {
+  return command("sales.setPosSessionShared", input, ctx, async () => {
+    await db.$transaction(async (tx) => {
+      const session = await tx.posSession.findUnique({ where: { id: input.posSessionId } });
+      if (!session || session.closedAt) throw new SalesError("That till is not open.");
+      if (session.sharedWithCashiers === input.shared) return;
+      await tx.posSession.update({
+        where: { id: session.id }, data: { sharedWithCashiers: input.shared },
+      });
+      await writeAudit(tx, {
+        action: input.shared ? "POS_TILL_SHARED" : "POS_TILL_PRIVATE",
+        entityName: "PosSession",
+        entityId: session.id,
+        before: { sharedWithCashiers: session.sharedWithCashiers },
+        after: { sharedWithCashiers: input.shared },
+        ctx,
+      });
+    });
+  });
+}
+
 /**
  * Closes a till and reconciles the drawer.
  *

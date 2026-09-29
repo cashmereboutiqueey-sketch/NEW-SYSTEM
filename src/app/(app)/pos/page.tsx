@@ -9,7 +9,7 @@ import { sellableStock, openTillFor, tillTotals } from "@/lib/pos";
 import { shiftFor, locationsFree } from "@/core/till";
 import { sellableConsignedStock } from "@/lib/consignment";
 import { PosTerminal } from "./pos-terminal";
-import { OpenTillForm, CloseTillForm } from "./till-forms";
+import { OpenTillForm, CloseTillForm, SharedTillForm } from "./till-forms";
 
 /**
  * نقطة البيع — the till.
@@ -56,12 +56,9 @@ export default async function PosPage({
   /*
    * Which till this person is standing at.
    *
-   * Their own first, wherever it is, so a cashier returning to the screen
-   * lands back in their own shift. Only then somebody else's, and only to be
-   * told about it: the screen used to hand a cashier the first open till it
-   * found anywhere — including one at another branch, opened by somebody else
-   * — let her fill a basket on it, and refuse at the moment she pressed sell
-   * with the customer standing there.
+   * Their own first, wherever it is. Then a shift a supervisor has shared
+   * with the team. A private shift belonging to somebody else is shown as
+   * blocked before a basket is built.
    */
   const open = (
     await Promise.all(
@@ -71,7 +68,9 @@ export default async function PosPage({
     )
   ).filter((t) => t !== null);
 
-  const { use: till, blockedBy: elsewhere } = shiftFor(open, session.userId, mayClose);
+  const { use: till, blockedBy: elsewhere } = shiftFor(
+    open, session.userId, mayClose, maySell && session.role === "POS_CASHIER",
+  );
   const free = locationsFree(locations, open);
 
   // A retail channel if one is configured, otherwise whatever exists — the
@@ -202,18 +201,28 @@ export default async function PosPage({
         })
       : null;
   const waiting = Number(stuckAtFactory?._sum.remainingQty ?? 0);
+  const sharedLabel = till.sharedWithCashiers
+    ? (ar ? " · وردية مشتركة" : " · shared shift") : "";
 
   return (
     <>
       <PageHeader
         title={ar ? "نقطة البيع" : "Point of sale"}
-        subtitle={`${name(till.location)} · ${till.cashier.name}`}
+        subtitle={`${name(till.location)} · ${till.cashier.name}${sharedLabel}`}
         actions={
           <Badge tone="good">
             {ar ? "وردية مفتوحة" : "Till open"} · {till.sessionNumber}
           </Badge>
         }
       />
+
+      {till.sharedWithCashiers && (
+        <p className="mb-4 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-sm text-ink-700">
+          {ar
+            ? `الوردية مفتوحة باسم ${till.cashier.name}، والبيعة الجديدة هتتسجل باسم ${session.name}. لو شخص تاني هيبيع، استخدم «بدّل البائع» الأول.`
+            : `The shift was opened by ${till.cashier.name}. The next sale will be recorded under ${session.name}. Switch cashier before someone else sells.`}
+        </p>
+      )}
 
       {seeTakings ? (
         <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -305,13 +314,18 @@ export default async function PosPage({
       )}
 
       {mayClose && (
-        <Card title={ar ? "قفل الوردية" : "Close the till"}>
-          <CloseTillForm
-            locale={locale}
-            posSessionId={till.id}
-            expected={formatMoney(totals.expectedDrawer, locale)}
-          />
-        </Card>
+        <div className="space-y-4">
+          <Card title={ar ? "مشاركة الوردية" : "Shared shift"}>
+            <SharedTillForm locale={locale} posSessionId={till.id} shared={till.sharedWithCashiers} />
+          </Card>
+          <Card title={ar ? "قفل الوردية" : "Close the till"}>
+            <CloseTillForm
+              locale={locale}
+              posSessionId={till.id}
+              expected={formatMoney(totals.expectedDrawer, locale)}
+            />
+          </Card>
+        </div>
       )}
     </>
   );

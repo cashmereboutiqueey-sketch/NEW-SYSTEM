@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
-import { createSale, openPosSession, closePosSession, SalesError } from "@/lib/sales";
+import { createSale, openPosSession, closePosSession, setPosSessionShared, SalesError } from "@/lib/sales";
 import { LedgerError } from "@/lib/ledger";
 import { InventoryError } from "@/lib/inventory";
 import { can, type Role } from "@/core/permissions";
@@ -20,6 +20,7 @@ import {
   SalePriceError,
 } from "@/lib/sale-prices";
 import { normalisePhone } from "@/core/crm";
+import { mayWorkTill } from "@/core/till";
 
 export type PosState = {
   error?: string;
@@ -91,6 +92,21 @@ export async function openTillAction(_prev: PosState, formData: FormData): Promi
     );
     revalidatePath("/pos");
     return { success: `Till ${result.sessionNumber} is open.` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function setTillSharedAction(_prev: PosState, formData: FormData): Promise<PosState> {
+  try {
+    const session = await authorize("pos:close_shift");
+    const shared = formData.get("shared") === "true";
+    await setPosSessionShared(
+      { posSessionId: String(formData.get("posSessionId") ?? ""), shared },
+      { userId: session.userId, reason: null },
+    );
+    revalidatePath("/pos");
+    return { success: shared ? "Till is open to the cashier team." : "Till is assigned to its opener only." };
   } catch (error) {
     return { error: toMessage(error) };
   }
@@ -225,10 +241,9 @@ class CheckoutError extends Error {
 /**
  * The till this sale is rung up on, and whether this person may use it.
  *
- * A till is one cashier at one location for one shift: its drawer count at
- * the end is only meaningful if every sale in it was theirs, taken there. A
- * supervisor — anybody who may close a shift — can ring up on a colleague's
- * till, which is how cover for a break works.
+ * A till is one drawer at one location for one shift. A supervisor may share
+ * it with signed-in cashiers; each sale keeps the actual cashier's account,
+ * while the drawer count is reconciled for the whole team.
  */
 async function checkTill(
   posSessionId: string,
@@ -237,14 +252,16 @@ async function checkTill(
 ): Promise<void> {
   const till = await db.posSession.findUnique({
     where: { id: posSessionId },
-    select: { locationId: true, cashierUserId: true, closedAt: true },
+    select: { locationId: true, cashierUserId: true, sharedWithCashiers: true, closedAt: true },
   });
   if (!till) throw new CheckoutError("Open a till before ringing up a sale.");
   if (till.closedAt) throw new CheckoutError("That till is already closed. Open a new one.");
   if (till.locationId !== locationId) {
     throw new CheckoutError("That till is at another location from this sale.");
   }
-  if (till.cashierUserId !== session.userId && !can(session.role, "pos:close_shift")) {
+  if (!mayWorkTill(
+    till, session.userId, can(session.role, "pos:close_shift"), session.role === "POS_CASHIER",
+  )) {
     // Not "open your own": one drawer takes one shift, so that is the one
     // thing this person cannot do. What unblocks it is the drawer being
     // counted and closed by somebody who may.

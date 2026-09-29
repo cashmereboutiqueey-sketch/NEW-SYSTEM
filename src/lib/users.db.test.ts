@@ -12,8 +12,10 @@ import {
   listUsers,
   assignableRoles,
   UserError,
+  setCashierQuickPin,
 } from "./users";
 import { authenticate } from "./auth";
+import { authenticateCashierPin } from "./quick-switch";
 
 /**
  * Who may sign in.
@@ -62,6 +64,28 @@ function newUser(over: Partial<Parameters<typeof createUser>[0]> = {}) {
     asOwner(),
   );
 }
+
+describe("cashier PIN setup", () => {
+  it("switches only after the temporary password is replaced and never audits the PIN", async () => {
+    const { id } = await newUser();
+    await setCashierQuickPin({ userId: id, pin: "604281" }, asOwner());
+    await expect(authenticateCashierPin(id, "604281"))
+      .rejects.toThrow(/unavailable cashier/i);
+
+    await db.user.update({ where: { id }, data: { mustChangePassword: false } });
+    await expect(authenticateCashierPin(id, "604281"))
+      .resolves.toMatchObject({ userId: id });
+    expect((await listUsers()).find((user) => user.id === id)?.hasQuickPin).toBe(true);
+
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { action: "CASHIER_PIN_SET", entityId: id }, orderBy: { createdAt: "desc" },
+    });
+    expect(JSON.stringify(audit)).not.toContain("604281");
+    await setCashierQuickPin({ userId: id, pin: null }, asOwner());
+    await expect(authenticateCashierPin(id, "604281"))
+      .rejects.toThrow(/unavailable cashier/i);
+  });
+});
 
 describe("creating an account", () => {
   it("makes somebody who can actually sign in", async () => {
