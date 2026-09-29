@@ -28,7 +28,7 @@ export default async function MyCustomOrderPage({ params }: { params: Promise<{ 
       location: true,
       variant: { include: { style: true, colorCode: true, sizeCode: true } },
       productionOrder: true,
-      salesOrder: { select: { orderNumber: true } },
+      salesOrder: { select: { id: true, orderNumber: true, status: true } },
     },
   });
   if (!order) notFound();
@@ -38,10 +38,12 @@ export default async function MyCustomOrderPage({ params }: { params: Promise<{ 
   const colourName = ar ? variant.colorCode.nameAr : variant.colorCode.nameEn;
   const photo = imageUrl(variant.imageName) ?? imageUrl(variant.style.imageName);
   const date = (value: Date | null) => value?.toISOString().slice(0, 10) ?? "—";
+  const displayStatus = order.salesOrder && order.salesOrder.status !== "DELIVERED"
+    ? "SHIPPING" : order.status;
   const statusLabels: Record<string, string> = ar
-    ? { PENDING: "مستني أمر إنتاج", IN_PRODUCTION: "بيتصنّع", READY: "جاهز للتسليم", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }
-    : { PENDING: "Awaiting a run", IN_PRODUCTION: "Being made", READY: "Ready to hand over", DELIVERED: "Handed over", CANCELLED: "Cancelled" };
-  const tone = order.status === "READY" || order.status === "DELIVERED" ? "good" : order.status === "CANCELLED" ? "warn" : "info";
+    ? { PENDING: "مستني أمر إنتاج", IN_PRODUCTION: "بيتصنّع", READY: "جاهز للتسليم", SHIPPING: "في الشحن", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }
+    : { PENDING: "Awaiting a run", IN_PRODUCTION: "Being made", READY: "Ready to hand over", SHIPPING: "Shipping", DELIVERED: "Handed over", CANCELLED: "Cancelled" };
+  const tone = displayStatus === "READY" || displayStatus === "DELIVERED" ? "good" : displayStatus === "CANCELLED" ? "warn" : "info";
 
   return (
     <>
@@ -53,7 +55,7 @@ export default async function MyCustomOrderPage({ params }: { params: Promise<{ 
       <PageHeader
         title={ar ? `تفاصيل الطلب ${order.orderNumber}` : `Order ${order.orderNumber}`}
         subtitle={ar ? "قطعة بتتصنّع مخصوص للعميل" : "Made to order for this customer"}
-        actions={<Badge tone={tone}>{statusLabels[order.status] ?? order.status}</Badge>}
+        actions={<Badge tone={tone}>{statusLabels[displayStatus] ?? displayStatus}</Badge>}
       />
 
       <Card title={ar ? "القطعة المطلوبة" : "Ordered item"} className="mb-4">
@@ -107,7 +109,7 @@ export default async function MyCustomOrderPage({ params }: { params: Promise<{ 
             <Detail label={ar ? "العربون" : "Deposit"}>{formatMoney(order.depositAmount, locale)}</Detail>
             <Detail label={ar ? "أمر الإنتاج" : "Production run"}>{order.productionOrder?.orderNumber}</Detail>
             {order.productionOrder && <Detail label={ar ? "حالة الإنتاج" : "Production status"}>{order.productionOrder.status}</Detail>}
-            {order.salesOrder && <Detail label={ar ? "رقم البيع بعد التسليم" : "Sale after handover"}>{order.salesOrder.orderNumber}</Detail>}
+            {order.salesOrder && <Detail label={ar ? "رقم البيع والشحن" : "Sale and shipping"}><Link href={`/my-orders/sales/${order.salesOrder.id}`} className="underline">{order.salesOrder.orderNumber}</Link></Detail>}
           </dl>
         </Card>
       </div>

@@ -327,6 +327,7 @@ export async function awaitingIntake(): Promise<
   {
     despatchNumber: string;
     despatchedOn: Date;
+    productionOrderId: string | null;
     variantId: string;
     sku: string;
     styleId: string;
@@ -395,6 +396,8 @@ export async function awaitingIntake(): Promise<
     return {
       despatchNumber: first.movements[0]?.referenceId ?? "—",
       despatchedOn: first.receivedDate,
+      productionOrderId: bucket.every((lot) => lot.productionOrderId === first.productionOrderId)
+        ? first.productionOrderId : null,
       variantId: v.id,
       sku: v.sku,
       styleId: v.style.id,

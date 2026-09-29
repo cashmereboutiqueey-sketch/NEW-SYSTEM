@@ -739,6 +739,10 @@ export async function applyCourierReport(
             where: { id: shipment.salesOrder.id },
             data: { status: "DELIVERED", deliveredDate: now },
           });
+          await db.customOrder.updateMany({
+            where: { salesOrderId: shipment.salesOrder.id, status: "READY" },
+            data: { status: "DELIVERED", deliveredAt: now },
+          });
           delivered += 1;
         }
 

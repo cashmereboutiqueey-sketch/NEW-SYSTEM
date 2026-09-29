@@ -125,7 +125,7 @@ describe("independent re-audit reproductions — current defects", () => {
     for (const [key, value] of Object.entries({ locationId, entityId: brandId, channelId, posSessionId: till.posSessionId,
       method: "DEPOSIT", requestId: "reaudit-deposit-tender", cart: JSON.stringify([{ variantId, quantity: 1, retailPrice: 1000000, discountPct: 0 }]) })) form.set(key, value);
     const result = await checkoutAction({}, form);
-    expect(result.error).toMatch(/supported.*payment/i);
+    expect(result.error).toMatch(/at the till, choose cash, card, or instapay/i);
     expect(result.receipt).toBeUndefined();
     expect(await balance("2400")).toBe(0);
     expect(await balance("1115")).toBe(0);

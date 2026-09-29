@@ -46,6 +46,7 @@ export const PERMISSIONS = [
   /// goods are the shop's business and fabric is not.
   "material:view",
   "inventory:transfer",
+  "inventory:receive",
   "inventory:adjust",
   "inventory:approve_adjustment",
 
@@ -194,7 +195,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
 
   PRODUCTION: [
     "production:view", "production:create", "production:record",
-    "inventory:view", "stock_value:view", "material:view", "inventory:transfer",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer", "inventory:receive",
     "purchase_order:view", "purchase_order:create",
     "goods_receipt:create",
     "minute_rate:view",
@@ -210,7 +211,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
   ],
 
   WAREHOUSE: [
-    "inventory:view", "stock_value:view", "material:view", "inventory:transfer", "inventory:adjust",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer", "inventory:receive", "inventory:adjust",
     "goods_receipt:create",
     "purchase_order:view",
     "production:view",
@@ -222,7 +223,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     "sales_order:credit", "sales_order:refund",
     "customer:view",
     "campaign:view", "campaign:manage",
-    "inventory:view", "stock_value:view", "material:view", "inventory:transfer",
+    "inventory:view", "stock_value:view", "material:view", "inventory:transfer", "inventory:receive",
     "retail_price:manage",
     "transfer_price:view",
     "pos:operate", "pos:close_shift",
@@ -248,7 +249,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[] | "ALL"> = {
     // Quantities only, and only where the job needs them: counting in a
     // delivery from the factory. Not the stock register, not what any of it
     // is worth, and not the factory bill.
-    "inventory:view",
+    "inventory:view", "inventory:receive",
     // Deliberately not `customer:view`. A customer is chosen by name while a
     // sale is being rung up, which `pos:operate` and `sales_order:create`
     // already allow; browsing the whole customer base is a different act and

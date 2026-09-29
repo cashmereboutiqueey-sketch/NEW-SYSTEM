@@ -20,12 +20,12 @@ import { IntakeForm } from "./intake-form";
  *     and can never find;
  *   - nothing reaches a shelf without a barcode on it.
  */
-export default async function GoodsInPage() {
+export default async function GoodsInPage({ searchParams }: { searchParams: Promise<{ customOrderId?: string }> }) {
   const session = await requirePermission("inventory:view");
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 
-  const mayReceive = can(session.role, "inventory:transfer");
+  const mayReceive = can(session.role, "inventory:receive");
   const maySeePrice = can(session.role, "transfer_price:view");
   // What a shortfall cost is money, and it was shown to everybody who
   // could open this screen. The count that is short is the part the
@@ -34,6 +34,11 @@ export default async function GoodsInPage() {
   const seeValue = can(session.role, "stock_value:view");
 
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+  const focusedId = (await searchParams).customOrderId;
+  const focused = focusedId ? await db.customOrder.findUnique({
+    where: { id: focusedId },
+    select: { orderNumber: true, variantId: true, productionOrderId: true, locationId: true },
+  }) : null;
 
   const [arriving, destinations, recentShortfalls] = await Promise.all([
     awaitingIntake(),
@@ -50,10 +55,16 @@ export default async function GoodsInPage() {
   ]);
 
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
+  const visibleArriving = focused
+    ? arriving.filter((row) => row.productionOrderId === focused.productionOrderId && row.variantId === focused.variantId)
+    : arriving;
+  const intakeDestinations = focused
+    ? [...destinations].sort((a, b) => Number(b.id === focused.locationId) - Number(a.id === focused.locationId))
+    : destinations;
   const today = cairoDateKey();
 
-  const expectedUnits = arriving.reduce((s, r) => s.plus(dec(r.expectedQty)), dec(0));
-  const expectedValue = arriving.reduce(
+  const expectedUnits = visibleArriving.reduce((s, r) => s.plus(dec(r.expectedQty)), dec(0));
+  const expectedValue = visibleArriving.reduce(
     (s, r) => s.plus(dec(r.transferPrice ?? 0).times(dec(r.expectedQty))),
     dec(0),
   );
@@ -88,6 +99,13 @@ export default async function GoodsInPage() {
             : "Count what arrived, tag it, then it goes onto the floor — the invoice is raised for the number you counted"
         }
       />
+
+      {focused && (
+        <p className="mb-4 rounded-lg border border-info/30 bg-info/5 px-3 py-2 text-sm">
+          {ar ? `استلام أوردر ${focused.orderNumber}. اختار مكان الأوردر وعدّ القطعة، وبعدها ارجع للوعود المفتوحة.` : `Receiving ${focused.orderNumber}. Count it into the order's location, then return to open promises.`}{" "}
+          <a href="/moderator" className="underline">{ar ? "الوعود المفتوحة" : "Open promises"}</a>
+        </p>
+      )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <StatTile
@@ -127,7 +145,7 @@ export default async function GoodsInPage() {
             : "Until this is done the goods are the Factory's and nothing has been invoiced"
         }
       >
-        {arriving.length === 0 ? (
+        {visibleArriving.length === 0 ? (
           <p className="py-8 text-center text-sm text-ink-400">
             {ar
               ? "مفيش حاجة في الطريق. لو مستني توريدة، اتأكد إن المصنع شحنها من صفحة الشحن للبراند."
@@ -135,7 +153,7 @@ export default async function GoodsInPage() {
           </p>
         ) : (
           <ul className="divide-y divide-ink-100">
-            {arriving.map((r) => (
+            {visibleArriving.map((r) => (
               <li key={`${r.despatchNumber}-${r.variantId}`} className="py-4">
                 <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <code dir="ltr" className="text-xs text-ink-500">{r.despatchNumber}</code>
@@ -169,7 +187,7 @@ export default async function GoodsInPage() {
                   <IntakeForm
                     locale={locale}
                     today={today}
-                    destinations={destinations.map((d) => ({ id: d.id, label: name(d) }))}
+                    destinations={intakeDestinations.map((d) => ({ id: d.id, label: name(d) }))}
                     row={{
                       despatchNumber: r.despatchNumber,
                       variantId: r.variantId,

@@ -9,12 +9,14 @@ import {
   linkProductionOrder,
   markReady,
   deliverCustomOrder,
+  bookCustomOrderForShipping,
   cancelCustomOrder,
   customOrderList,
   depositsHeld,
   CustomOrderError,
 } from "./custom-orders";
 import { outstandingForCustomer } from "./receivables";
+import { readyToShip, createShipmentBatches, applyCourierReport } from "./shipping";
 import { dec } from "./money";
 
 /**
@@ -38,11 +40,13 @@ let styleId: string;
 let channelId: string;
 let customerId: string;
 let day: Date;
+let ownerId: string;
 
 const ctx = { userId: null as string | null, reason: null };
 
 beforeAll(async () => {
   brandId = (await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } })).id;
+  ownerId = (await db.user.findFirstOrThrow({ where: { role: "OWNER" } })).id;
   showroomId = (await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } })).id;
   channelId = (await db.salesChannel.findFirstOrThrow()).id;
 
@@ -62,16 +66,20 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
     await db.customOrder.deleteMany({});
+    await db.shipment.deleteMany({});
+    await db.shipmentBatch.deleteMany({});
     await db.garmentUnit.deleteMany({});
     await db.salesPayment.deleteMany({});
     await db.salesOrderLine.deleteMany({});
     await db.salesOrder.deleteMany({});
+    await db.productionOrder.deleteMany({ where: { orderNumber: { startsWith: "PO-TEST-CO-" } } });
     await db.inventoryMovement.deleteMany({});
     await db.inventoryLot.deleteMany({});
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.auditLog.deleteMany({});
     await db.documentSequence.deleteMany({});
+    await db.courierZone.deleteMany({ where: { region: "Custom order test zone" } });
     await db.customer.deleteMany({ where: { code: { startsWith: "CO-" } } });
   } finally {
     await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" ENABLE TRIGGER USER`);
@@ -124,6 +132,16 @@ async function garmentMade(quantity = 1) {
     },
     ctx,
   );
+}
+
+async function completedRunFor(customOrderId: string) {
+  const run = await db.productionOrder.create({
+    data: {
+      orderNumber: `PO-TEST-CO-READY-${customOrderId.slice(-8)}`,
+      styleId, plannedQty: 1, status: "COMPLETED", orderDate: day,
+    },
+  });
+  await linkProductionOrder({ customOrderId, productionOrderId: run.id }, ctx);
 }
 
 function order(over: Partial<Parameters<typeof takeCustomOrder>[0]> = {}) {
@@ -270,6 +288,7 @@ describe("handing it over", () => {
   it("turns the deposit into revenue and takes the rest", async () => {
     const taken = await order(); // 4,000 agreed, 1,500 deposit
     await garmentMade();
+    await completedRunFor(taken.id);
     await markReady({ customOrderId: taken.id }, ctx);
 
     const delivered = await deliverCustomOrder(
@@ -283,6 +302,11 @@ describe("handing it over", () => {
     );
 
     expect(Number(delivered.stillOwed)).toBe(0);
+    const handedOver = await db.customOrder.findUniqueOrThrow({
+      where: { id: taken.id }, include: { salesOrder: true },
+    });
+    expect(handedOver.salesOrder?.status).toBe("DELIVERED");
+    expect((await readyToShip()).some((item) => item.orderNumber === handedOver.salesOrder?.orderNumber)).toBe(false);
 
     // The liability is discharged: the promise was kept.
     expect(await accountBalance("2400")).toBeCloseTo(0, 2);
@@ -380,6 +404,56 @@ describe("handing it over", () => {
     expect(after.status).toBe("DELIVERED");
     expect(after.salesOrder?.orderNumber).toBe(delivered.salesOrderNumber);
     expect(after.deliveredAt).not.toBeNull();
+  });
+});
+
+describe("shipping a made-to-order garment", () => {
+  it("moves the deposit once and leaves only the balance and delivery fee for the courier", async () => {
+    const taken = await order();
+    await completedRunFor(taken.id);
+    await expect(markReady({ customOrderId: taken.id }, ctx)).rejects.toThrow(/receive/i);
+    await garmentMade();
+    await markReady({ customOrderId: taken.id }, ctx);
+    const zone = await db.courierZone.create({
+      data: {
+        courier: "MG_EXPRESS", governorate: "القاهرة", region: "Custom order test zone",
+        branch: "5", price: "60", isActive: true,
+      },
+    });
+    const input = {
+      customOrderId: taken.id, channelId, shippedOn: day,
+      courierZoneId: zone.id, recipientName: "Hoda", phone: "01000000009",
+      addressLine: "12 Test Street", shippingAmount: "60",
+    };
+    const booked = await bookCustomOrderForShipping(input, { userId: ownerId, reason: null });
+    expect(Number(booked.codAmount)).toBe(2560);
+
+    const custom = await db.customOrder.findUniqueOrThrow({
+      where: { id: taken.id },
+      include: { salesOrder: { include: { payments: true } } },
+    });
+    expect(custom.status).toBe("READY");
+    expect(custom.salesOrder?.status).toBe("CONFIRMED");
+    expect(custom.salesOrder?.addressLine).toBe("12 Test Street");
+    expect(custom.salesOrder?.payments.find((payment) => payment.method === "COD")?.amount.toNumber()).toBe(2560);
+    expect(custom.salesOrder?.payments.find((payment) => payment.method === "DEPOSIT")?.amount.toNumber()).toBe(1500);
+    expect(await accountBalance("2400")).toBeCloseTo(0, 2);
+    expect(await ledgerGap()).toBeCloseTo(0, 6);
+    await expect(bookCustomOrderForShipping(input, { userId: ownerId, reason: null }))
+      .rejects.toThrow(/once/i);
+    await expect(cancelCustomOrder({ customOrderId: taken.id, reason: "test", cancelledOn: day }, ctx))
+      .rejects.toThrow(/already a sale/i);
+
+    expect((await readyToShip()).find((item) => item.orderNumber === booked.salesOrderNumber)?.codAmount).toBe("2560");
+    await createShipmentBatches({ salesOrderIds: [custom.salesOrder!.id] }, { userId: ownerId, reason: null });
+    expect((await db.customOrder.findUniqueOrThrow({ where: { id: taken.id } })).status).toBe("READY");
+    const report = await applyCourierReport({
+      rows: [{ reference: booked.salesOrderNumber, status: "المسلمة ودفع كامل", collected: "2560" }],
+    }, { userId: ownerId, reason: null });
+    expect(report.delivered).toBe(1);
+    const done = await db.customOrder.findUniqueOrThrow({ where: { id: taken.id } });
+    expect(done.status).toBe("DELIVERED");
+    expect(done.deliveredAt).not.toBeNull();
   });
 });
 

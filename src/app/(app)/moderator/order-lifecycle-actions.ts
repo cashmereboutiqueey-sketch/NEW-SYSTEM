@@ -10,6 +10,7 @@ import {
   linkProductionOrder,
   markReady,
   deliverCustomOrder,
+  bookCustomOrderForShipping,
   cancelCustomOrder,
   CustomOrderError,
 } from "@/lib/custom-orders";
@@ -127,7 +128,7 @@ export async function markReadyAction(
   formData: FormData,
 ): Promise<CustomOrderState> {
   try {
-    const session = await authorize("production:record");
+    const session = await authorize("sales_order:create");
     await markReady(
       { customOrderId: String(formData.get("customOrderId") ?? "") },
       { userId: session.userId, reason: null },
@@ -177,6 +178,35 @@ export async function deliverAction(
           ? `اتسلّم — فاتورة ${result.salesOrderNumber}، وعليه ${Number(result.stillOwed).toFixed(2)}`
           : `اتسلّم واتسدّد بالكامل — فاتورة ${result.salesOrderNumber}`,
     };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function shipCustomOrderAction(
+  _prev: CustomOrderState,
+  formData: FormData,
+): Promise<CustomOrderState> {
+  try {
+    const session = await authorize("sales_order:create");
+    const result = await formCommand("customOrders.bookForShipping", formData, { userId: session.userId }, () =>
+      bookCustomOrderForShipping({
+        customOrderId: String(formData.get("customOrderId") ?? ""),
+        channelId: String(formData.get("channelId") ?? ""),
+        shippedOn: day(formData.get("shippedOn")),
+        courierZoneId: String(formData.get("courierZoneId") ?? ""),
+        recipientName: String(formData.get("recipientName") ?? ""),
+        phone: String(formData.get("phone") ?? ""),
+        secondPhone: String(formData.get("secondPhone") ?? ""),
+        addressLine: String(formData.get("addressLine") ?? ""),
+        shippingAmount: String(formData.get("shippingAmount") ?? "0"),
+      }, { userId: session.userId, reason: null }),
+    );
+    refresh();
+    revalidatePath("/shipping");
+    revalidatePath("/sales");
+    revalidatePath("/my-orders");
+    return { success: `${result.salesOrderNumber} ready for the courier. COD ${Number(result.codAmount).toFixed(2)}.` };
   } catch (error) {
     return { error: toMessage(error) };
   }

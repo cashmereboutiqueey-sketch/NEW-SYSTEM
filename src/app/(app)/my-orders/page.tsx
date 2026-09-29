@@ -62,6 +62,8 @@ export default async function MyOrdersPage() {
         status: true,
         quantity: true,
         promisedDate: true,
+        salesOrderId: true,
+        salesOrder: { select: { status: true } },
         customer: { select: { name: true, phone: true } },
         variant: {
           select: {
@@ -80,6 +82,8 @@ export default async function MyOrdersPage() {
 
   const piecesOf = (o: { lines: { quantity: number }[] }) =>
     o.lines.reduce((s, l) => s + l.quantity, 0);
+  const promiseState = (p: (typeof promises)[number]) =>
+    p.salesOrderId && p.salesOrder?.status !== "DELIVERED" ? "SHIPPING" : p.status;
 
   // Done is delivered, or cancelled. Everything else is still somebody's
   // problem, and while it is, it is the problem of whoever promised it.
@@ -91,8 +95,8 @@ export default async function MyOrdersPage() {
 
   const awaitingDespatch = openSales.filter((o) => !["POS", "EXHIBITION"].includes(o.source) && o.shipments.length === 0 && !o.shippedDate);
   const onTheRoad = openSales.filter((o) => o.shipments.length > 0);
-  const awaitingFactory = openPromises.filter((p) => p.status !== "READY");
-  const readyToHandOver = openPromises.filter((p) => p.status === "READY");
+  const awaitingFactory = openPromises.filter((p) => promiseState(p) !== "READY" && promiseState(p) !== "SHIPPING");
+  const readyToHandOver = openPromises.filter((p) => promiseState(p) === "READY");
 
   // Gone quiet, in the two ways that matter: a parcel the courier turned back,
   // and a promise whose day has passed with nothing to hand over.
@@ -108,7 +112,7 @@ export default async function MyOrdersPage() {
         detail: o.shipments[0].courierStatus ?? o.shipments[0].status,
       })),
     ...openPromises
-      .filter((p) => p.promisedDate !== null && p.promisedDate < today && p.status !== "READY")
+      .filter((p) => p.promisedDate !== null && p.promisedDate < today && !["READY", "SHIPPING"].includes(promiseState(p)))
       .map((p) => ({
         key: `p-${p.id}`,
         href: `/my-orders/custom/${p.id}`,
@@ -128,8 +132,8 @@ export default async function MyOrdersPage() {
 
   const promiseStatus = (s: string) =>
     ar
-      ? { PENDING: "مستني أمر إنتاج", IN_PRODUCTION: "بيتصنّع", READY: "جاهز للتسليم", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }[s] ?? s
-      : { PENDING: "Awaiting a run", IN_PRODUCTION: "Being made", READY: "Ready to hand over", DELIVERED: "Handed over", CANCELLED: "Cancelled" }[s] ?? s;
+      ? { PENDING: "مستني أمر إنتاج", IN_PRODUCTION: "بيتصنّع", READY: "جاهز للتسليم", SHIPPING: "في الشحن", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }[s] ?? s
+      : { PENDING: "Awaiting a run", IN_PRODUCTION: "Being made", READY: "Ready to hand over", SHIPPING: "Shipping", DELIVERED: "Handed over", CANCELLED: "Cancelled" }[s] ?? s;
 
   const shipmentStatus = (s: string) =>
     ar
@@ -322,9 +326,9 @@ export default async function MyOrdersPage() {
             <span key="q" className="num">{p.quantity}</span>,
             <Badge
               key="s"
-              tone={p.status === "READY" ? "good" : p.status === "IN_PRODUCTION" ? "info" : "warn"}
+              tone={promiseState(p) === "READY" ? "good" : ["IN_PRODUCTION", "SHIPPING"].includes(promiseState(p)) ? "info" : "warn"}
             >
-              {promiseStatus(p.status)}
+              {promiseStatus(promiseState(p))}
             </Badge>,
             p.productionOrder ? (
               <span key="r" className="num text-xs" dir="ltr">{p.productionOrder.orderNumber}</span>
@@ -334,15 +338,19 @@ export default async function MyOrdersPage() {
             <span
               key="d"
               className={`num text-xs ${
-                p.promisedDate && p.promisedDate < today && p.status !== "READY" ? "text-bad" : ""
+                p.promisedDate && p.promisedDate < today && !["READY", "SHIPPING"].includes(promiseState(p)) ? "text-bad" : ""
               }`}
               dir="ltr"
             >
               {dateText(p.promisedDate)}
             </span>,
-            p.status === "READY" ? (
+            promiseState(p) === "READY" ? (
               <Link key="a" href="/moderator" className="text-xs font-medium text-ink-900 underline">
                 {ar ? "سلّميها" : "Hand over"}
+              </Link>
+            ) : promiseState(p) === "SHIPPING" ? (
+              <Link key="a" href="/shipping" className="text-xs font-medium text-ink-900 underline">
+                {ar ? "تابعي الشحن" : "Track shipping"}
               </Link>
             ) : (
               <span key="a" />

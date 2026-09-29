@@ -20,7 +20,7 @@ export async function receiveAtBrandAction(
   formData: FormData,
 ): Promise<FormState> {
   try {
-    const session = await authorize("inventory:transfer");
+    const session = await authorize("inventory:receive");
 
     const result = await receiveAtBrand(
       {

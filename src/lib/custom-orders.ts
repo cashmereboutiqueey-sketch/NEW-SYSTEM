@@ -221,7 +221,7 @@ export async function addDeposit(
       include: { customer: true },
     });
     if (!order) throw new CustomOrderError("Custom order not found.");
-    if (order.status === "DELIVERED") {
+    if (order.status === "DELIVERED" || order.salesOrderId) {
       throw new CustomOrderError("This order has been delivered; take payment against the sale instead.");
     }
     if (order.status === "CANCELLED") {
@@ -371,6 +371,24 @@ export async function markReady(
     if (!order) throw new CustomOrderError("Custom order not found.");
     if (order.status === "CANCELLED") throw new CustomOrderError("This order was cancelled.");
     if (order.status === "DELIVERED") throw new CustomOrderError("This order has already been delivered.");
+    if (order.salesOrderId) throw new CustomOrderError("This order has already become a sale.");
+    if (order.status !== "IN_PRODUCTION" || !order.productionOrderId) {
+      throw new CustomOrderError("This order needs a production run first.");
+    }
+    const run = await db.productionOrder.findUnique({ where: { id: order.productionOrderId } });
+    if (run?.status !== "COMPLETED") {
+      throw new CustomOrderError("The factory must complete the production run first.");
+    }
+    const brandStock = await db.inventoryLot.aggregate({
+      where: {
+        entityId: order.entityId, locationId: order.locationId,
+        variantId: order.variantId, state: "FINISHED_GOODS", remainingQty: { gt: 0 },
+      },
+      _sum: { remainingQty: true },
+    });
+    if (dec(brandStock._sum.remainingQty ?? 0).lessThan(order.quantity)) {
+      throw new CustomOrderError("Receive the finished piece from the factory at its collection location first.");
+    }
 
     await db.$transaction(async (tx) => {
       await tx.customOrder.update({ where: { id: order.id }, data: { status: "READY" } });
@@ -415,6 +433,7 @@ export async function deliverCustomOrder(
     if (order.status === "DELIVERED") {
       throw new CustomOrderError(`${order.orderNumber} has already been delivered.`);
     }
+    if (order.salesOrderId) throw new CustomOrderError(`${order.orderNumber} is already booked for shipping.`);
 
     const total = dec(order.agreedTotal);
     const deposit = dec(order.depositAmount);
@@ -475,6 +494,10 @@ export async function deliverCustomOrder(
     const stillOwed = total.minus(deposit).minus(payNow);
 
     await db.$transaction(async (tx) => {
+      await tx.salesOrder.update({
+        where: { id: sale.salesOrderId },
+        data: { status: "DELIVERED", deliveredDate: asDay(input.deliveredOn) },
+      });
       await tx.customOrder.update({
         where: { id: order.id },
         data: {
@@ -507,6 +530,76 @@ export async function deliverCustomOrder(
   });
 }
 
+/** Move a received custom garment into the ordinary courier queue. */
+export async function bookCustomOrderForShipping(
+  input: {
+    customOrderId: string;
+    channelId: string;
+    shippedOn: Date;
+    courierZoneId: string;
+    recipientName: string;
+    phone: string;
+    secondPhone?: string;
+    addressLine: string;
+    shippingAmount: string;
+  },
+  ctx: AuditContext,
+): Promise<{ salesOrderNumber: string; codAmount: string }> {
+  return command("custom-orders.bookForShipping", input, ctx, async () => {
+    const order = await db.customOrder.findUnique({ where: { id: input.customOrderId } });
+    if (!order) throw new CustomOrderError("Custom order not found.");
+    if (order.status !== "READY" || order.salesOrderId) {
+      throw new CustomOrderError("Only a received, ready order can be booked for shipping once.");
+    }
+    const zone = await db.courierZone.findUnique({ where: { id: input.courierZoneId } });
+    if (!zone?.isActive) throw new CustomOrderError("Choose an active courier area.");
+    if (!input.recipientName.trim() || !input.phone.trim() || !input.addressLine.trim()) {
+      throw new CustomOrderError("Recipient, phone and full address are required for shipping.");
+    }
+    const shipping = roundMoney(dec(input.shippingAmount));
+    if (shipping.lessThan(0)) throw new CustomOrderError("Shipping charge cannot be negative.");
+    const cod = roundMoney(dec(order.agreedTotal).minus(dec(order.depositAmount)).plus(shipping));
+    if (cod.lessThan(0)) throw new CustomOrderError("Deposit exceeds the order total.");
+
+    const sale = await createSale({
+      source: "MANUAL",
+      externalId: order.orderNumber,
+      channelId: input.channelId,
+      entityId: order.entityId,
+      locationId: order.locationId,
+      customerId: order.customerId,
+      orderDate: asDay(input.shippedOn),
+      notes: `Custom order ${order.orderNumber}; courier delivery`,
+      depositOrderId: order.id,
+      shippingAmount: shipping.toNumber(),
+      destination: {
+        courierZoneId: zone.id,
+        recipientName: input.recipientName.trim(),
+        phone: input.phone.trim(),
+        secondPhone: input.secondPhone?.trim() || null,
+        addressLine: input.addressLine.trim(),
+      },
+      lines: [{
+        variantId: order.variantId, quantity: order.quantity,
+        retailPrice: dec(order.agreedUnitPrice).toNumber(), discountPct: 0,
+      }],
+      payments: [
+        ...(dec(order.depositAmount).greaterThan(0) ? [{
+          method: "DEPOSIT" as const, amount: dec(order.depositAmount).toNumber(), fee: 0, collected: true,
+        }] : []),
+        ...(cod.greaterThan(0) ? [{ method: "COD" as const, amount: cod.toNumber(), fee: 0, collected: false }] : []),
+      ],
+    }, ctx);
+
+    await db.customOrder.update({ where: { id: order.id }, data: { salesOrderId: sale.salesOrderId } });
+    await writeAudit(db, {
+      action: "CUSTOM_ORDER_BOOKED_FOR_SHIPPING", entityName: "CustomOrder", entityId: order.id,
+      after: { salesOrder: sale.orderNumber, codAmount: cod.toString(), courierZoneId: zone.id }, ctx,
+    });
+    return { salesOrderNumber: sale.orderNumber, codAmount: cod.toString() };
+  });
+}
+
 /**
  * The customer changes their mind, or the shop cannot make it.
  *
@@ -535,6 +628,7 @@ export async function cancelCustomOrder(
       throw new CustomOrderError("This order was delivered; a return is not a cancellation.");
     }
     if (order.status === "CANCELLED") throw new CustomOrderError("Already cancelled.");
+    if (order.salesOrderId) throw new CustomOrderError("This order is already a sale. Handle a courier return through the sales return flow.");
 
     const deposit = dec(order.depositAmount);
 
@@ -625,12 +719,14 @@ export async function customOrderList(includeFinished = false) {
   return orders.map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber,
-    status: o.status,
+    status: o.salesOrderId && o.salesOrder?.status !== "DELIVERED" ? "SHIPPING" : o.status,
     customerName: o.customer.name,
     customerPhone: o.customer.phone,
     sku: o.variant.sku,
     styleName: o.variant.style.nameAr || o.variant.style.nameEn,
     styleId: o.variant.styleId,
+    locationId: o.locationId,
+    productionOrderId: o.productionOrderId,
     colour: o.variant.colorCode.nameAr || o.variant.colorCode.code,
     size: o.variant.sizeCode.code,
     quantity: o.quantity,
@@ -649,7 +745,7 @@ export async function customOrderList(includeFinished = false) {
 /** What the shop is holding against promises it has not yet kept. */
 export async function depositsHeld(): Promise<Decimal> {
   const open = await db.customOrder.aggregate({
-    where: { status: { in: ["PENDING", "IN_PRODUCTION", "READY"] } },
+    where: { status: { in: ["PENDING", "IN_PRODUCTION", "READY"] }, salesOrderId: null },
     _sum: { depositAmount: true },
   });
   return dec(open._sum.depositAmount ?? 0);

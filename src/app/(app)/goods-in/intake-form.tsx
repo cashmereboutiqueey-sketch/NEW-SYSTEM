@@ -109,10 +109,10 @@ export function IntakeForm({
           />
         </div>
 
-        <div className="ms-auto text-end">
+        {row.transferPrice !== null && <div className="ms-auto text-end">
           <p className="text-xs text-ink-500">{ar ? "قيمة الفاتورة" : "Invoice value"}</p>
           <p className="num text-lg font-semibold">{((qty ?? 0) * price).toFixed(2)}</p>
-        </div>
+        </div>}
       </div>
 
       {/* ------------------------------------------------------ the label gate */}

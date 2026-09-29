@@ -9,6 +9,7 @@ import { consignedStock } from "@/lib/consignment";
 import { ModeratorConsignmentForm } from "./consignment-form";
 import { makeabilityByStyle } from "@/lib/made-to-order";
 import { courierZones } from "@/lib/shipping";
+import { awaitingIntake } from "@/lib/intercompany";
 import { customOrderList, depositsHeld, availableRuns } from "@/lib/custom-orders";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { dec, formatMoney, formatNumber } from "@/lib/money";
@@ -44,9 +45,10 @@ export default async function ModeratorPage() {
   const mayTake = can(session.role, "sales_order:create");
   const mayPlan = can(session.role, "production:create");
   const mayHandleMoney = can(session.role, "payment:create");
+  const mayReceive = can(session.role, "inventory:receive");
   const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 
-  const [customers, channels, brandLocations, collectLocations, zones, variants, makeable, promises] =
+  const [customers, channels, brandLocations, collectLocations, zones, variants, makeable, promises, arriving] =
     await Promise.all([
       db.customer.findMany({
         where: { isSuppressed: false, mergedIntoId: null },
@@ -70,15 +72,16 @@ export default async function ModeratorPage() {
       }),
       makeabilityByStyle(),
       customOrderList(true),
+      awaitingIntake(),
     ]);
 
   const held = await depositsHeld();
   const consigned = (await consignedStock()).filter(
     (item) => item.left > 0 && brandLocations.some((location) => location.id === item.locationId),
   );
-  const open = promises.filter((o) => ["PENDING", "IN_PRODUCTION", "READY"].includes(o.status));
+  const open = promises.filter((o) => ["PENDING", "IN_PRODUCTION", "READY", "SHIPPING"].includes(o.status));
   const finished = promises.filter((o) => ["DELIVERED", "CANCELLED"].includes(o.status));
-  const uncovered = open.reduce((sum, o) => sum.plus(dec(o.atRisk)), dec(0));
+  const uncovered = open.filter((o) => o.status !== "SHIPPING").reduce((sum, o) => sum.plus(dec(o.atRisk)), dec(0));
   const channel = channels[0] ?? null;
 
   // Runs a planner could attach by hand, gathered per style so a row can offer
@@ -94,6 +97,10 @@ export default async function ModeratorPage() {
   // What the brand actually holds, so an order cannot promise a garment that
   // is still at the factory or still on the road.
   const shelves = await Promise.all(brandLocations.map((l) => sellableStock(l.id, brand.id)));
+  const stockAtLocation = new Map<string, number>();
+  shelves.forEach((shelf, index) => shelf.forEach((item) => {
+    stockAtLocation.set(`${brandLocations[index].id}|${item.variantId}`, Number(item.available));
+  }));
   const sellable = new Map<
     string,
     { variantId: string; styleId: string; styleName: string; sku: string; label: string; available: number; retailPrice: number; image: string | null; styleImage: string | null }
@@ -164,11 +171,11 @@ export default async function ModeratorPage() {
 
   const status = (s: string) =>
     ar
-      ? { PENDING: "مستني", IN_PRODUCTION: "بيتصنّع", READY: "جاهز", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }[s] ?? s
-      : { PENDING: "Pending", IN_PRODUCTION: "In production", READY: "Ready", DELIVERED: "Delivered", CANCELLED: "Cancelled" }[s] ?? s;
+      ? { PENDING: "مستني", IN_PRODUCTION: "بيتصنّع", READY: "جاهز", SHIPPING: "في الشحن", DELIVERED: "اتسلّم", CANCELLED: "اتلغى" }[s] ?? s
+      : { PENDING: "Pending", IN_PRODUCTION: "In production", READY: "Ready", SHIPPING: "Shipping", DELIVERED: "Delivered", CANCELLED: "Cancelled" }[s] ?? s;
 
   const statusTone = (s: string) =>
-    ({ PENDING: "warn", IN_PRODUCTION: "info", READY: "good", DELIVERED: "neutral", CANCELLED: "neutral" }[s] ??
+    ({ PENDING: "warn", IN_PRODUCTION: "info", READY: "good", SHIPPING: "info", DELIVERED: "neutral", CANCELLED: "neutral" }[s] ??
       "neutral") as "warn" | "info" | "good" | "neutral";
 
   return (
@@ -365,7 +372,7 @@ export default async function ModeratorPage() {
             <OrderActions
               key="a"
               ar={ar}
-              order={{ id: o.id, status: o.status, atRisk: o.atRisk, deposit: o.deposit }}
+              order={{ id: o.id, status: o.status, atRisk: o.atRisk, deposit: o.deposit, customerName: o.customerName, customerPhone: o.customerPhone, salesOrderNumber: o.salesOrderNumber }}
               channelId={channel?.id ?? ""}
               runs={(runsByStyle.get(o.styleId) ?? []).map((r) => ({
                 id: r.id,
@@ -375,6 +382,10 @@ export default async function ModeratorPage() {
               mayPlan={mayPlan}
               mayStartRun={mayTake}
               mayDeliver={mayTake}
+              mayReceive={mayReceive}
+              incoming={arriving.some((row) => row.productionOrderId === o.productionOrderId && row.variantId === variants.find((v) => v.sku === o.sku)?.id)}
+              canMarkReady={o.runStatus === "COMPLETED" && (stockAtLocation.get(`${o.locationId}|${variants.find((v) => v.sku === o.sku)?.id}`) ?? 0) >= o.quantity}
+              zones={zones}
             />,
           ])}
         />
