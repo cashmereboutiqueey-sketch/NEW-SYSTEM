@@ -352,10 +352,7 @@ export function CompleteOrderForm({
   fixedVariant?: { id: string; sku: string; label: string; requestedQty: number; orderNumber: string } | null;
 }) {
   const [state, formAction, pending] = useActionState(completeProductionOrderAction, initial);
-  const [outputs, setOutputs] = useState<Output[]>(() => {
-    const remaining = fixedVariant ? Math.max(0, fixedVariant.requestedQty - goodSoFar) : 0;
-    return fixedVariant && remaining > 0 ? [{ variantId: fixedVariant.id, goodQty: remaining }] : [];
-  });
+  const [outputs, setOutputs] = useState<Output[]>([]);
   const [close, setClose] = useState(true);
   const [rejected, setRejected] = useState(0);
   // Only what the person typed; everything else follows the output as it changes.
@@ -402,8 +399,8 @@ export function CompleteOrderForm({
         {fixedVariant && (
           <p className="mb-2 text-xs text-ink-500">
             {ar
-              ? `${fixedVariant.orderNumber} محدد فيه اللون والمقاس؛ اكتب العدد السليم اللي اتعمل فعلاً.`
-              : `${fixedVariant.orderNumber} already fixes the colour and size. Enter only the good quantity actually made.`}
+              ? `${fixedVariant.orderNumber} محدد فيه اللون والمقاس · لسه مطلوب ${Math.max(0, fixedVariant.requestedQty - goodSoFar)} قطعة سليمة. اكتب اللي اتعمل فعلاً.`
+              : `${fixedVariant.orderNumber} fixes the colour and size · ${Math.max(0, fixedVariant.requestedQty - goodSoFar)} good piece(s) still requested. Enter what was actually made.`}
           </p>
         )}
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
