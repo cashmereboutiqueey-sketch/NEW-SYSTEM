@@ -67,6 +67,7 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.customOrder.deleteMany({});
     await db.materialIssue.deleteMany({});
     await db.capacityBooking.deleteMany({});
     await db.productionOrderLine.deleteMany({});
@@ -84,6 +85,7 @@ async function wipe() {
     await db.expense.deleteMany({});
     await db.auditLog.deleteMany({});
     await db.documentSequence.deleteMany({});
+    await db.customer.deleteMany({ where: { code: "PROD-CUSTOM-TEST" } });
   } finally {
     await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" ENABLE TRIGGER USER`);
     await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" ENABLE TRIGGER USER`);
@@ -834,6 +836,47 @@ describe("the frozen bill", () => {
  * counted, transferred and sold.
  */
 describe("output as a size curve", () => {
+  it("receives a customer run only in the promised colour and size", async () => {
+    const productionOrderId = await runOrder(1, await standardFabricFor(1));
+    const customer = await db.customer.create({
+      data: { code: "PROD-CUSTOM-TEST", name: "Production customer test" },
+    });
+    const brand = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
+    const showroom = await db.location.findFirstOrThrow({ where: { code: "LOC-ALX" } });
+    await db.customOrder.create({
+      data: {
+        orderNumber: "CUS-PROD-TEST",
+        status: "IN_PRODUCTION",
+        customerId: customer.id,
+        variantId,
+        quantity: 1,
+        agreedUnitPrice: "2500",
+        agreedTotal: "2500",
+        entityId: brand.id,
+        locationId: showroom.id,
+        productionOrderId,
+      },
+    });
+
+    const wrongSize = allVariantIds.find((id) => id !== variantId)!;
+    await expect(completeProductionOrder(
+      { productionOrderId, outputs: [{ variantId: wrongSize, goodQty: 1 }], locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    )).rejects.toThrow(/requested colour and size/);
+    await expect(completeProductionOrder(
+      { productionOrderId, outputs: [{ variantId, goodQty: 2 }], locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    )).rejects.toThrow(/requests 1 good piece/);
+    expect(await db.inventoryLot.count({ where: { state: "FINISHED_GOODS" } })).toBe(0);
+
+    const correct = await completeProductionOrder(
+      { productionOrderId, outputs: [{ variantId, goodQty: 1 }], locationId, entityId: factoryId, completedDate: day },
+      ctx,
+    );
+    expect(correct.goodQty).toBe(1);
+    expect(await onHandOf(variantId)).toBe(1);
+  });
+
   it("books a lot per SKU and totals them as the order's output", async () => {
     const productionOrderId = await runOrder(100, await standardFabricFor(150));
     const curve = [40, 30, 20].slice(0, allVariantIds.length);

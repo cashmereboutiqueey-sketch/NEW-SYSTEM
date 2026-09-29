@@ -449,7 +449,10 @@ export async function completeProductionOrder(
     const close = input.close ?? true;
     const order = await db.productionOrder.findUnique({
       where: { id: input.productionOrderId },
-      include: { costSnapshot: true },
+      include: {
+        costSnapshot: true,
+        customOrder: { select: { orderNumber: true, variantId: true, quantity: true } },
+      },
     });
     if (!order) throw new ProductionError("Production order not found.");
     if (!order.costSnapshot) {
@@ -481,6 +484,21 @@ export async function completeProductionOrder(
     const earlierGood = order.actualQty ?? 0;
     const totalGood = earlierGood + goodQty;
     const totalRejected = order.rejectedQty + rejectedNow;
+
+    // A customer asked for one exact colour and size. A batch can legitimately
+    // yield a different size curve; a bespoke run cannot silently do so.
+    if (order.customOrder) {
+      if (outputs.some((output) => output.variantId !== order.customOrder!.variantId)) {
+        throw new ProductionError(
+          `${order.customOrder.orderNumber} must be received in its requested colour and size.`,
+        );
+      }
+      if (totalGood > order.customOrder.quantity) {
+        throw new ProductionError(
+          `${order.customOrder.orderNumber} requests ${order.customOrder.quantity} good piece(s), not ${totalGood}.`,
+        );
+      }
+    }
 
     // Closing a run that already delivered needs nothing new; anything else
     // must bring garments with it.

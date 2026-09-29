@@ -56,6 +56,14 @@ export default async function ProductionPage() {
             promisedDate: true,
             status: true,
             customer: { select: { name: true, phone: true } },
+            variant: {
+              select: {
+                id: true,
+                sku: true,
+                colorCode: { select: { nameAr: true, nameEn: true } },
+                sizeCode: { select: { code: true } },
+              },
+            },
           },
         },
         costSnapshot: true,
@@ -217,7 +225,12 @@ export default async function ProductionPage() {
 
       {/* ------------------------------------------------------- raise one */}
       {mayCreate && (
-        <Card className="mb-4" title={ar ? "أمر إنتاج جديد" : "New production order"}>
+        <Card className="mb-4" title={ar ? "أمر إنتاج جديد" : "New production order"}
+          description={promised.length > 0
+            ? ar
+              ? "أوردرات العملاء ليها أوامر إنتاج بالفعل تحت. استخدم الأمر المرتبط بالعميل بدل ما تفتح واحد تاني."
+              : "Customer orders already have runs below. Use the linked run instead of opening another."
+            : undefined}>
           {styles.length === 0 ? (
             <p className="py-4 text-sm text-ink-500">
               {ar
@@ -256,7 +269,7 @@ export default async function ProductionPage() {
               ar ? "أمر الإنتاج" : "Run",
               ar ? "الأوردر" : "Order",
               ar ? "الزبون" : "Customer",
-              ar ? "الموديل" : "Style",
+              ar ? "القطعة المطلوبة" : "Requested piece",
               ar ? "العدد" : "Qty",
               ar ? "الحالة" : "Status",
               ar ? "الميعاد" : "Promised",
@@ -275,7 +288,10 @@ export default async function ProductionPage() {
                     </span>
                   )}
                 </span>,
-                <span key="s" className="text-xs">{name(o.style)}</span>,
+                <span key="s" className="text-xs">
+                  <code dir="ltr" className="text-ink-500">{o.customOrder!.variant.sku}</code>
+                  <span className="ms-2">{name(o.style)} · {ar ? o.customOrder!.variant.colorCode.nameAr : o.customOrder!.variant.colorCode.nameEn} · {o.customOrder!.variant.sizeCode.code}</span>
+                </span>,
                 <span key="q" className="num">{formatNumber(o.plannedQty, locale)}</span>,
                 <Badge key="t" tone={statusTone[o.status]}>{statusLabel[o.status]}</Badge>,
                 <span key="d" className={`num text-xs ${overdue ? "text-bad font-semibold" : ""}`} dir="ltr">
@@ -295,7 +311,7 @@ export default async function ProductionPage() {
             key={o.id}
             className="mb-4"
             title={`${ar ? "أكّد" : "Confirm"} ${o.orderNumber}`}
-            description={`${name(o.style)} · ${formatNumber(o.plannedQty, locale)} ${ar ? "قطعة" : "units"}`}
+            description={`${name(o.style)} · ${formatNumber(o.plannedQty, locale)} ${ar ? "قطعة" : "units"}${o.customOrder ? ` · ${o.customOrder.orderNumber} · ${o.customOrder.variant.sku}` : ""}`}
           >
             <ConfirmOrderForm
               locale={locale}
@@ -318,8 +334,8 @@ export default async function ProductionPage() {
             title={`${o.orderNumber} · ${name(o.style)}`}
             description={
               ar
-                ? `${formatNumber(o.plannedQty, locale)} قطعة · تكلفة الوحدة المجمّدة ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}`
-                : `${formatNumber(o.plannedQty, locale)} units · frozen unit cost ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}`
+                ? `${formatNumber(o.plannedQty, locale)} قطعة · تكلفة الوحدة المجمّدة ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}${o.customOrder ? ` · ${o.customOrder.orderNumber} · ${o.customOrder.variant.sku}` : ""}`
+                : `${formatNumber(o.plannedQty, locale)} units · frozen unit cost ${formatMoney(o.costSnapshot?.factoryTotalCost ?? 0, locale)}${o.customOrder ? ` · ${o.customOrder.orderNumber} · ${o.customOrder.variant.sku}` : ""}`
             }
           >
             <div className="space-y-5">
@@ -347,7 +363,7 @@ export default async function ProductionPage() {
                 <p className="mb-2 text-xs font-medium text-ink-600">
                   {ar ? "قفل الأمر" : "Close the run"}
                 </p>
-                {o.style.variants.length === 0 ? (
+                {o.style.variants.length === 0 && !o.customOrder ? (
                   <p className="text-sm text-bad">
                     {ar
                       ? "الموديل ده مالوش أكواد مقاسات وألوان. ولّدها من صفحة الموديلات الأول."
@@ -355,6 +371,7 @@ export default async function ProductionPage() {
                   </p>
                 ) : (
                   <CompleteOrderForm
+                    key={`${o.id}-${o.actualQty ?? 0}-${o.rejectedQty}`}
                     locale={locale}
                     productionOrderId={o.id}
                     entityId={factory.id}
@@ -370,6 +387,13 @@ export default async function ProductionPage() {
                       sku: v.sku,
                       label: `${ar ? v.colorCode.nameAr : v.colorCode.nameEn} · ${v.sizeCode.code}`,
                     }))}
+                    fixedVariant={o.customOrder ? {
+                      id: o.customOrder.variant.id,
+                      sku: o.customOrder.variant.sku,
+                      label: `${ar ? o.customOrder.variant.colorCode.nameAr : o.customOrder.variant.colorCode.nameEn} · ${o.customOrder.variant.sizeCode.code}`,
+                      requestedQty: o.customOrder.quantity,
+                      orderNumber: o.customOrder.orderNumber,
+                    } : null}
                   />
                 )}
               </div>

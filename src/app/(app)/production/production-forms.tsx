@@ -326,6 +326,7 @@ export function CompleteOrderForm({
   today,
   locations,
   variants,
+  fixedVariant,
 }: {
   locale: Locale;
   productionOrderId: string;
@@ -347,9 +348,14 @@ export function CompleteOrderForm({
   today: string;
   locations: { id: string; label: string }[];
   variants: { id: string; sku: string; label: string }[];
+  /** Customer orders have one agreed SKU; only the actual quantity is entered. */
+  fixedVariant?: { id: string; sku: string; label: string; requestedQty: number; orderNumber: string } | null;
 }) {
   const [state, formAction, pending] = useActionState(completeProductionOrderAction, initial);
-  const [outputs, setOutputs] = useState<Output[]>([]);
+  const [outputs, setOutputs] = useState<Output[]>(() => {
+    const remaining = fixedVariant ? Math.max(0, fixedVariant.requestedQty - goodSoFar) : 0;
+    return fixedVariant && remaining > 0 ? [{ variantId: fixedVariant.id, goodQty: remaining }] : [];
+  });
   const [close, setClose] = useState(true);
   const [rejected, setRejected] = useState(0);
   // Only what the person typed; everything else follows the output as it changes.
@@ -390,13 +396,19 @@ export function CompleteOrderForm({
       <input type="hidden" name="issueNow" value={JSON.stringify(toIssue)} />
 
       <div>
-        <p className={label}>{ar ? "الخارج من الخط، لكل مقاس" : "Off the line, by SKU"}</p>
+        <p className={label}>{fixedVariant
+          ? ar ? "قطعة العميل المحددة في الأوردر" : "The piece on the customer's order"
+          : ar ? "الخارج من الخط، لكل مقاس" : "Off the line, by SKU"}</p>
+        {fixedVariant && (
+          <p className="mb-2 text-xs text-ink-500">
+            {ar
+              ? `${fixedVariant.orderNumber} محدد فيه اللون والمقاس؛ اكتب العدد السليم اللي اتعمل فعلاً.`
+              : `${fixedVariant.orderNumber} already fixes the colour and size. Enter only the good quantity actually made.`}
+          </p>
+        )}
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {variants.map((v) => (
-            <label
-              key={v.id}
-              className="flex items-center gap-2 rounded-lg border border-ink-200 px-3 py-2"
-            >
+          {(fixedVariant ? [fixedVariant] : variants).map((v) => (
+            <label key={v.id} className="flex items-center gap-2 rounded-lg border border-ink-200 px-3 py-2">
               <span className="flex-1 text-sm">
                 <code dir="ltr" className="text-xs text-ink-500">{v.sku}</code>
                 <span className="ms-2 text-ink-600">{v.label}</span>
@@ -404,6 +416,7 @@ export function CompleteOrderForm({
               <input
                 type="number" step="1" min="0" value={qtyOf(v.id)}
                 onChange={(e) => setQty(v.id, Number(e.target.value))}
+                aria-label={fixedVariant ? ar ? "العدد السليم" : "Good quantity" : v.sku}
                 dir="ltr" className={`${field} num w-20`}
               />
             </label>
