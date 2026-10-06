@@ -69,14 +69,13 @@ export async function clockedFromAttendance(
 
   const day = await db.attendanceDay.findUnique({
     where: { employeeId_workDate: { employeeId: operator.employeeId, workDate: logDate } },
-    select: { workedMinutes: true, overtimeMinutes: true, isAbsent: true, isLeave: true },
+    select: { workedMinutes: true, approvedByUserId: true, isAbsent: true, isLeave: true },
   });
-  if (!day || day.isAbsent || day.isLeave) return null;
+  if (!day || !day.approvedByUserId || day.isAbsent || day.isLeave) return null;
 
-  // Overtime counts: those minutes were paid for and the work done in them is
-  // work done. Leaving them out would flatter the efficiency of anybody who
-  // stayed late.
-  const total = dec(day.workedMinutes).plus(dec(day.overtimeMinutes));
+  // Worked minutes already include overtime (deriveDay measures the full
+  // interval). Approved overtime is a pay classification, not extra time.
+  const total = dec(day.workedMinutes);
   return total.greaterThan(0) ? total : null;
 }
 
@@ -89,17 +88,17 @@ export async function recordProductivity(
 
     const operator = await db.operator.findUnique({
       where: { id: data.operatorId },
-      select: { id: true, code: true, name: true, isActive: true },
+      select: { id: true, code: true, name: true, isActive: true, employeeId: true },
     });
     if (!operator) throw new OperatorError("Operator not found.");
 
     const measured = await clockedFromAttendance(data.operatorId, data.logDate);
-    const clocked = measured ?? (data.clockedMinutes != null ? dec(data.clockedMinutes) : null);
+    const clocked = measured ?? (!operator.employeeId && data.clockedMinutes != null ? dec(data.clockedMinutes) : null);
 
     if (!clocked) {
       throw new OperatorError(
         `${operator.name} has no attendance recorded for that day, so there are no clocked ` +
-          "minutes to measure against. Record the attendance first, or enter the minutes.",
+          "minutes to measure against. Review attendance first; manual minutes are only allowed without an HR record.",
       );
     }
 
@@ -112,6 +111,7 @@ export async function recordProductivity(
       where: { operatorId_logDate: { operatorId: data.operatorId, logDate: data.logDate } },
       update: {
         smvProduced: smvProduced.toString(),
+        piecesProduced: data.piecesProduced,
         clockedMinutes: clocked.toString(),
         efficiencyRate: efficiency.toString(),
         notes: data.notes ?? null,
@@ -120,6 +120,7 @@ export async function recordProductivity(
         operatorId: data.operatorId,
         logDate: data.logDate,
         smvProduced: smvProduced.toString(),
+        piecesProduced: data.piecesProduced,
         clockedMinutes: clocked.toString(),
         efficiencyRate: efficiency.toString(),
         notes: data.notes ?? null,

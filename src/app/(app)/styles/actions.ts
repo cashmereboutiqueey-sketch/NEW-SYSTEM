@@ -9,9 +9,12 @@ import {
 import type { FormState } from "@/components/entity-form";
 import { db } from "@/lib/db";
 import { storeImage, ImageError } from "@/lib/images";
+import { syncShopifyStyleDraft } from "@/lib/shopify-catalog";
+import { ShopifyError } from "@/lib/shopify";
 
 function toMessage(error: unknown): string {
   if (error instanceof ProductError) return error.message;
+  if (error instanceof ShopifyError) return error.message;
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   if (error && typeof error === "object" && "issues" in error) {
     return (error as { issues: { message: string }[] }).issues
@@ -162,12 +165,36 @@ export async function generateVariantsAction(
     );
 
     revalidatePath("/styles");
+    let shopifyNote = "";
+    try {
+      const sync = await syncShopifyStyleDraft(String(formData.get("styleId") ?? ""), { userId: session.userId });
+      shopifyNote = sync.connected
+        ? ` Shopify synced with ${sync.variants} SKUs.`
+        : " Connect Shopify to send this style there as a draft.";
+    } catch (error) {
+      return { error: `${result.created} SKUs saved in the ERP. Shopify sync failed: ${toMessage(error)} Retry from this style.` };
+    }
     return {
       success:
         result.skipped > 0
-          ? `${result.created} SKUs created, ${result.skipped} already existed.`
-          : `${result.created} SKUs created.`,
+          ? `${result.created} SKUs created, ${result.skipped} already existed.${shopifyNote}`
+          : `${result.created} SKUs created.${shopifyNote}`,
     };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
+}
+
+export async function syncShopifyDraftAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("retail_price:manage");
+    const result = await syncShopifyStyleDraft(String(formData.get("styleId") ?? ""), { userId: session.userId });
+    revalidatePath("/styles");
+    if (!result.connected) return { error: "Connect Shopify on the Integrations page first." };
+    return { success: `${result.variants} SKUs synced to the Shopify product. Review it in Shopify before publishing.` };
   } catch (error) {
     return { error: toMessage(error) };
   }

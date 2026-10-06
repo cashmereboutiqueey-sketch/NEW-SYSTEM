@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { createEmployee, setEmploymentStatus, PeopleError } from "@/lib/people";
 import type { FormState } from "@/components/entity-form";
+import { z } from "zod";
+import { preparePayrollRun, PayrollError } from "@/lib/payroll";
+import { CommandError, formCommand } from "@/lib/command";
 
 function toMessage(error: unknown): string {
-  if (error instanceof PeopleError) return error.message;
+  if (error instanceof PeopleError || error instanceof PayrollError || error instanceof CommandError) return error.message;
   if (error instanceof ForbiddenError) return "You do not have permission to do that.";
   if (error && typeof error === "object" && "issues" in error) {
     return (error as { issues: { message: string }[] }).issues
@@ -15,6 +18,25 @@ function toMessage(error: unknown): string {
   }
   console.error("Unhandled employee error:", error);
   return "Something went wrong. Nothing was saved.";
+}
+
+export async function preparePayrollAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const session = await authorize("payroll:prepare");
+    const values = z.object({ entityId: z.string().min(1), fiscalPeriodId: z.string().min(1) })
+      .parse(Object.fromEntries(formData));
+    const result = await formCommand("hr.preparePayroll", formData, { userId: session.userId }, () =>
+      preparePayrollRun(values, { userId: session.userId }),
+    );
+    revalidatePath("/hr");
+    revalidatePath("/approvals");
+    return { success: `${result.runNumber}: ${result.employees} employees. Draft ready for a different approver. / المسودة جاهزة لاعتماد شخص آخر.${result.warnings.length ? ` Review / راجع: ${result.warnings.join(" ")}` : ""}` };
+  } catch (error) {
+    return { error: toMessage(error) };
+  }
 }
 
 export async function createEmployeeAction(

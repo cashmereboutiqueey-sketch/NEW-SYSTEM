@@ -9,7 +9,8 @@ import Link from "next/link";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { cairoParts } from "@/core/attendance";
 import { dec } from "@/lib/money";
-import { createEmployeeAction } from "./actions";
+import { createEmployeeAction, preparePayrollAction } from "./actions";
+import { randomUUID } from "node:crypto";
 
 /**
  * الموظفون والأجور — HR and payroll.
@@ -29,7 +30,7 @@ export default async function HrPage() {
 
   const mayManage = can(session.role, "payroll:prepare");
 
-  const [employees, runs, unmatchedPunches, needsReview, entities, costCentres, lines] =
+  const [employees, runs, unmatchedPunches, needsReview, entities, costCentres, lines, periods] =
     await Promise.all([
     db.employee.findMany({
       where: { status: { not: "TERMINATED" } },
@@ -52,6 +53,7 @@ export default async function HrPage() {
     db.entity.findMany({ orderBy: { kind: "asc" } }),
     db.costCenter.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
     db.productionLine.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
+    mayManage ? db.fiscalPeriod.findMany({ where: { status: "OPEN" }, orderBy: { startDate: "desc" } }) : Promise.resolve([]),
   ]);
 
   /*
@@ -123,6 +125,15 @@ export default async function HrPage() {
         }
       />
 
+      <div className="mb-4 flex flex-wrap gap-4 text-sm">
+        <a href="/hr/attendance" className="text-rose-deep underline underline-offset-2">
+          {ar ? "مراجعة الحضور والبصمات" : "Review attendance and punches"}
+        </a>
+        {can(session.role, "payroll:approve") && <a href="/approvals" className="text-rose-deep underline underline-offset-2">
+          {ar ? "اعتماد مسيرات الأجور" : "Approve payroll runs"}
+        </a>}
+      </div>
+
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={ar ? "الموظفون" : "Employees"}
@@ -145,7 +156,7 @@ export default async function HrPage() {
           label={ar ? "أيام تحتاج مراجعة" : "Days needing review"}
           value={formatNumber(needsReview, locale)}
           tone={needsReview > 0 ? "bad" : "good"}
-          hint={ar ? "بصمة انصراف ناقصة" : "Missing clock-out"}
+          hint={ar ? "حضور لم يُعتمد بعد" : "Attendance awaiting approval"}
         />
       </div>
 
@@ -310,6 +321,20 @@ export default async function HrPage() {
           />
         </Card>
       )}
+
+      {mayManage && <Card className="mb-4" title={ar ? "تحضير مسير الأجور" : "Prepare payroll draft"}>
+        <p className="mb-4 text-sm text-ink-500">
+          {ar ? "راجع حضور الفترة أولًا. التحضير ينشئ مسودة؛ الاعتماد والترحيل لشخص آخر من شاشة الموافقات. إعادة التحضير تستبدل حسابات المسودة الحالية." : "Review the period's attendance first. Preparation creates a draft; a different person approves and posts it in Approvals. Preparing again recalculates the existing draft."}
+        </p>
+        {periods.length > 0 && entities.length > 0 ? <EntityForm
+          locale={locale} action={preparePayrollAction} hidden={{ requestId: randomUUID() }}
+          submitEn="Prepare payroll draft" submitAr="تحضير مسودة الأجور" columns={2}
+          fields={[
+            { kind: "select", name: "entityId", labelEn: "Employer", labelAr: "جهة العمل", required: true, options: entities.map((e) => ({ value: e.id, label: name(e) })) },
+            { kind: "select", name: "fiscalPeriodId", labelEn: "Open period", labelAr: "الفترة المفتوحة", required: true, options: periods.map((p) => ({ value: p.id, label: `${p.year}-${String(p.month).padStart(2, "0")}` })) },
+          ]}
+        /> : <p className="text-sm text-ink-500">{ar ? "لا توجد فترة مفتوحة وجهة عمل لتحضير الأجور." : "An employer and open fiscal period are required."}</p>}
+      </Card>}
 
       <Card className="mb-4" title={ar ? "مسيّرات الأجور" : "Payroll runs"}>
         {runs.length === 0 ? (

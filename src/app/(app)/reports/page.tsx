@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
 import { can, type Permission } from "@/core/permissions";
+import { canNavigate } from "@/core/visibility";
 import { reportHeadlines } from "@/lib/report-index";
 import { PageHeader, Card, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
@@ -309,7 +310,7 @@ export default async function ReportsPage() {
   const period = h.period
     ? `${h.period.year}-${String(h.period.month).padStart(2, "0")}`
     : ar ? "مافيش فترة مفتوحة" : "no open period";
-  const allowed = (e: Entry) => !e.needs || can(session.role, e.needs);
+  const allowed = (e: Entry) => (!e.needs || can(session.role, e.needs)) && canNavigate(session.role, e.href);
 
   /** Only what wants doing, so an empty strip means nothing wants doing. */
   const attention = [
@@ -332,7 +333,7 @@ export default async function ReportsPage() {
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-4">
+      {can(session.role, "journal:view") && <div className="mb-5 grid gap-3 sm:grid-cols-4">
         <StatTile
           label={ar ? "الكاش" : "Cash"}
           value={formatMoney(h.cash.toString())}
@@ -354,9 +355,9 @@ export default async function ReportsPage() {
           value={formatMoney(h.stock.toString())}
           hint={ar ? "خامات وتحت التشغيل وتام" : "materials, WIP and finished"}
         />
-      </div>
+      </div>}
 
-      <div className="mb-5">
+      {can(session.role, "report:group") && <div className="mb-5">
         <Card
           title={ar ? `الفترة المفتوحة — ${period}` : `Open period — ${period}`}
           description={
@@ -414,6 +415,7 @@ export default async function ReportsPage() {
         </Card>
       </div>
 
+      }
       {attention.length > 0 && (
         <div className="mb-5">
           <Card

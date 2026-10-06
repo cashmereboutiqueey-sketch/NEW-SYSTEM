@@ -51,6 +51,41 @@ async function accountIdByCode(tx: Prisma.TransactionClient, code: string): Prom
   return a.id;
 }
 
+/** Attendance and its payroll snapshot must never disagree silently. */
+async function protectAttendanceChange(
+  tx: Prisma.TransactionClient,
+  employeeId: string,
+  workDate: Date,
+): Promise<void> {
+  const employee = await tx.employee.findUnique({ where: { id: employeeId } });
+  if (!employee) throw new PayrollError("Employee not found.");
+  const period = await tx.fiscalPeriod.findFirst({
+    where: { startDate: { lte: workDate }, endDate: { gte: workDate } },
+  });
+  if (!period) return;
+  if (period.status === "CLOSED") throw new PayrollError("Attendance in a closed period cannot be changed.");
+  const run = await tx.payrollRun.findUnique({
+    where: { entityId_fiscalPeriodId: { entityId: employee.entityId, fiscalPeriodId: period.id } },
+  });
+  if (!run) return;
+  if (run.status !== "DRAFT") {
+    throw new PayrollError("Attendance is locked by approved or posted payroll; use a separately approved payroll adjustment.");
+  }
+  // An empty draft cannot post. Re-preparation rebuilds all lines from the
+  // corrected evidence, instead of paying a stale snapshot.
+  await tx.payrollLine.deleteMany({ where: { payrollRunId: run.id } });
+  await tx.payrollRun.update({
+    where: { id: run.id },
+    data: { grossPay: "0", deductions: "0", netPay: "0", employerCost: "0" },
+  });
+}
+
+function requireReviewedAttendance(days: { approvedByUserId: string | null }[]): void {
+  if (days.some((day) => !day.approvedByUserId)) {
+    throw new PayrollError("Attendance needs review and approval before payroll can be prepared or posted.");
+  }
+}
+
 /**
  * Imports raw device punches.
  *
@@ -66,6 +101,7 @@ export async function importPunches(
   },
   ctx: AuditContext,
 ): Promise<{ imported: number; duplicates: number; unmatched: number }> {
+  return command("payroll.importPunches", input, ctx, async () => {
   const employees = await db.employee.findMany({
     where: { biometricDeviceUserId: { not: null } },
     select: { id: true, biometricDeviceUserId: true },
@@ -80,8 +116,7 @@ export async function importPunches(
     const employeeId = byDeviceUser.get(p.deviceUserId) ?? null;
     if (!employeeId) unmatched += 1;
 
-    try {
-      await db.biometricPunch.create({
+      const result = await db.biometricPunch.createMany({
         data: {
           deviceId: input.deviceId,
           deviceUserId: p.deviceUserId,
@@ -89,16 +124,10 @@ export async function importPunches(
           punchedAt: p.punchedAt,
           rawPayload: (p.raw ?? null) as Prisma.InputJsonValue,
         },
+        skipDuplicates: true,
       });
-      imported += 1;
-    } catch (e) {
-      // A replayed file is normal operation, not an error worth failing on.
-      if (e instanceof Error && e.message.includes("Unique constraint")) {
-        duplicates += 1;
-        continue;
-      }
-      throw e;
-    }
+      imported += result.count;
+      duplicates += 1 - result.count;
   }
 
   await db.$transaction(async (tx) => {
@@ -112,10 +141,11 @@ export async function importPunches(
   });
 
   return { imported, duplicates, unmatched };
+  });
 }
 
 /**
- * Builds approved attendance days from the punches on record.
+ * Builds unreviewed attendance days from the punches on record.
  *
  * Existing days are left alone: once a supervisor has corrected a day, a
  * later re-derivation must not quietly overwrite their judgement.
@@ -124,6 +154,7 @@ export async function deriveAttendance(
   input: { employeeId: string; from: Date; to: Date; breakMinutes?: number; standardDayMinutes?: number },
   ctx: AuditContext,
 ): Promise<{ daysCreated: number; incompleteDays: number }> {
+  return command("payroll.deriveAttendance", input, ctx, async () => {
   const punches = await db.biometricPunch.findMany({
     where: { employeeId: input.employeeId, punchedAt: { gte: input.from, lte: input.to } },
     orderBy: { punchedAt: "asc" },
@@ -144,6 +175,8 @@ export async function deriveAttendance(
       where: { employeeId_workDate: { employeeId: input.employeeId, workDate } },
     });
     if (existing) continue;
+
+    await db.$transaction((tx) => protectAttendanceChange(tx, input.employeeId, workDate));
 
     const derived = deriveDay(dayPunches, input.breakMinutes ?? 0);
     if (derived.incomplete) incompleteDays += 1;
@@ -179,6 +212,7 @@ export async function deriveAttendance(
   });
 
   return { daysCreated, incompleteDays };
+  });
 }
 
 /** Corrects a day, which always needs a reason — the punch stays untouched. */
@@ -201,6 +235,7 @@ export async function adjustAttendance(
     }
 
     await db.$transaction(async (tx) => {
+      await protectAttendanceChange(tx, input.employeeId, input.workDate);
       const before = await tx.attendanceDay.findUnique({
         where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
       });
@@ -228,6 +263,14 @@ export async function adjustAttendance(
         reviewedByUserId: ctx.userId,
         reviewedAt: new Date(),
       };
+
+      const worked = dec(data.workedMinutes);
+      const overtime = dec(data.overtimeMinutes);
+      if (!worked.isFinite() || !overtime.isFinite() || worked.isNegative() || overtime.isNegative()) {
+        throw new PayrollError("Attendance minutes must be finite, non-negative amounts.");
+      }
+      if (overtime.greaterThan(worked)) throw new PayrollError("Approved overtime cannot exceed worked minutes.");
+      if (data.isAbsent && data.isLeave) throw new PayrollError("A day cannot be both absent and on leave.");
 
       await tx.attendanceDay.upsert({
         where: { employeeId_workDate: { employeeId: input.employeeId, workDate: input.workDate } },
@@ -372,13 +415,15 @@ export async function preparePayrollRun(
     const unresolved = await unresolvedCount(input.entityId, period.year, period.month);
     const openExceptions = unresolved.needsReview + unresolved.incomplete;
 
+    // A legacy import may have created days before the Attendance workspace
+    // created its period row. Those unresolved days still block payroll.
+    if (openExceptions > 0) {
+      throw new PayrollError(
+        `${openExceptions} attendance day(s) in this month still need review. ` +
+          `Settle them in Attendance, then lock the month before preparing payroll.`,
+      );
+    }
     if (attendancePeriod && attendancePeriod.status !== "LOCKED") {
-      if (openExceptions > 0) {
-        throw new PayrollError(
-          `${openExceptions} attendance day(s) in this month still need review. ` +
-            `Settle them in Attendance, then lock the month before preparing payroll.`,
-        );
-      }
       warnings.push(
         "Attendance for this month is reviewed but not locked. Lock it so the figures cannot move under the run.",
       );
@@ -430,6 +475,7 @@ export async function preparePayrollRun(
           status: { notIn: ["INCOMPLETE", "NEEDS_REVIEW"] },
         },
       });
+      requireReviewedAttendance(attendance);
       const daysByEmployee = new Map<string, typeof attendance>();
       for (const day of attendance) {
         const list = daysByEmployee.get(day.employeeId);
@@ -486,12 +532,16 @@ export async function preparePayrollRun(
           piecesProduced: producedPieces,
           pieceRate: e.pieceRate?.toString() ?? "0",
         });
+        if (!pay.grossPay.isFinite() || !pay.netPay.isFinite() || !pay.employerCost.isFinite()
+          || pay.grossPay.isNegative() || pay.netPay.isNegative() || pay.employerCost.isNegative()) {
+          throw new PayrollError(`${e.name} has invalid or negative payroll amounts; review attendance and pay settings.`);
+        }
 
         const accountCode = e.costCenter
           ? COST_CENTRE_ACCOUNT[e.costCenter.code] ?? ACC.GENERAL_ADMIN
           : ACC.GENERAL_ADMIN;
 
-        await tx.payrollLine.create({
+        const savedLine = await tx.payrollLine.create({
           data: {
             payrollRunId: run.id,
             employeeId: e.id,
@@ -509,10 +559,12 @@ export async function preparePayrollRun(
           },
         });
 
-        gross = gross.plus(pay.grossPay);
-        deductions = deductions.plus(pay.absenceDeduction).plus(pay.otherDeductions);
-        net = net.plus(pay.netPay);
-        employerTotal = employerTotal.plus(pay.employerCost);
+        // Header totals must sum the stored 4dp lines, not their unrounded
+        // intermediate values, so the run agrees with its accrual journal.
+        gross = gross.plus(savedLine.grossPay);
+        deductions = deductions.plus(savedLine.absenceDeduction).plus(savedLine.otherDeductions);
+        net = net.plus(savedLine.netPay);
+        employerTotal = employerTotal.plus(savedLine.employerCost);
       }
 
       await tx.payrollRun.update({
@@ -574,6 +626,15 @@ export async function approveAndPostPayroll(
     if (run.status === "POSTED") throw new PayrollError("That payroll run is already posted.");
     if (run.lines.length === 0) throw new PayrollError("The run has no lines to post.");
 
+    const attendance = await db.attendanceDay.findMany({
+      where: {
+        employeeId: { in: run.lines.map((line) => line.employeeId) },
+        workDate: { gte: run.fiscalPeriod.startDate, lte: run.fiscalPeriod.endDate },
+      },
+      select: { approvedByUserId: true },
+    });
+    requireReviewedAttendance(attendance);
+
     if (
       ctx.userId &&
       violatesSeparationOfDuties({
@@ -589,6 +650,9 @@ export async function approveAndPostPayroll(
     }
 
     const postingDate = input.postingDate ?? run.fiscalPeriod.endDate;
+    if (postingDate < run.fiscalPeriod.startDate || postingDate > run.fiscalPeriod.endDate) {
+      throw new PayrollError("Payroll must be posted in the fiscal period in which it was earned.");
+    }
 
     return db.$transaction(async (tx) => {
       // One line per wage account, so the ledger mirrors the cost centres
@@ -597,10 +661,12 @@ export async function approveAndPostPayroll(
       for (const l of run.lines) {
         const accountId = l.accountId!;
         const charge = dec(l.grossPay).plus(dec(l.employerCost));
+        if (charge.isZero()) continue;
         byAccount.set(accountId, (byAccount.get(accountId) ?? dec(0)).plus(charge));
       }
 
       const totalCharged = [...byAccount.values()].reduce((s, v) => s.plus(v), dec(0));
+      if (totalCharged.lessThanOrEqualTo(0)) throw new PayrollError("Payroll has no positive wage amount to post.");
 
       const lines: DraftLine[] = [...byAccount.entries()].map(([accountId, amount]) => ({
         accountId,

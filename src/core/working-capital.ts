@@ -22,9 +22,11 @@ export type CccInputs = {
 
 export type CccResult = {
   cashConversionDays: Decimal;
-  workingCapitalLocked: Decimal;
+  /** Unavailable when the cost base cannot represent positive operating spend. */
+  workingCapitalLocked: Decimal | null;
   /** The part of the cycle suppliers are financing for you. */
-  supplierFunded: Decimal;
+  supplierFunded: Decimal | null;
+  costBaseUsable: boolean;
 };
 
 /**
@@ -44,14 +46,19 @@ export function cashConversionCycle(
     .plus(dec(inputs.collectionDays))
     .minus(dec(inputs.supplierCreditDays));
 
-  const dailyCogs = dec(monthlyCogs).div(30);
+  const costBase = dec(monthlyCogs);
+  const costBaseUsable = costBase.isFinite() && costBase.greaterThan(0);
+  const dailyCogs = costBaseUsable ? costBase.div(30) : null;
 
   return {
     cashConversionDays: days,
     // A negative cycle means suppliers fund the business outright, so there is
     // no capital locked to report.
-    workingCapitalLocked: days.greaterThan(0) ? days.times(dailyCogs) : dec(0),
-    supplierFunded: dec(inputs.supplierCreditDays).times(dailyCogs),
+    // Absorption credits or returns can make reported net COGS nonpositive.
+    // That is not negative capital or proof that operations need no funding.
+    workingCapitalLocked: dailyCogs ? (days.greaterThan(0) ? days.times(dailyCogs) : dec(0)) : null,
+    supplierFunded: dailyCogs ? dec(inputs.supplierCreditDays).times(dailyCogs) : null,
+    costBaseUsable,
   };
 }
 

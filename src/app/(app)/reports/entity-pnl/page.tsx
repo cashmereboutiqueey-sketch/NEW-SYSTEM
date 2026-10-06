@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
 import { requireUser } from "@/lib/auth";
 import { can } from "@/core/permissions";
+import { canViewFinancials } from "@/core/visibility";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatPercent } from "@/lib/money";
 import { entityProfitAndLoss, trialBalance } from "@/lib/reports";
@@ -32,7 +33,7 @@ export default async function EntityPnlPage({
 
   // A brand manager has no business reading the factory's books.
   const allowed =
-    entity.kind === "FACTORY" ? can(session.role, "report:factory") : can(session.role, "report:brand");
+    entity.kind === "FACTORY" ? can(session.role, "report:factory") : can(session.role, "report:brand") && canViewFinancials(session.role);
 
   const periods = await db.fiscalPeriod.findMany({
     orderBy: [{ year: "desc" }, { month: "desc" }],

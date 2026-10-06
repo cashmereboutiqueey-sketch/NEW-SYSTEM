@@ -15,6 +15,17 @@ function line(over: Partial<DraftLine>): DraftLine {
 }
 
 describe("checkBalanced", () => {
+  it.each(["Infinity", "-Infinity", "NaN"])("rejects non-finite money (%s)", (amount) => {
+    const result = checkBalanced([
+      line({ accountId: "expense", debit: amount }),
+      line({ accountId: "payable", credit: amount }),
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.violations.filter((v) => v.code === "LINE_NON_FINITE")).toHaveLength(2);
+    }
+  });
+
   it("accepts a balanced two-line entry", () => {
     const result = checkBalanced([
       line({ accountId: "expense", debit: "55000" }),

@@ -104,6 +104,8 @@ async function present(employeeId: string, dayOffset: number, minutes = 480) {
       // What the helper has always meant. Payroll now reads only settled days,
       // and a day with no status is one nobody has vouched for.
       status: "PRESENT",
+      source: "MANUAL",
+      approvedByUserId: approverId,
     },
   });
 }
@@ -171,6 +173,18 @@ describe("biometric import", () => {
 });
 
 describe("attendance", () => {
+  it.each([
+    { workedMinutes: "-1" },
+    { workedMinutes: "Infinity" },
+    { workedMinutes: "480", overtimeMinutes: "481" },
+    { isAbsent: true, isLeave: true },
+  ])("rejects invalid attendance without saving it: %j", async (invalid) => {
+    const employee = await makeEmployee();
+    await expect(adjustAttendance({ employeeId: employee.id, workDate: dayAt(0, "00:00"),
+      reason: "Invalid correction", ...invalid }, { userId: approverId, reason: null })).rejects.toThrow(PayrollError);
+    expect(await db.attendanceDay.count()).toBe(0);
+  });
+
   it("derives worked minutes from paired punches", async () => {
     const e = await makeEmployee({ device: "B1" });
     await importPunches(
@@ -253,6 +267,23 @@ describe("attendance", () => {
 });
 
 describe("payroll run", () => {
+  it("blocks incomplete and unreviewed biometric attendance instead of paying a daily wage", async () => {
+    const employee = await makeEmployee({ payFrequency: "DAILY", salary: "300", device: "REVIEW" });
+    await importPunches({ deviceId: "DEV-A", punches: [
+      { deviceUserId: "REVIEW", punchedAt: dayAt(0, "08:00") },
+    ] }, ctx);
+    await deriveAttendance({ employeeId: employee.id, from: dayAt(0, "00:00"), to: dayAt(1, "00:00") }, ctx);
+    await expect(preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null })).rejects.toThrow(/attendance day.*still need review/i);
+    expect(await db.payrollRun.count()).toBe(0);
+    await adjustAttendance({ employeeId: employee.id, workDate: dayAt(0, "00:00"),
+      workedMinutes: "480", reason: "Supervisor verified the shift" }, { userId: approverId, reason: null });
+    const run = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    expect(run.grossPay).toBe("300");
+    expect(await db.biometricPunch.count()).toBe(1);
+  });
+
   it("pays a full salary when nobody was absent", async () => {
     await makeEmployee({ salary: "6700" });
     const run = await preparePayrollRun(
@@ -315,6 +346,60 @@ describe("payroll run", () => {
 });
 
 describe("posting payroll", () => {
+  it("refuses to accrue payroll outside the period it belongs to", async () => {
+    await makeEmployee();
+    const run = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    const previousDay = new Date(periodStart.getTime() - 86_400_000);
+    await expect(approveAndPostPayroll({ payrollRunId: run.payrollRunId, postingDate: previousDay },
+      { userId: approverId, reason: null })).rejects.toThrow(/period.*earned/i);
+    expect(await db.journalEntry.count({ where: { sourceType: "PAYROLL" } })).toBe(0);
+  });
+
+  it("keeps run totals equal to the sum of persisted payroll lines", async () => {
+    for (let i = 0; i < 4; i++) {
+      const employee = await makeEmployee({ salary: "6700" });
+      await adjustAttendance({ employeeId: employee.id, workDate: dayAt(0, "00:00"),
+        isAbsent: true, reason: "Confirmed absence" }, { userId: approverId, reason: null });
+    }
+    const prepared = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    const run = await db.payrollRun.findUniqueOrThrow({ where: { id: prepared.payrollRunId }, include: { lines: true } });
+    expect(run.grossPay.toString()).toBe(run.lines.reduce((total, line) => total.plus(line.grossPay), dec(0)).toString());
+    expect(run.employerCost.toString()).toBe(run.lines.reduce((total, line) => total.plus(line.employerCost), dec(0)).toString());
+  });
+
+  it("requires re-preparation after attendance changes", async () => {
+    const employee = await makeEmployee();
+    const run = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    await adjustAttendance({ employeeId: employee.id, workDate: dayAt(0, "00:00"),
+      isAbsent: true, reason: "Confirmed unpaid absence" }, { userId: approverId, reason: null });
+    await expect(approveAndPostPayroll({ payrollRunId: run.payrollRunId },
+      { userId: approverId, reason: null })).rejects.toThrow(/no lines/i);
+    expect(await db.journalEntry.count({ where: { sourceType: "PAYROLL" } })).toBe(0);
+  });
+
+  it("locks attendance once its payroll is posted", async () => {
+    const employee = await makeEmployee();
+    const run = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    await approveAndPostPayroll({ payrollRunId: run.payrollRunId }, { userId: approverId, reason: null });
+    await expect(adjustAttendance({ employeeId: employee.id, workDate: dayAt(0, "00:00"),
+      isAbsent: true, reason: "Late correction" }, { userId: approverId, reason: null })).rejects.toThrow(/locked/i);
+    expect(await db.attendanceDay.count()).toBe(0);
+  });
+
+  it("posts a concurrent approval exactly once", async () => {
+    await makeEmployee();
+    const run = await preparePayrollRun({ entityId: factoryId, fiscalPeriodId: periodId },
+      { userId: preparerId, reason: null });
+    const results = await Promise.allSettled([1, 2].map(() => approveAndPostPayroll(
+      { payrollRunId: run.payrollRunId }, { userId: approverId, reason: null })));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(await db.journalEntry.count({ where: { sourceType: "PAYROLL", sourceId: run.payrollRunId } })).toBe(1);
+  });
+
   it("charges factory wages to the conversion pool exactly once", async () => {
     await makeEmployee({ salary: "6700" });
     const run = await preparePayrollRun(

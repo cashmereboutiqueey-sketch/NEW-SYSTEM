@@ -9,6 +9,7 @@ import { formatMoney, formatNumber } from "@/lib/money";
 import { agingProfile, AGE_BUCKETS, type Lot } from "@/core/fifo";
 import { dec } from "@/lib/money";
 import { CountForm } from "./count-form";
+import { canViewInventoryValue } from "@/core/visibility";
 
 /**
  * Where the money is sitting.
@@ -49,6 +50,23 @@ export default async function InventoryPage({
     db.location.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
     db.setting.findUnique({ where: { key: "inventory.deadStockDays" } }),
   ]);
+
+  // Sales staff need availability, but unit costs and valuation must never
+  // reach their rendered page or client-component props.
+  if (!canViewInventoryValue(session.role)) {
+    return <>
+      <PageHeader title={t("inventory", locale)} subtitle={ar ? "الكميات المتاحة حسب الصنف والموقع" : "Available quantities by item and location"} />
+      <Card title={ar ? "المخزون المتاح" : "Available stock"}>
+        <DataTable headers={ar ? ["الدفعة", "الصنف", "الموقع", "المتبقي"] : ["Lot", "Item", "Location", "Remaining"]}
+          rows={lots.map(l => [
+            <span key={`${l.id}-lot`}>{l.lotNumber}</span>,
+            <span key={`${l.id}-item`}>{l.variant?.sku ?? l.material?.code ?? "—"}</span>,
+            <span key={`${l.id}-location`}>{l.location ? (ar ? l.location.nameAr : l.location.nameEn) : "—"}</span>,
+            <span key={`${l.id}-qty`}>{formatNumber(l.remainingQty, locale)}</span>,
+          ])} />
+      </Card>
+    </>;
+  }
 
   // The stocktake is opened one shelf at a time: a screen offering every lot
   // in the business at once is a screen nobody counts against.

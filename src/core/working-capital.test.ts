@@ -26,7 +26,7 @@ describe("cash conversion cycle", () => {
   it("converts days into capital actually locked", () => {
     // 70 days at 20,000 a day of cost.
     const r = cashConversionCycle(inputs, 600000);
-    expect(r.workingCapitalLocked.toString()).toBe("1400000");
+    expect(r.workingCapitalLocked?.toString()).toBe("1400000");
   });
 
   it("includes fabric waiting to be cut", () => {
@@ -39,21 +39,29 @@ describe("cash conversion cycle", () => {
 
   it("shows how much of the cycle suppliers are funding", () => {
     const r = cashConversionCycle(inputs, 600000);
-    expect(r.supplierFunded.toString()).toBe("800000");
+    expect(r.supplierFunded?.toString()).toBe("800000");
   });
 
   it("reports no locked capital when suppliers fund the whole cycle", () => {
     // A negative cycle means the business is financed by its suppliers.
     const r = cashConversionCycle({ ...inputs, supplierCreditDays: 150 }, 600000);
     expect(r.cashConversionDays.isNegative()).toBe(true);
-    expect(r.workingCapitalLocked.toString()).toBe("0");
+    expect(r.workingCapitalLocked?.toString()).toBe("0");
   });
 
   it("locks more capital as the business grows", () => {
     const small = cashConversionCycle(inputs, 300000);
     const large = cashConversionCycle(inputs, 900000);
     // A positive cycle means every unit of growth consumes cash.
-    expect(large.workingCapitalLocked.greaterThan(small.workingCapitalLocked)).toBe(true);
+    expect(large.workingCapitalLocked!.greaterThan(small.workingCapitalLocked!)).toBe(true);
+  });
+
+  it.each(["-46693.672", "0", "NaN", "Infinity"])("does not invent monetary capital from an unusable cost base %s", (cost) => {
+    const result = cashConversionCycle(inputs, cost);
+    expect(result.cashConversionDays.toString()).toBe("70");
+    expect(result.costBaseUsable).toBe(false);
+    expect(result.workingCapitalLocked).toBeNull();
+    expect(result.supplierFunded).toBeNull();
   });
 });
 

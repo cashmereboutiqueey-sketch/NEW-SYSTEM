@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { requireUser } from "@/lib/auth";
+import { getSession } from "@/lib/session";
 import { isStoredName, imagePath, CONTENT_TYPE } from "@/lib/images";
 
 /**
@@ -18,7 +18,10 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ name: string }> },
 ) {
-  await requireUser();
+  const session = await getSession();
+  if (!session || session.mustChangePassword) {
+    return new Response("Not found", { status: 404 });
+  }
 
   const { name } = await params;
   if (!isStoredName(name)) {

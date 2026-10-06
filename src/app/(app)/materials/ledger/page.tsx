@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, requireAnyPermission } from "@/lib/auth";
+import { INVENTORY_VALUE_PERMISSIONS } from "@/core/visibility";
 import { fabricLedger, fabricTotals } from "@/lib/fabric-ledger";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, formatQty } from "@/lib/money";
@@ -24,6 +25,7 @@ export default async function MaterialLedgerPage({
   searchParams: Promise<{ type?: string; all?: string }>;
 }) {
   await requirePermission("material:view");
+  await requireAnyPermission(INVENTORY_VALUE_PERMISSIONS);
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const query = await searchParams;

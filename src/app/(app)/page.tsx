@@ -191,6 +191,13 @@ export default async function DashboardPage() {
               </div>
             </div>
           </div>
+          {!d.ccc.costBaseUsable && (
+            <p className="mt-3 text-xs text-warn">
+              {ar
+                ? "تقدير رأس المال غير متاح: صافي تكلفة المبيعات ليس موجباً. راجع تكاليف التشغيل؛ طول الدورة مبني على الأيام المفترضة."
+                : "Capital estimate unavailable: net cost of sales is not positive. Review operating costs; cycle length uses assumed days."}
+            </p>
+          )}
           <p className="mt-3 text-xs text-ink-500">
             {d.ccc.cashConversionDays.greaterThan(0)
               ? ar

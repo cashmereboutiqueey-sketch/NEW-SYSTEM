@@ -89,12 +89,14 @@ async function attended(workedMinutes: number, overtimeMinutes = 0, absent = fal
       workedMinutes: String(workedMinutes),
       overtimeMinutes: String(overtimeMinutes),
       isAbsent: absent,
+      approvedByUserId: ownerId,
     },
     create: {
       employeeId, workDate: day,
       workedMinutes: String(workedMinutes),
       overtimeMinutes: String(overtimeMinutes),
       isAbsent: absent,
+      approvedByUserId: ownerId,
     },
   });
 }
@@ -116,8 +118,8 @@ describe("the clocked minutes are measured, not chosen", () => {
     expect(Number(result.efficiency)).toBeCloseTo(400 / 480, 6);
   });
 
-  it("counts approved overtime, because those minutes were paid for", async () => {
-    await attended(480, 60);
+  it("counts overtime once within total worked minutes", async () => {
+    await attended(540, 60);
 
     // Leaving overtime out would flatter anybody who stayed late.
     expect(Number(await clockedFromAttendance(operatorId, day))).toBe(540);
@@ -142,6 +144,19 @@ describe("the clocked minutes are measured, not chosen", () => {
 
   it("refuses to guess when there is no attendance at all", async () => {
     await expect(record(400)).rejects.toThrow(OperatorError);
+  });
+
+  it("does not accept typed minutes as a bypass for unapproved linked attendance", async () => {
+    await attended(480);
+    await db.attendanceDay.update({ where: { employeeId_workDate: { employeeId, workDate: day } }, data: { approvedByUserId: null } });
+    expect(await clockedFromAttendance(operatorId, day)).toBeNull();
+    await expect(record(400, { clockedMinutes: 480 })).rejects.toThrow(OperatorError);
+  });
+
+  it("persists produced pieces used by piece-rate payroll", async () => {
+    await attended(480);
+    const result = await record(400, { piecesProduced: 32 });
+    expect((await db.operatorProductivity.findUniqueOrThrow({ where: { id: result.productivityId } })).piecesProduced).toBe(32);
   });
 
   it("lets the minutes be typed for an operator with no HR record", async () => {
@@ -177,8 +192,8 @@ describe("the ranking", () => {
     const second = new Date(day.getTime() + 86_400_000);
     await db.attendanceDay.upsert({
       where: { employeeId_workDate: { employeeId, workDate: second } },
-      update: { workedMinutes: "60" },
-      create: { employeeId, workDate: second, workedMinutes: "60" },
+      update: { workedMinutes: "60", approvedByUserId: ownerId },
+      create: { employeeId, workDate: second, workedMinutes: "60", approvedByUserId: ownerId },
     });
     await recordProductivity(
       { operatorId, logDate: second, smvProduced: 60 }, // 100% over a short one

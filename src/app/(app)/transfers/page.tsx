@@ -74,7 +74,7 @@ export default async function TransfersPage() {
         />
         <StatTile
           label={ar ? "بتكلفة المصنع" : "At factory cost"}
-          value={formatMoney(waitingCost, locale)}
+          value={maySeePrice ? formatMoney(waitingCost, locale) : "—"}
         />
         {maySeePrice && (
           <StatTile

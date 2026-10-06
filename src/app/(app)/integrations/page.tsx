@@ -217,8 +217,8 @@ export default async function IntegrationsPage() {
             {
               kind: "text", name: "accessToken", labelEn: "Admin API access token", labelAr: "توكن الوصول",
               ltr: true, placeholder: shopify?.accessToken ? "••••••••" : "shpat_…",
-              hintEn: "Leave blank to keep the stored one.",
-              hintAr: "سيبه فاضي عشان تحتفظ بالمخزّن.",
+              hintEn: "Leave blank to keep the stored one. Draft product sync needs read_products and write_products scopes.",
+              hintAr: "سيبه فاضي عشان تحتفظ بالمخزّن. مزامنة مسودات المنتجات تحتاج صلاحيات read_products و write_products.",
             },
             {
               kind: "text", name: "webhookSecret", labelEn: "Webhook signing secret", labelAr: "سر توقيع الويب هوك",

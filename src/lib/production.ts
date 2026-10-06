@@ -33,6 +33,16 @@ export class ProductionError extends Error {
   }
 }
 
+async function requireFactoryLocation(entityId: string, locationId: string): Promise<void> {
+  const [entity, location] = await Promise.all([
+    db.entity.findUnique({ where: { id: entityId } }),
+    db.location.findUnique({ where: { id: locationId } }),
+  ]);
+  if (entity?.kind !== "FACTORY" || !location?.isActive || location.entityId !== entity.id) {
+    throw new ProductionError("Production must use an active location belonging to the Factory entity.");
+  }
+}
+
 export async function createProductionOrder(
   input: {
     styleId: string;
@@ -304,6 +314,7 @@ export async function issueForOrder(
   ctx: AuditContext,
 ): Promise<{ totalCost: string; actualWasteRate: string | null; journalEntryNumber: string }> {
   return command("production.issueForOrder", input, ctx, async () => {
+    await requireFactoryLocation(input.entityId, input.locationId);
     const order = await db.productionOrder.findUnique({
       where: { id: input.productionOrderId },
     });
@@ -446,6 +457,7 @@ export async function completeProductionOrder(
   serials: string[];
 }> {
   return command("production.completeProductionOrder", input, ctx, async () => {
+    await requireFactoryLocation(input.entityId, input.locationId);
     const close = input.close ?? true;
     const order = await db.productionOrder.findUnique({
       where: { id: input.productionOrderId },

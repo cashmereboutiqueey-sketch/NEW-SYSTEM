@@ -7,6 +7,7 @@ import { formatMoney, formatNumber, formatPercent } from "@/lib/money";
 import { customerProfiles, duplicateCandidates } from "@/lib/crm";
 import { EntityForm } from "@/components/entity-form";
 import { can } from "@/core/permissions";
+import { canViewFinancials } from "@/core/visibility";
 import { createCustomerAction } from "./actions";
 import { MergeForm } from "./merge-form";
 import { CreditForm } from "./credit-form";
@@ -26,6 +27,7 @@ export default async function CustomersPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   const session = await requirePermission("customer:view");
+  const seeFinancials = canViewFinancials(session.role);
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const params = await searchParams;
@@ -112,11 +114,11 @@ export default async function CustomersPage({
           label={ar ? "إيراد" : "Revenue"}
           value={formatMoney(revenue, locale)}
         />
-        <StatTile
+        {seeFinancials && <StatTile
           label={ar ? "قيمة محققة" : "Value earned"}
           value={formatMoney(value, locale)}
           tone={value.greaterThan(0) ? "good" : "neutral"}
-        />
+        />}
         <StatTile
           label={ar ? "عملاء متكررون" : "Repeat customers"}
           value={formatNumber(repeat, locale)}
@@ -325,7 +327,7 @@ export default async function CustomersPage({
               ar ? "طلبات" : "Orders",
               ar ? "إيراد" : "Revenue",
               ar ? "متوسط الطلب" : "AOV",
-              ar ? "قيمة محققة" : "Value earned",
+              ...(seeFinancials ? [ar ? "قيمة محققة" : "Value earned"] : []),
               ar ? "مرتجعات" : "Returns",
             ]}
             rows={shownProfiles.map((p) => [
@@ -348,7 +350,7 @@ export default async function CustomersPage({
               <span key={`${p.id}-a`} className="num">
                 {p.averageOrderValue ? formatMoney(p.averageOrderValue, locale) : "—"}
               </span>,
-              <span
+              ...(seeFinancials ? [<span
                 key={`${p.id}-v`}
                 className={
                   dec(p.lifetimeValue).greaterThan(0)
@@ -359,7 +361,7 @@ export default async function CustomersPage({
                 }
               >
                 {formatMoney(p.lifetimeValue, locale)}
-              </span>,
+              </span>] : []),
               <span key={`${p.id}-rr`} className="num">
                 {p.returnRate ? formatPercent(p.returnRate, locale) : "—"}
               </span>,

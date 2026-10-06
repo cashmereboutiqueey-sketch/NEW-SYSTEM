@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { loginAction, type LoginState } from "../actions";
 import { t, type Locale } from "@/lib/i18n";
 
 export function LoginForm({ locale }: { locale: Locale }) {
+  const [showPassword, setShowPassword] = useState(false);
   const [state, formAction, pending] = useActionState<LoginState, FormData>(
     loginAction,
     {},
@@ -40,12 +41,21 @@ export function LoginForm({ locale }: { locale: Locale }) {
         <input
           id="password"
           name="password"
-          type="password"
+          type={showPassword ? "text" : "password"}
           required
           autoComplete="current-password"
           dir="ltr"
           className="w-full rounded-lg border border-ink-200 bg-panel px-3 py-2 text-sm text-ink-900 outline-none focus:border-rose-deep focus:ring-2 focus:ring-rose/60"
         />
+        <button
+          type="button"
+          aria-controls="password"
+          aria-pressed={showPassword}
+          onClick={() => setShowPassword((visible) => !visible)}
+          className="mt-2 text-sm font-medium text-rose-deep underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-deep"
+        >
+          {showPassword ? t("hidePassword", locale) : t("showPassword", locale)}
+        </button>
       </div>
 
       {state.error && (

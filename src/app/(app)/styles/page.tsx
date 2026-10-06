@@ -11,7 +11,7 @@ import { dec } from "@/lib/money";
 import {
   createStyleAction, createCollectionAction,
   addBomLineAction, removeBomLineAction,
-  addOperationAction, removeOperationAction,
+  addOperationAction, removeOperationAction, syncShopifyDraftAction,
 } from "./actions";
 import { VariantForm } from "./variant-form";
 import { PhotoForm } from "@/components/photo-form";
@@ -60,6 +60,22 @@ export default async function StylesPage({
   ]);
 
   const selected = params.style ? await styleDetail(params.style) : null;
+  const shopifyConnection = selected ? await db.integrationConnection.findFirst({
+    where: { provider: "SHOPIFY", isActive: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, externalRef: true },
+  }) : null;
+  const shopifyProduct = selected && shopifyConnection ? await db.externalMapping.findFirst({
+    where: { connectionId: shopifyConnection.id, objectType: "product", internalId: selected.id },
+    select: { externalId: true },
+  }) : null;
+  const shopifyLinkedVariants = selected && shopifyConnection ? await db.externalMapping.count({
+    where: {
+      connectionId: shopifyConnection.id,
+      objectType: "variant",
+      internalId: { in: selected.variants.map((v) => v.id) },
+    },
+  }) : 0;
   const name = (e: { nameAr: string; nameEn: string }) => (ar ? e.nameAr : e.nameEn);
 
   const ready = styles.filter((s) => s._count.bomLines > 0 && s._count.operations > 0);
@@ -407,6 +423,37 @@ export default async function StylesPage({
                     <code dir="ltr" className="text-xs">{v.sku}</code>
                   </span>
                 ))}
+              </div>
+            )}
+
+            {selected.variants.length > 0 && (
+              <div className="mt-4 border-t border-ink-100 pt-4">
+                <div className="mb-3 text-sm text-ink-600">
+                  {shopifyConnection ? (
+                    <>
+                      {shopifyProduct && shopifyLinkedVariants === selected.variants.length
+                        ? (ar ? "كل الأكواد مربوطة بمنتج Shopify." : "All SKUs are linked to the Shopify product.")
+                        : (ar ? "في أكواد محتاجة تتبعت إلى Shopify." : "Some SKUs still need to be sent to Shopify.")}
+                      {shopifyProduct && (
+                        <>{" "}<a className="text-rose-deep underline" href={`https://${shopifyConnection.externalRef}/admin/products/${shopifyProduct.externalId}`} target="_blank" rel="noreferrer">
+                          {ar ? "افتح المنتج" : "Open product"}
+                        </a></>
+                      )}
+                    </>
+                  ) : (
+                    <>{ar ? "اربط متجر Shopify من صفحة التكاملات عشان تبعت المنتج كمسودة." : "Connect Shopify on the Integrations page to send this product as a draft."}{" "}<Link className="text-rose-deep underline" href="/integrations">{ar ? "التكاملات" : "Integrations"}</Link></>
+                  )}
+                </div>
+                {mayDesign && shopifyConnection && (
+                  <EntityForm
+                    locale={locale}
+                    action={syncShopifyDraftAction}
+                    hidden={{ styleId: selected.id }}
+                    fields={[]}
+                    submitEn={shopifyProduct ? "Sync SKUs to Shopify" : "Create Shopify draft"}
+                    submitAr={shopifyProduct ? "زامن الأكواد مع Shopify" : "أنشئ مسودة Shopify"}
+                  />
+                )}
               </div>
             )}
           </Card>

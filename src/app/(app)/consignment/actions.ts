@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
+import { canViewInventoryValue } from "@/core/visibility";
 import { LedgerError } from "@/lib/ledger";
 import {
   createConsignor,
@@ -168,6 +169,9 @@ export async function sellConsignedAction(
     });
 
     refresh();
+    if (!canViewInventoryValue(session.role)) {
+      return { success: `${result.saleNumber}: ${Number(result.total).toFixed(2)}` };
+    }
     return {
       success:
         `${result.saleNumber}: اتباعت بـ ${Number(result.total).toFixed(2)} — ` +

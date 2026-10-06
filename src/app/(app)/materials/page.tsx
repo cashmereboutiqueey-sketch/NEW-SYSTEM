@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, requireAnyPermission } from "@/lib/auth";
+import { INVENTORY_VALUE_PERMISSIONS } from "@/core/visibility";
 import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
@@ -21,6 +22,7 @@ import { createMaterialAction, toggleMaterialAction } from "./actions";
  */
 export default async function MaterialsPage() {
   const session = await requirePermission("material:view");
+  await requireAnyPermission(INVENTORY_VALUE_PERMISSIONS);
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const mayEdit = can(session.role, "purchase_order:create");

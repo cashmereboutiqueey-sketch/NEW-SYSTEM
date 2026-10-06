@@ -35,6 +35,20 @@ let rateperiodId: string;
 
 const ctx = { userId: null as string | null, reason: null };
 
+describe("production entity boundary", () => {
+  it("refuses issuing and receiving into a Brand location before changing inventory", async () => {
+    const brandLocation = await db.location.findFirstOrThrow({ where: { entity: { kind: "BRAND" }, isActive: true } });
+    const before = await db.inventoryMovement.count();
+    for (const entityId of [factoryId, brandLocation.entityId!]) {
+      await expect(issueForOrder({ productionOrderId: "invalid", materialId: fabricId,
+        entityId, locationId: brandLocation.id, quantity: "1", issueDate: day }, ctx)).rejects.toThrow("Factory entity");
+      await expect(completeProductionOrder({ productionOrderId: "invalid", outputs: [],
+        entityId, locationId: brandLocation.id, completedDate: day }, ctx)).rejects.toThrow("Factory entity");
+    }
+    expect(await db.inventoryMovement.count()).toBe(before);
+  });
+});
+
 beforeAll(async () => {
   factoryId = (await db.entity.findFirstOrThrow({ where: { kind: "FACTORY" } })).id;
   locationId = (await db.location.findFirstOrThrow({ where: { code: "LOC-FAC" } })).id;

@@ -30,6 +30,7 @@ export type LedgerViolation =
   | { code: "LINE_HAS_BOTH"; lineIndex: number }
   | { code: "LINE_HAS_NEITHER"; lineIndex: number }
   | { code: "LINE_NEGATIVE"; lineIndex: number }
+  | { code: "LINE_NON_FINITE"; lineIndex: number }
   | { code: "UNBALANCED"; debit: string; credit: string; difference: string };
 
 export type LedgerCheck =
@@ -57,6 +58,11 @@ export function checkBalanced(lines: DraftLine[]): LedgerCheck {
   lines.forEach((line, i) => {
     const debit = dec(line.debit ?? 0);
     const credit = dec(line.credit ?? 0);
+
+    if (!debit.isFinite() || !credit.isFinite()) {
+      violations.push({ code: "LINE_NON_FINITE", lineIndex: i });
+      return;
+    }
 
     if (debit.isNegative() || credit.isNegative()) {
       violations.push({ code: "LINE_NEGATIVE", lineIndex: i });
@@ -97,6 +103,8 @@ export function describeViolation(v: LedgerViolation): string {
       return `Line ${v.lineIndex + 1} has neither a debit nor a credit.`;
     case "LINE_NEGATIVE":
       return `Line ${v.lineIndex + 1} has a negative amount; reverse the side instead.`;
+    case "LINE_NON_FINITE":
+      return `Line ${v.lineIndex + 1} must contain finite monetary amounts.`;
     case "UNBALANCED":
       return `Entry does not balance: debits ${v.debit}, credits ${v.credit} (difference ${v.difference}).`;
   }

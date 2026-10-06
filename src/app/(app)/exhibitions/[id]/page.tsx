@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requirePermission } from "@/lib/auth";
 import { getPrefs } from "@/lib/session";
 import { can } from "@/core/permissions";
+import { canViewInventoryValue } from "@/core/visibility";
 import {
   exhibitionPosition,
   sendableStock,
@@ -33,6 +34,7 @@ export default async function ExhibitionPage({
   const ar = locale === "ar";
 
   const mayRun = can(session.role, "inventory:transfer");
+  const seeValue = canViewInventoryValue(session.role);
 
   let position;
   try {
@@ -139,7 +141,7 @@ export default async function ExhibitionPage({
                 {formatNumber(Number(l.expected))}
               </span>,
               <span key="d" className="num">
-                {formatMoney(dec(l.expected).times(dec(l.unitCost)).toString())}
+                {seeValue ? formatMoney(dec(l.expected).times(dec(l.unitCost)).toString()) : "—"}
               </span>,
             ])}
           />

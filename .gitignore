@@ -16,6 +16,7 @@ tsconfig.tsbuildinfo
 
 # Production build output, kept apart from the dev server (see next.config.ts)
 .next-build/
+.next-uat/
 
 # Verified database backups
 backups/

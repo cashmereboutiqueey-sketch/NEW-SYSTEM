@@ -106,6 +106,16 @@ export async function requirePermission(
   return session;
 }
 
+/** Page guard for a capability alternative; still checks temporary passwords. */
+export async function requireAnyPermission(
+  permissions: readonly Permission[],
+): Promise<SessionPayload> {
+  const session = await requireUser();
+  if (session.mustChangePassword) redirect("/change-password");
+  if (!permissions.some((permission) => can(session.role, permission))) redirect("/");
+  return session;
+}
+
 export class ForbiddenError extends Error {
   constructor(permission: Permission, role: string, reason?: string) {
     super(reason ?? `Role ${role} does not have permission ${permission}.`);

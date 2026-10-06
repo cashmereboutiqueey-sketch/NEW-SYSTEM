@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyWebhookSignature, receiveWebhook } from "@/lib/shopify";
 import { openSecret } from "@/lib/secrets";
+import { PayloadTooLargeError, textWithinLimit } from "@/lib/request-body";
+
+const MAX_WEBHOOK_BYTES = 6 * 1024 * 1024;
 
 /**
  * Shopify webhook receiver.
@@ -15,6 +18,10 @@ import { openSecret } from "@/lib/secrets";
  * replayed instead of being lost when the request ends.
  */
 export async function POST(request: NextRequest) {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_WEBHOOK_BYTES) {
+    return NextResponse.json({ error: "Payload too large." }, { status: 413 });
+  }
   const shopDomain = request.headers.get("x-shopify-shop-domain");
   const hmac = request.headers.get("x-shopify-hmac-sha256");
   const topic = request.headers.get("x-shopify-topic") ?? "unknown";
@@ -34,7 +41,15 @@ export async function POST(request: NextRequest) {
 
   // The raw body, byte for byte — re-serialising parsed JSON changes the
   // bytes and the signature would never match.
-  const rawBody = await request.text();
+  let rawBody: string;
+  try {
+    rawBody = await textWithinLimit(request, MAX_WEBHOOK_BYTES);
+  } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      return NextResponse.json({ error: "Payload too large." }, { status: 413 });
+    }
+    return NextResponse.json({ error: "Malformed payload." }, { status: 400 });
+  }
   if (!verifyWebhookSignature(rawBody, hmac, openSecret(connection.webhookSecret) ?? "")) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }

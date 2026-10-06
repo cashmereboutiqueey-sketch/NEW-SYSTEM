@@ -105,6 +105,14 @@ export default async function CashCyclePage({
         />
       </div>
 
+      {!cycle.costBaseUsable && (
+        <p className="mb-4 text-sm text-warn">
+          {ar
+            ? "تقدير رأس المال غير متاح لعدم وجود تكلفة مبيعات موجبة في الفترة."
+            : "Capital estimate unavailable because the period has no positive cost of sales."}
+        </p>
+      )}
+
       <Card
         className="mb-4"
         title={ar ? "من فين جت الأيام" : "Where the days come from"}

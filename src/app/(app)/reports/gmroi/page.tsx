@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getPrefs } from "@/lib/session";
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, requireAnyPermission } from "@/lib/auth";
+import { FINANCIAL_READ_PERMISSIONS } from "@/core/visibility";
 import { gmroiByCollection } from "@/lib/analytics";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber, formatPercent, dec, safeDiv } from "@/lib/money";
@@ -16,6 +17,7 @@ import { formatMoney, formatNumber, formatPercent, dec, safeDiv } from "@/lib/mo
  */
 export default async function GmroiPage() {
   await requirePermission("report:brand");
+  await requireAnyPermission(FINANCIAL_READ_PERMISSIONS);
   const { locale } = await getPrefs();
   const ar = locale === "ar";
 

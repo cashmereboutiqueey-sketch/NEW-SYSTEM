@@ -33,7 +33,7 @@ export function ItemActions({
     description: string;
     retailPrice: string;
     left: number;
-    commissionPct: string;
+    commissionPct: string | null;
   };
   customers: { id: string; name: string; phone: string | null }[];
   maySell: boolean;

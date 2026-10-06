@@ -160,7 +160,7 @@ export function verifyWebhookSignature(
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-type ShopifyConnection = {
+export type ShopifyConnection = {
   /** When known, the version Shopify answers with is recorded against it. */
   id?: string;
   externalRef: string;
@@ -180,7 +180,7 @@ type ShopifyConnection = {
  * across a redirect, even to another host, so following one would hand the
  * token to wherever the redirect pointed.
  */
-async function shopifyRequest(
+export async function shopifyRequest(
   connection: ShopifyConnection,
   path: string,
   init?: { method: "POST"; body: unknown },

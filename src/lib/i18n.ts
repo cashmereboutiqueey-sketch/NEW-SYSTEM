@@ -199,6 +199,8 @@ export const dictionary = {
   signOut: { ar: "تسجيل الخروج", en: "Sign out" },
   email: { ar: "البريد الإلكتروني", en: "Email" },
   password: { ar: "كلمة المرور", en: "Password" },
+  showPassword: { ar: "إظهار كلمة المرور", en: "Show password" },
+  hidePassword: { ar: "إخفاء كلمة المرور", en: "Hide password" },
   invalidCredentials: {
     ar: "البريد الإلكتروني أو كلمة المرور غير صحيحة",
     en: "Invalid email or password",

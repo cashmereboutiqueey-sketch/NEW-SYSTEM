@@ -122,11 +122,9 @@ export default async function GoodsInPage({ searchParams }: { searchParams: Prom
           />
         )}
         <StatTile
-          label={seeValue ? (ar ? "فاقد في الطريق" : "Lost on the road") : ar ? "توريدات ناقصة" : "Short deliveries"}
-          value={seeValue ? formatMoney(shortfallCost, locale) : formatNumber(shortfalls.length, locale)}
-          tone={
-            (seeValue ? shortfallCost.greaterThan(0) : shortfalls.length > 0) ? "bad" : "good"
-          }
+          label={ar ? "فاقد في الطريق" : "Lost on the road"}
+          value={maySeePrice ? formatMoney(shortfallCost, locale) : "—"}
+          tone={shortfallCost.greaterThan(0) ? "bad" : "good"}
           hint={
             shortfalls.length === 0
               ? ar ? "مفيش عجز" : "No shortfalls"
@@ -231,13 +229,9 @@ export default async function GoodsInPage({ searchParams }: { searchParams: Prom
               <span key={`${i}-e`} className="num">{s.despatchedQty}</span>,
               <span key={`${i}-c`} className="num">{s.countedQty}</span>,
               <span key={`${i}-s`} className="num text-bad">{s.shortfallQty}</span>,
-              ...(seeValue
-                ? [
-                    <span key={`${i}-v`} className="num">
-                      {s.shortfallCost ? formatMoney(dec(s.shortfallCost), locale) : "—"}
-                    </span>,
-                  ]
-                : []),
+              <span key={`${i}-v`} className="num">
+                {maySeePrice && s.shortfallCost ? formatMoney(dec(s.shortfallCost), locale) : "—"}
+              </span>,
               <span key={`${i}-n`} className="text-ink-600">{s.note ?? "—"}</span>,
               <span key={`${i}-u`} className="text-ink-500">{s.by}</span>,
             ])}
