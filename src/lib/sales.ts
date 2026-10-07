@@ -206,8 +206,8 @@ export async function createSale(
     const zone = data.destination?.courierZoneId
       ? await db.courierZone.findUnique({ where: { id: data.destination.courierZoneId } })
       : null;
-    if (data.destination?.courierZoneId && (!zone || !zone.isActive)) {
-      throw new SalesError("That delivery area is not one the courier serves. Choose it again.");
+    if (data.destination?.courierZoneId && (!zone || !zone.isActive || zone.courier !== "FLEXTOCK")) {
+      throw new SalesError("Choose an active Flextock delivery area.");
     }
 
     if (data.payments.some((p) => p.method === "STORE_CREDIT")) {

@@ -53,7 +53,7 @@ export function CourierZoneCreate({
   return (
     <div className="space-y-2 text-xs">
       <button type="button" onClick={() => { setOpen((value) => !value); setError(null); }} className="font-medium text-rose-deep underline">
-        {open ? ar ? "إلغاء" : "Cancel" : ar ? "+ أضف منطقة شحن MG" : "+ Add MG delivery area"}
+        {open ? ar ? "إلغاء" : "Cancel" : ar ? "+ أضف منطقة Flextock" : "+ Add Flextock delivery area"}
       </button>
       {open && (
         <div className="space-y-2 rounded-lg border border-ink-200 bg-panel p-3">
@@ -67,14 +67,14 @@ export function CourierZoneCreate({
             </label>
           )}
           <label className="block text-ink-600">
-            {ar ? "اسم المنطقة عند MG" : "Area name at MG"}
+            {ar ? "اسم المنطقة عند Flextock" : "Area name at Flextock"}
             <input value={region} onChange={(event) => setRegion(event.target.value)} maxLength={120} className={`mt-1 ${field}`} />
           </label>
           <label className="block text-ink-600">
-            {ar ? "سعر MG للمنطقة (جنيه)" : "MG price for this area (EGP)"}
+            {ar ? "سعر Flextock للمنطقة (جنيه)" : "Flextock price for this area (EGP)"}
             <input type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} dir="ltr" className={`mt-1 ${field}`} />
           </label>
-          <p className="text-ink-500">{ar ? "اكتب السعر المؤكد من MG؛ قيمة الشحن على العميل تقدر تعدّلها في الأوردر." : "Enter MG's confirmed rate; you can edit what the customer pays on the order."}</p>
+          <p className="text-ink-500">{ar ? "اكتب السعر المؤكد من Flextock؛ قيمة الشحن على العميل تقدر تعدّلها في الأوردر." : "Enter Flextock's confirmed rate; you can edit what the customer pays on the order."}</p>
           <button type="button" onClick={() => void save()} disabled={pending || !selected || !region.trim() || price.trim() === ""} className="rounded-lg bg-ink-900 px-3 py-2 font-medium text-white disabled:opacity-40">
             {pending ? ar ? "بيحفظ…" : "Saving…" : ar ? "احفظ المنطقة" : "Save area"}
           </button>

@@ -191,7 +191,7 @@ export function OrderActions({
         <input name="shippingAmount" type="number" min="0" step="0.01" required value={shippingCharge}
           onChange={(event) => setShippingCharge(event.target.value)} dir="ltr" className={small} />
         <p className="text-xs font-medium text-ink-700">{ar ? "المندوب هيحصّل" : "Courier collects"} {(owing + Number(shippingCharge || 0)).toFixed(2)}</p>
-        <p className="text-[11px] text-ink-500">{ar ? "الأوردر هيظهر في صفحة الشحن علشان تطلع شيت MG. لو العميل حوّل قبل التسليم، صحّح التحصيل من التسويات." : "The order will appear on the shipping desk for the MG sheet. Reconcile a later transfer there."}</p>
+        <p className="text-[11px] text-ink-500">{ar ? "الأوردر هيظهر في صفحة الشحن للتسليم إلى Flextock بعد قبولها له. لو العميل حوّل قبل التسليم، صحّح التحصيل من التسويات." : "The order will appear on the shipping desk for Flextock handoff after acceptance. Reconcile a later transfer there."}</p>
         <Buttons ar={ar} pending={shipPending} onCancel={() => setPanel(null)} label={ar ? "جهّز للشحن" : "Book for shipping"} />
         {shipState.error && <p className="text-xs text-bad">{shipState.error}</p>}
       </form>

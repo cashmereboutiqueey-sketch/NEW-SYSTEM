@@ -552,7 +552,7 @@ export async function bookCustomOrderForShipping(
       throw new CustomOrderError("Only a received, ready order can be booked for shipping once.");
     }
     const zone = await db.courierZone.findUnique({ where: { id: input.courierZoneId } });
-    if (!zone?.isActive) throw new CustomOrderError("Choose an active courier area.");
+    if (!zone?.isActive || zone.courier !== "FLEXTOCK") throw new CustomOrderError("Choose an active Flextock delivery area.");
     if (!input.recipientName.trim() || !input.phone.trim() || !input.addressLine.trim()) {
       throw new CustomOrderError("Recipient, phone and full address are required for shipping.");
     }

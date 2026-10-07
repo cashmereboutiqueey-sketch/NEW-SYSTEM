@@ -2,7 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import {
-  createBatchesAction, uploadReportAction, updateDestinationAction, type BatchState,
+  createBatchesAction, updateDestinationAction, type BatchState,
 } from "./actions";
 import type { FormState } from "@/components/entity-form";
 import { RequestIdField } from "@/components/request-id";
@@ -21,7 +21,7 @@ export type ReadyOrder = {
   problems: string[];
 };
 
-const BRANCHES: Record<string, string> = { "1": "MG Express", "5": "MG Cairo" };
+const BRANCHES: Record<string, string> = { DIRECT: "Flextock" };
 
 const PROBLEM_AR: Record<string, string> = {
   "no delivery area": "مفيش منطقة",
@@ -31,11 +31,10 @@ const PROBLEM_AR: Record<string, string> = {
 };
 
 /**
- * Today's parcels, ticked and turned into the courier's sheets.
+ * Today's parcels, selected for a confirmed Flextock handoff.
  *
  * Orders that cannot go yet are shown, greyed, with what is missing — so the
- * address gets fixed now, not when the courier's import rejects the row and
- * the parcel quietly misses a day.
+ * address gets fixed before the parcel is handed over.
  */
 export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrder[] }) {
   const [state, action, pending] = useActionState<BatchState, FormData>(createBatchesAction, {});
@@ -127,17 +126,20 @@ export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrde
       {state.batches && state.batches.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {state.batches.map((b) => (
-            <a
+            <span
               key={b.batchId}
-              href={`/shipping/batches/${b.batchId}/manifest`}
               className="rounded-lg bg-good px-3 py-1.5 text-sm font-medium text-white"
             >
-              {ar ? "نزّل شيت " : "Download "}
-              {BRANCHES[b.branch] ?? b.branch} ({b.shipments})
-            </a>
+              {BRANCHES[b.branch] ?? b.branch} · {b.batchNumber} ({b.shipments})
+            </span>
           ))}
         </div>
       )}
+
+      <label className="flex items-start gap-2 text-sm text-ink-700">
+        <input type="checkbox" name="acceptedByFlextock" value="yes" required className="mt-1" />
+        {ar ? "أؤكد أن Flextock قبلت الأوردرات دي بالفعل" : "I confirm Flextock has accepted these orders"}
+      </label>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-600">
@@ -150,54 +152,9 @@ export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrde
           disabled={pending || chosen.length === 0}
           className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
-          {pending ? (ar ? "بيتعمل…" : "Working…") : ar ? "اعمل شيت MG" : "Make MG sheets"}
+          {pending ? (ar ? "بيتسجل…" : "Recording…") : ar ? "سجّل التسليم لـ Flextock" : "Record Flextock handoff"}
         </button>
       </div>
-    </form>
-  );
-}
-
-/**
- * The courier's orders report, uploaded to bring its statuses back.
- *
- * Exported from MG's «تقرير الاوردرات». Reading the same report twice changes
- * nothing, so uploading the day's report every evening is safe.
- */
-export function ReportUploadForm({ ar }: { ar: boolean }) {
-  const [state, action, pending] = useActionState<FormState, FormData>(uploadReportAction, {});
-  const [fileName, setFileName] = useState<string | null>(null);
-
-  return (
-    <form action={action} className="space-y-3">
-      <RequestIdField state={state} />
-      <label
-        htmlFor="mg-report"
-        className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-ink-300 px-4 py-6 text-sm text-ink-600 hover:border-ink-400"
-      >
-        {fileName ??
-          (ar
-            ? "اختار ملف «تقرير الاوردرات» من موقع MG (تصدير Excel)"
-            : "Choose MG's orders report (Export Excel)")}
-      </label>
-      <input
-        id="mg-report"
-        name="report"
-        type="file"
-        accept=".xlsx,.xls,.html,.htm"
-        className="sr-only"
-        onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
-      />
-
-      {state.error && <p className="text-sm text-bad">{state.error}</p>}
-      {state.success && <p className="text-sm text-good">{state.success}</p>}
-
-      <button
-        type="submit"
-        disabled={pending || !fileName}
-        className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-      >
-        {pending ? (ar ? "بيتقرا…" : "Reading…") : ar ? "حدّث الحالات" : "Update statuses"}
-      </button>
     </form>
   );
 }
@@ -211,7 +168,7 @@ const small =
  * The details an order is missing, filled in where they are noticed.
  *
  * Mostly website orders: the customer typed "Nasr City" and the courier knows
- * the place as «مدينة نصر», so somebody picks the courier's area once. What
+ * the place as «مدينة نصر», so somebody picks Flextock's area once. What
  * the order already has is shown, and only what is changed is sent.
  */
 export function DestinationForm({ ar, order, zones }: { ar: boolean; order: ReadyOrder; zones: ZoneGroup[] }) {

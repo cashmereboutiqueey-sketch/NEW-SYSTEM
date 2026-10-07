@@ -64,7 +64,7 @@ export function DirectPaymentForm({
       )}
       <label className="flex items-start gap-2 text-xs text-ink-700">
         <input type="checkbox" name="receivedConfirmed" value="yes" required className="mt-0.5" />
-        <span>{ar ? "اتأكدت إن المبلغ كاملًا وصل البنك. لو الأوردر كان عند الاستلام، هبلّغ MG إن التحصيل على الطرد بقى صفر." : "I confirmed the full amount arrived in the bank. If this was COD, I will tell MG the parcel's COD is now zero."}</span>
+        <span>{ar ? "اتأكدت إن المبلغ كاملًا وصل البنك. لو الأوردر كان عند الاستلام، هبلّغ Flextock إن التحصيل على الطرد بقى صفر." : "I confirmed the full amount arrived in the bank. If this was COD, I will tell Flextock the parcel's COD is now zero."}</span>
       </label>
       <button type="submit" disabled={pending || !orderNumber.trim()} className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
         {pending ? ar ? "بيسجل…" : "Recording…" : ar ? "سجّل التحويل المباشر" : "Record direct payment"}

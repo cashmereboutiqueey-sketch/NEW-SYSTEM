@@ -17,7 +17,7 @@ const zones = await db.courierZone.count({ where: { isActive: true } });
 const cmtOrders = await db.cMTOrder.count();
 
 const PAGES: { path: string; wants: string[] }[] = [
-  { path: "/shipping", wants: ["الشحن", zones > 0 ? "حدّث من تقرير MG" : "مناطق MG لسه ماتحمّلتش"] },
+  { path: "/shipping", wants: ["الشحن مع Flextock", zones > 0 ? "مناطق الشحن" : "مفيش مناطق Flextock مؤكدة لسه"] },
   { path: "/sales", wants: ["المحافظة", "العنوان بالتفصيل", zones > 0 ? "القاهرة" : "المحافظة"] },
   // The billing columns are on the orders table, which only exists once there are orders.
   { path: "/cmt/orders", wants: cmtOrders > 0 ? ["الفاتورة", "المستحق"] : ["لسه مفيش أوامر تصنيع"] },

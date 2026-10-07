@@ -284,7 +284,7 @@ export default async function IntegrationsPage() {
                 fields={[]}
               />
               <p className="mt-1 text-xs text-ink-500">
-                {ar ? "الطلبات اللي اتحطت في شحنة MG هتتعلّم مشحونة على Shopify. أي طلب ملغي أو شحنه مقسّم هيظهر للمراجعة." : "Orders handed to MG are marked fulfilled on Shopify. Cancelled or split fulfillments are flagged for review."}
+                {ar ? "الطلبات اللي اتسجل تسليمها لـ Flextock هتتعلّم مشحونة على Shopify. أي طلب ملغي أو شحنه مقسّم هيظهر للمراجعة." : "Orders handed to Flextock are marked fulfilled on Shopify. Cancelled or split fulfillments are flagged for review."}
               </p>
             </div>
             <div className="mt-4 border-t border-ink-100 pt-4">

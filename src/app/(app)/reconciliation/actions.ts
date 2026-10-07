@@ -39,7 +39,7 @@ export async function correctDirectBankPaymentAction(_prev: FormState, formData:
     for (const path of ["/reconciliation", "/shipping", "/sales", "/my-orders", "/cash-flow", "/"]) revalidatePath(path);
     return {
       success: `${result.orderNumber}: ${Number(result.amount).toFixed(2)} اتسجلت واصلة البنك بدل ${result.wasCod ? "مستحق عند شركة الشحن" : "كاش في الدرج"}.` +
-        (result.shipmentUpdated ? " حدّث مبلغ التحصيل عند MG إلى صفر قبل تسليم الطرد، أو بلّغهم بالتعديل لو خرج بالفعل." : ""),
+        (result.shipmentUpdated ? " حدّث مبلغ التحصيل عند Flextock إلى صفر قبل تسليم الطرد، أو بلّغهم بالتعديل لو خرج بالفعل." : ""),
     };
   } catch (error) {
     return { error: toMessage(error) };

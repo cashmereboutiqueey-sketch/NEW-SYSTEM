@@ -128,7 +128,7 @@ async function destinationOf(order: ShopifyOrder) {
   const city = placeKey(a.city);
   if (city) {
     const zones = await db.courierZone.findMany({
-      where: { isActive: true },
+      where: { courier: "FLEXTOCK", isActive: true },
       select: { id: true, region: true },
     });
     const matches = zones.filter((z) => placeKey(z.region) === city);

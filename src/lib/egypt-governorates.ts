@@ -6,7 +6,3 @@ export const EGYPT_GOVERNORATES = [
   "البحر الأحمر", "الفيوم", "بني سويف", "المنيا", "أسيوط", "سوهاج",
   "قنا", "الأقصر", "أسوان", "الوادي الجديد",
 ] as const;
-
-export function mgBranchForGovernorate(governorate: string): string {
-  return ["القاهرة", "الجيزة", "القليوبية"].includes(governorate.trim()) ? "5" : "1";
-}

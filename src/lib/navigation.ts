@@ -129,7 +129,7 @@ export const navigation: NavSection[] = [
       // What the desk above costs. Behind the books, not behind the desk:
       // the people paid out of it must not be the people setting it.
       { key: "commissions", href: "/commissions", phase: 7, scopes: ["BRAND", "GROUP"], icon: "wallet", shipped: true, needs: "journal:view" },
-      // The courier has no API: sheets out in its template, its report back in.
+      // Flextock handoffs are recorded here while its API contract is pending.
       { key: "shipping", href: "/shipping", phase: 6, scopes: ["BRAND", "GROUP"], icon: "truck", shipped: true, needs: "sales_order:view" },
       { key: "customers", href: "/customers", phase: 7, scopes: ["BRAND", "GROUP"], icon: "users", shipped: true, needs: "customer:view" },
       { key: "consignment", href: "/consignment", phase: 6, scopes: ["BRAND", "GROUP"], icon: "layers", shipped: true, needs: "stock_value:view" },

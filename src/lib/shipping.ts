@@ -1,25 +1,18 @@
 import "server-only";
-import ExcelJS from "exceljs";
 import { db } from "./db";
 import { dec, roundMoney, type Decimal } from "./money";
 import { nextDocumentNumber } from "./ledger";
 import { writeAudit, type AuditContext } from "./audit";
 import { command } from "./command";
 import type { ShipmentStatus } from "@/generated/prisma/client";
-import { EGYPT_GOVERNORATES, mgBranchForGovernorate } from "./egypt-governorates";
+import { EGYPT_GOVERNORATES } from "./egypt-governorates";
 
 /**
  * Handing parcels to the courier, and hearing back from it.
  *
- * MG Express has no API. Somebody used to type every social order into its
- * portal by hand, from a system that already held every one of them. What it
- * does have is an import: an Excel sheet in its own template, one file per
- * branch. And it reports back through an orders report its portal exports.
- *
- * So shipping is two sheets. Out: the day's orders, written in the courier's
- * template exactly, so nobody retypes them. In: the courier's report, read
- * back and matched by shipment number — which is the order number, because
- * that is what went out.
+ * Cashmere prepares the parcel and Flextock handles delivery. Until Flextock
+ * supplies its API contract, a user records handoff only after Flextock has
+ * accepted the order. Shipment status updates await that integration.
  */
 
 export class ShippingError extends Error {
@@ -29,18 +22,13 @@ export class ShippingError extends Error {
   }
 }
 
-export const MG_EXPRESS = "MG_EXPRESS";
-
-/** The courier's branches, by the codes its import screen uses. */
-export const MG_BRANCHES: Record<string, string> = {
-  "1": "MG Express",
-  "5": "MG Cairo",
-};
+export const FLEXTOCK = "FLEXTOCK";
+const DIRECT_BRANCH = "DIRECT";
 
 /* ───────────────────────────────────────────────────────────────── zones */
 
 /** Every area the courier serves, grouped for a governorate-then-area picker. */
-export async function courierZones(courier = MG_EXPRESS) {
+export async function courierZones(courier = FLEXTOCK) {
   const zones = await db.courierZone.findMany({
     where: { courier, isActive: true },
     orderBy: [{ governorate: "asc" }, { region: "asc" }],
@@ -55,7 +43,7 @@ export async function courierZones(courier = MG_EXPRESS) {
   return [...byGovernorate.entries()].map(([governorate, regions]) => ({ governorate, regions }));
 }
 
-/** Add one verified MG area and its quoted price without a private price-list file. */
+/** Add one confirmed delivery area and its quoted price. */
 export async function createCourierZone(
   input: { governorate: string; region: string; price: string },
   ctx: AuditContext,
@@ -64,7 +52,7 @@ export async function createCourierZone(
     const governorate = input.governorate.trim();
     const region = input.region.trim();
     if (!(EGYPT_GOVERNORATES as readonly string[]).includes(governorate)
-      && !(await db.courierZone.findFirst({ where: { courier: MG_EXPRESS, governorate } }))) {
+      && !(await db.courierZone.findFirst({ where: { courier: FLEXTOCK, governorate } }))) {
       throw new ShippingError("Choose an Egyptian governorate.");
     }
     if (!region || region.length > 120) throw new ShippingError("Enter the courier's area name (up to 120 characters).");
@@ -72,20 +60,20 @@ export async function createCourierZone(
     const price = roundMoney(dec(input.price)).toString();
     if (dec(price).greaterThan(1_000_000)) throw new ShippingError("Check the courier price; it is too large.");
     const existing = await db.courierZone.findUnique({
-      where: { courier_governorate_region: { courier: MG_EXPRESS, governorate, region } },
+      where: { courier_governorate_region: { courier: FLEXTOCK, governorate, region } },
     });
     if (existing?.isActive) {
       return { id: existing.id, governorate, region, price: dec(existing.price).toString(), created: false };
     }
     const zone = existing
-      ? await db.courierZone.update({ where: { id: existing.id }, data: { isActive: true, price, branch: mgBranchForGovernorate(governorate) } })
-      : await db.courierZone.create({ data: { courier: MG_EXPRESS, governorate, region, price, branch: mgBranchForGovernorate(governorate) } });
+      ? await db.courierZone.update({ where: { id: existing.id }, data: { isActive: true, price, branch: DIRECT_BRANCH } })
+      : await db.courierZone.create({ data: { courier: FLEXTOCK, governorate, region, price, branch: DIRECT_BRANCH } });
     await writeAudit(db, {
       action: "COURIER_ZONE_CREATED",
       entityName: "CourierZone",
       entityId: zone.id,
       before: existing ? { isActive: false, price: dec(existing.price).toString() } : null,
-      after: { courier: MG_EXPRESS, governorate, region, price, branch: zone.branch },
+      after: { courier: FLEXTOCK, governorate, region, price, branch: zone.branch },
       ctx,
     });
     return { id: zone.id, governorate, region, price, created: true };
@@ -101,15 +89,12 @@ export async function createCourierZone(
  */
 export async function importCourierZones(
   input: {
-    courier: string;
     zones: { governorate: string; region: string; price: number | string }[];
-    /** Which branch serves a governorate. */
-    branchFor: (governorate: string) => string;
   },
   ctx: AuditContext,
 ): Promise<{ created: number; updated: number; deactivated: number }> {
-  return command("shipping.importCourierZones", { courier: input.courier, count: input.zones.length }, ctx, async () => {
-    const existing = await db.courierZone.findMany({ where: { courier: input.courier } });
+  return command("shipping.importCourierZones", { courier: FLEXTOCK, count: input.zones.length }, ctx, async () => {
+    const existing = await db.courierZone.findMany({ where: { courier: FLEXTOCK } });
     const byKey = new Map(existing.map((z) => [`${z.governorate}|${z.region}`, z]));
     const seen = new Set<string>();
     let created = 0;
@@ -123,11 +108,11 @@ export async function importCourierZones(
       seen.add(key);
 
       const price = roundMoney(dec(zone.price)).toString();
-      const branch = input.branchFor(governorate);
+      const branch = DIRECT_BRANCH;
       const found = byKey.get(key);
       if (!found) {
         await db.courierZone.create({
-          data: { courier: input.courier, governorate, region, price, branch },
+          data: { courier: FLEXTOCK, governorate, region, price, branch },
         });
         created += 1;
       } else if (!dec(found.price).equals(price) || found.branch !== branch || !found.isActive) {
@@ -150,9 +135,9 @@ export async function importCourierZones(
     await writeAudit(db, {
       action: "COURIER_ZONES_IMPORTED",
       entityName: "CourierZone",
-      entityId: input.courier,
+      entityId: FLEXTOCK,
       ctx,
-      after: { courier: input.courier, zones: seen.size, created, updated, deactivated: gone.length },
+      after: { courier: FLEXTOCK, zones: seen.size, created, updated, deactivated: gone.length },
     });
 
     return { created, updated, deactivated: gone.length };
@@ -168,7 +153,7 @@ function codOf(payments: { method: string; status: string; amount: unknown }[]):
     .reduce((sum, p) => sum.plus(dec(p.amount as string)), dec(0));
 }
 
-/** Why an order cannot go on today's sheet, in words somebody can act on. */
+/** Why an order cannot be handed to Flextock yet. */
 function problemsWith(order: {
   courierZoneId: string | null;
   shippingPhone: string | null;
@@ -189,10 +174,9 @@ function problemsWith(order: {
  *
  * Confirmed, delivered by courier rather than collected in the shop, and not
  * already on an open shipment. Orders that cannot go yet are listed with the
- * reason, so the missing address is fixed before the sheet is made rather
- * than discovered when the courier's import rejects the row.
+ * reason, so the missing address is fixed before the handoff.
  */
-export async function readyToShip(courier = MG_EXPRESS) {
+export async function readyToShip(courier = FLEXTOCK) {
   const orders = await db.salesOrder.findMany({
     where: {
       status: "CONFIRMED",
@@ -236,7 +220,7 @@ export async function readyToShip(courier = MG_EXPRESS) {
  * Website orders arrive with the city as the customer typed it, which rarely
  * matches the courier's own area names. Somebody picks the area here; the
  * governorate follows from it. Only while the order is still waiting: a parcel
- * already on the courier's sheet goes where that sheet said.
+ * already handed to the courier keeps its recorded destination.
  */
 export async function updateDestination(
   input: {
@@ -264,7 +248,7 @@ export async function updateDestination(
     }
 
     const zone = await db.courierZone.findUnique({ where: { id: input.courierZoneId } });
-    if (!zone || !zone.isActive) throw new ShippingError("Choose one of the courier's areas.");
+    if (!zone || !zone.isActive || zone.courier !== FLEXTOCK) throw new ShippingError("Choose an active Flextock delivery area.");
 
     const clean = (v: string | null | undefined, fallback: string | null) =>
       v === undefined ? fallback : v?.trim() || null;
@@ -295,22 +279,21 @@ export async function updateDestination(
   });
 }
 
-/* ──────────────────────────────────────────────────────── the day's sheet */
+/* ──────────────────────────────────────────────────────── handoff */
 
 /**
- * Puts orders on shipments, one batch per courier branch.
- *
- * The courier's import takes one branch per file, so a day's parcels for
- * Cairo and for Alexandria are two sheets. Every order is checked again here:
- * the list the screen showed may be minutes old, and an order that went out
- * on another sheet meanwhile must not go out twice.
+ * Records parcels that Flextock has accepted. Every order is checked again
+ * because the list the screen showed may be minutes old.
  */
 export async function createShipmentBatches(
-  input: { courier?: string; salesOrderIds: string[] },
+  input: { courier?: string; salesOrderIds: string[]; acceptedByFlextock: boolean },
   ctx: AuditContext,
 ): Promise<{ batches: { batchId: string; batchNumber: string; branch: string; shipments: number }[] }> {
-  const courier = input.courier ?? MG_EXPRESS;
+  const courier = input.courier ?? FLEXTOCK;
   return command("shipping.createShipmentBatches", { courier, salesOrderIds: [...input.salesOrderIds].sort() }, ctx, async () => {
+    if (!input.acceptedByFlextock || courier !== FLEXTOCK) {
+      throw new ShippingError("Confirm Flextock accepted these orders before recording a handoff.");
+    }
     const ids = [...new Set(input.salesOrderIds)];
     if (ids.length === 0) throw new ShippingError("Tick the orders going out today.");
 
@@ -387,7 +370,7 @@ export async function createShipmentBatches(
           after: {
             batchNumber,
             courier,
-            branch: MG_BRANCHES[branch] ?? branch,
+            branch,
             orders: list.map((o) => o.orderNumber),
             cod: list.reduce((sum, o) => sum.plus(codOf(o.payments)), dec(0)).toString(),
           },
@@ -400,389 +383,81 @@ export async function createShipmentBatches(
   });
 }
 
-/** The columns of MG Express's import template, in its order, both header rows. */
-const MG_COLUMNS: [key: string, label: string][] = [
-  ["م", "1"],
-  ["CustName", "المرسل اليه"],
-  ["Company", "العميل"],
-  ["subComp", "عميل فرعى"],
-  ["Cost", "التكلفة"],
-  ["Weight", "الوزن"],
-  ["Parcode", "رقم الشحنة"],
-  ["Phone", "الهاتف"],
-  ["SecPhone", "هاتف آخر"],
-  ["City", "المحافظة"],
-  ["Region", "المدينة"],
-  ["address", "العنوان"],
-  ["createdDate", "التاريخ"],
-  ["Notes", "ملحوظة"],
-  ["Replacing", "استبدال"],
-  ["OrderContent", "محتوى الأوردر"],
-  ["PiecesNum", "عدد القطع"],
-  ["EmpName", "المندوب"],
-];
-
-/**
- * A batch as the courier's import expects it.
- *
- * Two header rows exactly as its own template has them — its English keys,
- * then its Arabic labels — and one row per parcel. Nothing is added: an extra
- * column is a column its import may refuse the whole file over.
- */
-export async function manifestWorkbook(batchId: string): Promise<{ fileName: string; data: Buffer }> {
-  const batch = await db.shipmentBatch.findUnique({
-    where: { id: batchId },
-    include: {
-      shipments: {
-        orderBy: { reference: "asc" },
-        include: {
-          salesOrder: {
-            include: {
-              customer: { select: { name: true, phone: true } },
-              courierZone: { select: { governorate: true, region: true } },
-              lines: {
-                select: {
-                  quantity: true,
-                  variant: {
-                    select: {
-                      sku: true,
-                      style: { select: { nameAr: true } },
-                      colorCode: { select: { nameAr: true } },
-                      sizeCode: { select: { code: true } },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-  if (!batch) throw new ShippingError("That shipment batch no longer exists.");
-
-  const company = (await db.setting.findUnique({ where: { key: "courier.mg.companyName" } }))?.value ?? "cashmere";
-
-  const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("Sheet1", { views: [{ rightToLeft: true }] });
-  sheet.addRow(MG_COLUMNS.map(([key]) => key));
-  sheet.addRow(MG_COLUMNS.map(([, label], i) => (i === 0 ? 1 : label)));
-
-  batch.shipments.forEach((s, i) => {
-    const o = s.salesOrder;
-    const content = o.lines
-      .map((l) => {
-        const v = l.variant;
-        const name = [v.style?.nameAr, v.colorCode?.nameAr, v.sizeCode?.code].filter(Boolean).join(" ");
-        return `${l.quantity}× ${name || v.sku}`;
-      })
-      .join(" + ");
-    const row = sheet.addRow([
-      i + 1,
-      o.recipientName || o.customer?.name || "",
-      company,
-      "",
-      Number(dec(s.codAmount).toFixed(2)),
-      "",
-      s.reference,
-      o.shippingPhone || o.customer?.phone || "",
-      o.secondPhone || "",
-      o.courierZone?.governorate ?? o.governorate ?? "",
-      o.courierZone?.region ?? o.city ?? "",
-      o.addressLine ?? "",
-      o.shippedDate ?? batch.createdAt,
-      o.notes ?? "",
-      "",
-      content,
-      o.lines.reduce((sum, l) => sum + l.quantity, 0),
-      "",
-    ]);
-    // The courier writes dates day first; its own file names do.
-    row.getCell(13).numFmt = "dd/mm/yyyy";
-    // Phone numbers as text: a leading zero dropped is a number nobody answers.
-    row.getCell(8).numFmt = "@";
-    row.getCell(9).numFmt = "@";
-  });
-
-  const branchName = (MG_BRANCHES[batch.branch] ?? batch.branch).replace(/\s+/g, "-");
-  const fileName = `${branchName}_${batch.batchNumber}.xlsx`;
-  const data = Buffer.from(await workbook.xlsx.writeBuffer());
-  return { fileName, data };
-}
-
-/* ─────────────────────────────────────────────── hearing back from them */
-
-/** Arabic as the courier's report spells it, made comparable. */
-function normalise(text: string): string {
-  return text
-    .replace(/[ً-ْ]/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * The courier's statuses, in what they mean here.
- *
- * Anything that moves money or stock beyond a plain delivery — a partial
- * return, a changed price, an exchange — is a thing to look at, not a thing to
- * do automatically. The courier's word says what happened at the door; the
- * returns desk says what came back.
- */
-const MG_STATUS: [pattern: string, status: ShipmentStatus][] = [
-  ["اوردر بيك اب", "IN_TRANSIT"],
-  ["تم استلام بيك اب", "IN_TRANSIT"],
-  ["قيد التوصيل", "IN_TRANSIT"],
-  ["المسلمة ودفع كامل", "DELIVERED"],
-  ["المسلمة ومرتجع جزئي", "NEEDS_REVIEW"],
-  ["المسلمة وتعديل السعر", "NEEDS_REVIEW"],
-  ["استبدال", "NEEDS_REVIEW"],
-  ["مرتجع ودفع الشحن", "RETURNED"],
-  ["مرتجع ولم يدفع الشحن", "RETURNED"],
-  ["فشل التسليم", "FAILED"],
-  ["تهرب بعد وصول المندوب", "FAILED"],
-  ["مؤجل", "POSTPONED"],
-];
-
-export function mgStatus(text: string): ShipmentStatus | null {
-  const n = normalise(text);
-  const exact = MG_STATUS.find(([pattern]) => normalise(pattern) === n);
-  return exact ? exact[1] : null;
-}
-
-/** One row of the courier's orders report, by the columns this reads. */
-export type CourierReportRow = {
-  reference: string;
-  status: string;
-  collected?: string | number | null;
-  fee?: string | number | null;
-  dueToUs?: string | number | null;
-  remittedToUs?: string | number | null;
-  attempts?: string | number | null;
-  followUp?: string | null;
-};
-
-const REPORT_HEADERS: Record<keyof CourierReportRow, string[]> = {
-  reference: ["رقم الشحنة"],
-  status: ["الحالة", "حالة الأوردر", "حالة الاوردر"],
-  collected: ["المدفوع", "التحصيل"],
-  fee: ["الشحن"],
-  dueToUs: ["المستحق للعميل"],
-  remittedToUs: ["الدفع للعميل", "دفع للعميل"],
-  attempts: ["مرات الشحن"],
-  followUp: ["رد المتابعة"],
-};
-
-/** A table of text, whatever file it came out of. */
-function rowsFromTable(table: string[][]): { rows: CourierReportRow[]; missing: string[] } {
-  const headerIndex = table.findIndex((row) =>
-    row.some((cell) => REPORT_HEADERS.reference.some((h) => normalise(cell) === normalise(h))),
-  );
-  if (headerIndex < 0) return { rows: [], missing: ["رقم الشحنة"] };
-
-  const header = table[headerIndex].map(normalise);
-  const column = (names: string[]) => header.findIndex((cell) => names.some((n) => normalise(n) === cell));
-  const at = Object.fromEntries(
-    (Object.keys(REPORT_HEADERS) as (keyof CourierReportRow)[]).map((k) => [k, column(REPORT_HEADERS[k])]),
-  ) as Record<keyof CourierReportRow, number>;
-
-  const missing = (["reference", "status"] as const).filter((k) => at[k] < 0).map((k) => REPORT_HEADERS[k][0]);
-  if (missing.length > 0) return { rows: [], missing };
-
-  const cell = (row: string[], i: number) => (i >= 0 ? (row[i] ?? "").trim() : "");
-  const rows = table
-    .slice(headerIndex + 1)
-    .map((row) => ({
-      reference: cell(row, at.reference),
-      status: cell(row, at.status),
-      collected: cell(row, at.collected) || null,
-      fee: cell(row, at.fee) || null,
-      dueToUs: cell(row, at.dueToUs) || null,
-      remittedToUs: cell(row, at.remittedToUs) || null,
-      attempts: cell(row, at.attempts) || null,
-      followUp: cell(row, at.followUp) || null,
-    }))
-    .filter((r) => r.reference);
-  return { rows, missing: [] };
-}
-
-/**
- * Reads the courier's orders report, as its portal exports it.
- *
- * Portals like this one often "export to Excel" by sending an HTML table with
- * a spreadsheet's name, so both a real workbook and an HTML table are read.
- * Columns are found by their Arabic headers rather than by position: a column
- * added to the courier's report must not shift every figure one to the left.
- */
-export async function parseCourierReport(file: Buffer): Promise<{ rows: CourierReportRow[]; missing: string[] }> {
-  const head = file.subarray(0, 512).toString("utf8").toLowerCase();
-  if (head.includes("<table") || head.includes("<html") || head.includes("<tr")) {
-    const html = file.toString("utf8");
-    const table = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map((m) =>
-      [...m[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
-        c[1].replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim(),
-      ),
-    );
-    return rowsFromTable(table);
-  }
-
-  const workbook = new ExcelJS.Workbook();
-  try {
-    await workbook.xlsx.load(file as unknown as ArrayBuffer);
-  } catch {
-    throw new ShippingError("That file is not a report this can read. Export it again from the courier's portal.");
-  }
-  const sheet = workbook.worksheets[0];
-  if (!sheet) return { rows: [], missing: ["رقم الشحنة"] };
-  const table: string[][] = [];
-  sheet.eachRow({ includeEmpty: false }, (row) => {
-    const values = row.values as unknown[];
-    table.push(
-      values.slice(1).map((v) => {
-        if (v == null) return "";
-        if (typeof v === "object" && v !== null && "text" in v) return String((v as { text: unknown }).text);
-        if (typeof v === "object" && v !== null && "result" in v) return String((v as { result: unknown }).result);
-        return String(v);
-      }),
-    );
-  });
-  return rowsFromTable(table);
-}
-
-function amount(value: string | number | null | undefined): string | null {
-  if (value == null || value === "") return null;
-  const cleaned = String(value).replace(/[^\d.\-]/g, "");
-  if (!cleaned || Number.isNaN(Number(cleaned))) return null;
-  return roundMoney(dec(cleaned)).toString();
-}
-
-/**
- * Applies what the courier's report says.
- *
- * Matched by shipment number, which is the order number. A plain delivery
- * marks the order delivered. Anything else that changes what happened to the
- * goods or the money is recorded and listed for somebody to settle — the
- * system does not restock a garment or refund a customer because a courier's
- * status column said a word.
- *
- * Reading the same report twice changes nothing the second time.
- */
-export async function applyCourierReport(
-  input: { courier?: string; rows: CourierReportRow[] },
+/** Apply a confirmed Flextock status. This is the entry point for its future API. */
+export async function recordFlextockStatus(
+  input: {
+    reference: string;
+    status: ShipmentStatus;
+    providerStatus?: string | null;
+    collectedAmount?: string | null;
+    courierFee?: string | null;
+    dueToUs?: string | null;
+    remittedToUs?: string | null;
+    followUp?: string | null;
+  },
   ctx: AuditContext,
-): Promise<{
-  updated: number;
-  unchanged: number;
-  delivered: number;
-  needsAttention: string[];
-  unmatched: string[];
-  unknownStatuses: string[];
-}> {
-  const courier = input.courier ?? MG_EXPRESS;
-  return command("shipping.applyCourierReport", { courier, rows: input.rows }, ctx, async () => {
-    let updated = 0;
-    let unchanged = 0;
-    let delivered = 0;
-    const needsAttention: string[] = [];
-    const unmatched: string[] = [];
-    const unknownStatuses = new Set<string>();
-    const now = new Date();
-
-    for (const row of input.rows) {
-      const shipment = await db.shipment.findFirst({
-        where: { courier, reference: row.reference },
-        orderBy: { createdAt: "desc" },
-        include: { salesOrder: { select: { id: true, status: true, orderNumber: true } } },
-      });
-      if (!shipment) {
-        unmatched.push(row.reference);
-        continue;
-      }
-
-      const mapped = mgStatus(row.status);
-      if (!mapped) unknownStatuses.add(row.status);
-      // A word this does not know is not a delivery; somebody reads it.
-      const courierClaimsCollection = [row.collected, row.dueToUs, row.remittedToUs]
-        .some((value) => dec(amount(value) ?? 0).greaterThan(0));
-      const prepaidMismatch = dec(shipment.codAmount).isZero() && courierClaimsCollection;
-      const status: ShipmentStatus = prepaidMismatch ? "NEEDS_REVIEW" : mapped ?? "NEEDS_REVIEW";
-
-      const next = {
-        status,
-        courierStatus: row.status || null,
-        collectedAmount: amount(row.collected),
-        courierFee: amount(row.fee),
-        dueToUs: amount(row.dueToUs),
-        remittedToUs: amount(row.remittedToUs),
-        attempts: row.attempts != null && row.attempts !== "" ? Number(String(row.attempts).replace(/\D/g, "")) || 0 : null,
-        followUp: prepaidMismatch
-          ? ["MG reported a collection on a prepaid parcel; verify the COD change with MG.", row.followUp].filter(Boolean).join(" ")
-          : row.followUp || null,
-      };
-
-      const same =
-        shipment.status === next.status &&
-        shipment.courierStatus === next.courierStatus &&
-        String(shipment.collectedAmount ?? "") === String(next.collectedAmount ?? "") &&
-        String(shipment.courierFee ?? "") === String(next.courierFee ?? "") &&
-        String(shipment.dueToUs ?? "") === String(next.dueToUs ?? "") &&
-        String(shipment.remittedToUs ?? "") === String(next.remittedToUs ?? "") &&
-        (shipment.attempts ?? null) === next.attempts &&
-        (shipment.followUp ?? null) === next.followUp;
-
-      if (same) {
-        unchanged += 1;
-      } else {
-        await db.shipment.update({
-          where: { id: shipment.id },
-          data: { ...next, lastReportAt: now },
-        });
-
-        if (status === "DELIVERED" && shipment.salesOrder.status === "SHIPPED") {
-          await db.salesOrder.update({
-            where: { id: shipment.salesOrder.id },
-            data: { status: "DELIVERED", deliveredDate: now },
-          });
-          await db.customOrder.updateMany({
-            where: { salesOrderId: shipment.salesOrder.id, status: "READY" },
-            data: { status: "DELIVERED", deliveredAt: now },
-          });
-          delivered += 1;
-        }
-
-        await writeAudit(db, {
-          action: "SHIPMENT_STATUS_REPORTED",
-          entityName: "Shipment",
-          entityId: shipment.id,
-          ctx,
-          before: { status: shipment.status, courierStatus: shipment.courierStatus },
-          after: { order: shipment.salesOrder.orderNumber, ...next },
-        });
-        updated += 1;
-      }
-
-      if (status === "NEEDS_REVIEW" || status === "RETURNED") {
-        needsAttention.push(`${row.reference}: ${prepaidMismatch ? "MG reported collection on a prepaid parcel" : row.status}`);
-      }
-    }
-
-    return {
-      updated,
-      unchanged,
-      delivered,
-      needsAttention,
-      unmatched,
-      unknownStatuses: [...unknownStatuses],
+): Promise<{ changed: boolean; delivered: boolean }> {
+  return command("shipping.recordFlextockStatus", input, ctx, async () => {
+    const shipment = await db.shipment.findFirst({
+      where: { courier: FLEXTOCK, reference: input.reference },
+      orderBy: { createdAt: "desc" },
+      include: { salesOrder: { select: { id: true, status: true, orderNumber: true } } },
+    });
+    if (!shipment) throw new ShippingError("Flextock shipment was not found.");
+    const money = (value: string | null | undefined, current: unknown) => {
+      if (value === undefined) return current == null ? null : roundMoney(dec(current as string)).toString();
+      if (value == null || value === "") return null;
+      if (!/^\d+(?:\.\d{1,2})?$/.test(value)) throw new ShippingError("Enter a non-negative amount in pounds and piastres.");
+      return roundMoney(dec(value)).toString();
     };
+    const collectedAmount = money(input.collectedAmount, shipment.collectedAmount);
+    const courierFee = money(input.courierFee, shipment.courierFee);
+    const dueToUs = money(input.dueToUs, shipment.dueToUs);
+    const remittedToUs = money(input.remittedToUs, shipment.remittedToUs);
+    const prepaidMismatch = dec(shipment.codAmount).isZero() &&
+      [collectedAmount, dueToUs, remittedToUs].some((value) => dec(value ?? 0).greaterThan(0));
+    const status: ShipmentStatus = prepaidMismatch ? "NEEDS_REVIEW" : input.status;
+    const next = {
+      status,
+      courierStatus: input.providerStatus || input.status,
+      collectedAmount,
+      courierFee,
+      dueToUs,
+      remittedToUs,
+      followUp: prepaidMismatch ? "Flextock reports collection on a prepaid parcel; verify it." :
+        input.followUp === undefined ? shipment.followUp : input.followUp || null,
+    };
+    const changed = shipment.status !== next.status || shipment.courierStatus !== next.courierStatus ||
+      String(shipment.collectedAmount ?? "") !== String(next.collectedAmount ?? "") ||
+      String(shipment.courierFee ?? "") !== String(next.courierFee ?? "") ||
+      String(shipment.dueToUs ?? "") !== String(next.dueToUs ?? "") ||
+      String(shipment.remittedToUs ?? "") !== String(next.remittedToUs ?? "") ||
+      (shipment.followUp ?? null) !== next.followUp;
+    if (!changed) return { changed: false, delivered: false };
+    const now = new Date();
+    await db.$transaction(async (tx) => {
+      await tx.shipment.update({ where: { id: shipment.id }, data: { ...next, lastReportAt: now } });
+      if (status === "DELIVERED" && shipment.salesOrder.status === "SHIPPED") {
+        await tx.salesOrder.update({ where: { id: shipment.salesOrder.id }, data: { status: "DELIVERED", deliveredDate: now } });
+        await tx.customOrder.updateMany({
+          where: { salesOrderId: shipment.salesOrder.id, status: "READY" },
+          data: { status: "DELIVERED", deliveredAt: now },
+        });
+      }
+      await writeAudit(tx, {
+        action: "SHIPMENT_STATUS_REPORTED", entityName: "Shipment", entityId: shipment.id, ctx,
+        before: { status: shipment.status, courierStatus: shipment.courierStatus },
+        after: { order: shipment.salesOrder.orderNumber, ...next },
+      });
+    });
+    return { changed: true, delivered: status === "DELIVERED" && shipment.salesOrder.status === "SHIPPED" };
   });
 }
 
-/* ───────────────────────────────────────────────────────── the screen */
-
-/** Recent sheets, with what each is waiting on. */
+/** Recent Flextock handoffs, with what each is waiting on. */
 export async function shipmentBatches(limit = 30) {
   const batches = await db.shipmentBatch.findMany({
+    where: { courier: FLEXTOCK },
     orderBy: { createdAt: "desc" },
     take: limit,
     include: {
@@ -794,7 +469,7 @@ export async function shipmentBatches(limit = 30) {
     id: b.id,
     batchNumber: b.batchNumber,
     courier: b.courier,
-    branch: MG_BRANCHES[b.branch] ?? b.branch,
+    branch: b.branch,
     createdAt: b.createdAt,
     createdBy: b.createdBy?.name ?? null,
     parcels: b.shipments.length,
@@ -812,7 +487,7 @@ export async function shipmentBatches(limit = 30) {
  */
 export async function shipmentsNeedingAttention() {
   const shipments = await db.shipment.findMany({
-    where: { status: { in: ["NEEDS_REVIEW", "RETURNED", "FAILED"] } },
+    where: { courier: FLEXTOCK, status: { in: ["NEEDS_REVIEW", "RETURNED", "FAILED"] } },
     orderBy: { updatedAt: "desc" },
     take: 200,
     include: {
@@ -850,7 +525,7 @@ export async function shipmentsNeedingAttention() {
  * The money itself is cleared on the reconciliation screen when it lands in
  * the bank; this is what to expect, so a short remittance is noticed.
  */
-export async function courierOwesUs(courier = MG_EXPRESS) {
+export async function courierOwesUs(courier = FLEXTOCK) {
   const shipments = await db.shipment.findMany({
     where: { courier, status: "DELIVERED" },
     select: { collectedAmount: true, codAmount: true, courierFee: true, dueToUs: true, remittedToUs: true },

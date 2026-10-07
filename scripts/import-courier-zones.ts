@@ -1,31 +1,29 @@
 /**
- * Loads MG Express's delivery areas and prices into the database.
+ * Loads confirmed Flextock delivery areas and prices into the database.
  *
  * The prices are what the shop negotiated with the courier, and this remote is
  * public, so they live in a file that is never committed:
  *
- *   data/private/mg-express-zones.json
- *     { "courier": "MG_EXPRESS", "zones": [{ "governorate", "region", "price" }] }
+ *   data/private/flextock-zones.json
+ *     { "zones": [{ "governorate", "region", "price" }] }
  *
- * Refresh that file from MG's «قائمة الأسعار» whenever the prices change, then
+ * Refresh that file from Flextock's confirmed area list whenever prices change, then
  * run this again. Areas no longer listed are deactivated, not deleted: orders
  * already sent there keep pointing at them.
  *
  *   npx tsx --conditions=react-server scripts/import-courier-zones.ts [file]
  *
- * Which branch serves a governorate decides which sheet a parcel goes on — the
- * courier's import takes one branch per file. Change CAIRO_BRANCH below if the
- * split changes.
+ * This delivery-only flow uses one DIRECT branch until Flextock supplies an
+ * area or branch mapping in its API contract.
  */
 import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { db } from "../src/lib/db";
 import { importCourierZones } from "../src/lib/shipping";
-import { mgBranchForGovernorate } from "../src/lib/egypt-governorates";
 
-const file = process.argv[2] ?? "data/private/mg-express-zones.json";
+const file = process.argv[2] ?? "data/private/flextock-zones.json";
 
-let parsed: { courier?: string; zones?: { governorate: string; region: string; price: number | string }[] };
+let parsed: { zones?: { governorate: string; region: string; price: number | string }[] };
 try {
   parsed = JSON.parse(readFileSync(file, "utf8"));
 } catch (error) {
@@ -41,9 +39,7 @@ if (zones.length === 0) {
 
 const result = await importCourierZones(
   {
-    courier: parsed.courier ?? "MG_EXPRESS",
     zones,
-    branchFor: mgBranchForGovernorate,
   },
   { userId: null, reason: `Courier price list from ${file}` },
 );

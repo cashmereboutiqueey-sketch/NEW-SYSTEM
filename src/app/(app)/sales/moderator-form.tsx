@@ -218,7 +218,7 @@ export function ModeratorOrderForm({
       {/* ------------------------------------------------------------ delivery */}
       <fieldset className="rounded-xl border border-ink-100 p-3">
         <legend className="px-1 text-xs font-medium text-ink-600">
-          {ar ? "التوصيل — بيطلع في شيت MG زي ما هو" : "Delivery — goes onto the MG sheet as written"}
+          {ar ? "التوصيل مع Flextock" : "Flextock delivery"}
         </legend>
         <div className="grid gap-3 sm:grid-cols-4">
           <div>
@@ -274,7 +274,7 @@ export function ModeratorOrderForm({
             </select>
             {zone && (
               <p className="mt-1 text-xs text-ink-500">
-                {ar ? `MG بتاخد ${Number(zone.price)} جنيه` : `MG charges ${Number(zone.price)}`}
+                {ar ? `Flextock بتاخد ${Number(zone.price)} جنيه` : `Flextock charges ${Number(zone.price)}`}
               </p>
             )}
             {governorate && (
@@ -302,7 +302,7 @@ export function ModeratorOrderForm({
             <div>
               <label className={label} htmlFor="mod-region">{ar ? "المدينة / المنطقة" : "City / area"}</label>
               <input id="mod-region" name="region" value={region} onChange={(event) => setRegion(event.target.value)} className={`${field} w-full`} />
-              <p className="mt-1 text-xs text-warn">{ar ? "العنوان هيتحفظ، لكن شيت MG محتاج إضافة منطقة الشحن وسعرها." : "The address will be saved; the MG sheet needs a delivery area and its price."}</p>
+              <p className="mt-1 text-xs text-warn">{ar ? "العنوان هيتحفظ، لكن تسليم Flextock محتاج منطقة شحن وسعر مؤكدين." : "The address will be saved; a confirmed Flextock area and rate are needed before handoff."}</p>
             </div>
           )}
           <div className="sm:col-span-3">

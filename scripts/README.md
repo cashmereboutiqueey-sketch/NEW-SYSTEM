@@ -69,7 +69,7 @@ shop's database they leave invented transactions in the books.
 | `ensure-app-role.mjs` | Creates `cashmere_app`, the login the application runs as, and keeps its grants in step. Run by the migrate step. |
 | `connect-shopify.ts` | Records the shop's credentials, sealed |
 | `seal-integration-secrets.ts` | Seals credentials that predate sealing |
-| `import-courier-zones.ts` | Loads MG Express's delivery areas and prices from `data/private/mg-express-zones.json` (never committed — the prices are commercial terms). Re-run when MG's price list changes; areas it no longer serves are deactivated, not deleted. |
+| `import-courier-zones.ts` | Loads confirmed Flextock delivery areas and prices from `data/private/flextock-zones.json` (never committed — the prices are commercial terms). Re-run when its price list changes; areas it no longer serves are deactivated, not deleted. |
 | `create-owner-account.ts` | A personal owner account |
 | `flag-temp-password.ts` | Forces a password change at next sign-in |
 | `next-production.mjs` | The production build and start |

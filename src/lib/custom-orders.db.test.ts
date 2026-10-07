@@ -16,7 +16,7 @@ import {
   CustomOrderError,
 } from "./custom-orders";
 import { outstandingForCustomer } from "./receivables";
-import { readyToShip, createShipmentBatches, applyCourierReport } from "./shipping";
+import { readyToShip, createShipmentBatches, recordFlextockStatus } from "./shipping";
 import { dec } from "./money";
 
 /**
@@ -421,8 +421,8 @@ describe("shipping a made-to-order garment", () => {
     await markReady({ customOrderId: taken.id }, ctx);
     const zone = await db.courierZone.create({
       data: {
-        courier: "MG_EXPRESS", governorate: "القاهرة", region: "Custom order test zone",
-        branch: "5", price: "60", isActive: true,
+        courier: "FLEXTOCK", governorate: "القاهرة", region: "Custom order test zone",
+        branch: "DIRECT", price: "60", isActive: true,
       },
     });
     const input = {
@@ -450,12 +450,12 @@ describe("shipping a made-to-order garment", () => {
       .rejects.toThrow(/already a sale/i);
 
     expect((await readyToShip()).find((item) => item.orderNumber === booked.salesOrderNumber)?.codAmount).toBe("2560");
-    await createShipmentBatches({ salesOrderIds: [custom.salesOrder!.id] }, { userId: ownerId, reason: null });
+    await createShipmentBatches({ salesOrderIds: [custom.salesOrder!.id], acceptedByFlextock: true }, { userId: ownerId, reason: null });
     expect((await db.customOrder.findUniqueOrThrow({ where: { id: taken.id } })).status).toBe("READY");
-    const report = await applyCourierReport({
-      rows: [{ reference: booked.salesOrderNumber, status: "المسلمة ودفع كامل", collected: "2560" }],
+    const report = await recordFlextockStatus({
+      reference: booked.salesOrderNumber, status: "DELIVERED", collectedAmount: "2560",
     }, { userId: ownerId, reason: null });
-    expect(report.delivered).toBe(1);
+    expect(report.delivered).toBe(true);
     const done = await db.customOrder.findUniqueOrThrow({ where: { id: taken.id } });
     expect(done.status).toBe("DELIVERED");
     expect(done.deliveredAt).not.toBeNull();
