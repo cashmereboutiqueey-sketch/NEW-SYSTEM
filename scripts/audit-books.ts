@@ -201,7 +201,7 @@ const customerOrders = await db.salesOrder.findMany({
     payments: { select: { amount: true } },
   },
 });
-const owedByCustomers = customerOrders.reduce((total, o) => {
+let owedByCustomers = customerOrders.reduce((total, o) => {
   const due = dec(o.netAmount).plus(dec(o.shippingAmount));
   const paid = o.payments.reduce((s, p) => s.plus(dec(p.amount)), dec(0));
   const owed = due.minus(paid);
@@ -209,6 +209,16 @@ const owedByCustomers = customerOrders.reduce((total, o) => {
   // what other customers owe.
   return owed.greaterThan(0) ? total.plus(owed) : total;
 }, dec(0));
+const consignmentDebts = await db.consignmentSale.findMany({
+  where: { paidAtSale: { not: null } },
+  select: { soldPrice: true, quantity: true, paidAtSale: true,
+    collections: { select: { amount: true } } },
+});
+for (const sale of consignmentDebts) {
+  const paidLater = sale.collections.reduce((s, payment) => s.plus(dec(payment.amount)), dec(0));
+  const due = dec(sale.soldPrice).times(sale.quantity).minus(dec(sale.paidAtSale!)).minus(paidLater);
+  if (due.greaterThan(0)) owedByCustomers = owedByCustomers.plus(due);
+}
 
 // Consignors: 2500 must equal what the unsettled sales say is owed.
 //

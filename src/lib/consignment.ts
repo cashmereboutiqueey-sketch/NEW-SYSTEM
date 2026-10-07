@@ -7,6 +7,7 @@ import { command } from "./command";
 import { recordTillCash } from "./till";
 import { canonicalCustomerId } from "./crm";
 import { imageUrl } from "./images";
+import { outstandingForCustomer, outstandingOnConsignment } from "./receivables";
 
 /**
  * Selling somebody else's goods for a share of the price.
@@ -23,7 +24,7 @@ import { imageUrl } from "./images";
  *
  * And when it sells, only the commission is revenue:
  *
- *   DR cash                (the whole price)
+ *   DR cash / receivable   (what arrived now / what the customer owes)
  *   CR commission (4160)   (the shop's share)
  *   CR owed to owner (2500) (the rest — a debt from the moment of sale)
  *
@@ -48,6 +49,7 @@ const ACC = {
   COD_CLEARING: "1135",
   OWED_TO_CONSIGNORS: "2500",
   COMMISSION: "4160",
+  RECEIVABLE: "1210",
 } as const;
 
 /** Where the customer's money lands, exactly as an ordinary sale would. */
@@ -219,8 +221,10 @@ export async function sellConsignedItem(
   input: {
     itemId: string;
     quantity: number;
-    /** What the customer actually paid, which may be under the ticket. */
+    /** Agreed price per piece, which may be under the ticket. */
     soldPrice?: string | null;
+    /** Money actually received now; omitted means paid in full. */
+    paidNow?: string | null;
     paymentMethod: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD";
     customerId?: string | null;
     posSessionId?: string | null;
@@ -232,6 +236,8 @@ export async function sellConsignedItem(
   commission: string;
   owedToOwner: string;
   total: string;
+  paidNow: string;
+  stillOwed: string;
 }> {
   return command("consignment.sellConsignedItem", input, ctx, async () => {
     if (input.quantity <= 0) throw new ConsignmentError("Sell at least one.");
@@ -264,6 +270,12 @@ export async function sellConsignedItem(
     // — the database refuses the row otherwise.
     const commission = roundMoney(total.times(rate));
     const owner = total.minus(commission);
+    const paidNow = input.paidNow == null || input.paidNow === ""
+      ? total : roundMoney(dec(input.paidNow));
+    if (!paidNow.isFinite() || paidNow.lessThan(0) || paidNow.greaterThan(total)) {
+      throw new ConsignmentError("The payment must be between zero and the sale total.");
+    }
+    const stillOwed = total.minus(paidNow);
 
     const entity = await db.entity.findFirstOrThrow({ where: { kind: "BRAND" } });
 
@@ -276,6 +288,22 @@ export async function sellConsignedItem(
     const saleDate = asDay(input.saleDate);
     // A merged record's id means the one it was merged into.
     const customerId = await canonicalCustomerId(db, input.customerId);
+    let dueDate: Date | null = null;
+    if (stillOwed.greaterThan(0)) {
+      if (!customerId) throw new ConsignmentError("Choose a customer for a part-paid consignment sale.");
+      const customer = await db.customer.findUnique({
+        where: { id: customerId }, select: { name: true, creditLimit: true, creditDays: true },
+      });
+      if (!customer) throw new ConsignmentError("Customer not found.");
+      const alreadyOwed = await outstandingForCustomer(customerId);
+      if (alreadyOwed.plus(stillOwed).greaterThan(dec(customer.creditLimit))) {
+        throw new ConsignmentError(
+          `${customer.name} would owe ${alreadyOwed.plus(stillOwed).toFixed(2)}, over their ${dec(customer.creditLimit).toFixed(2)} limit.`,
+        );
+      }
+      dueDate = asDay(input.saleDate);
+      dueDate.setUTCDate(dueDate.getUTCDate() + customer.creditDays);
+    }
     const fundsCode = FUNDS_ACCOUNT[input.paymentMethod];
     if (!fundsCode) throw new ConsignmentError(`Cannot take ${input.paymentMethod} here.`);
 
@@ -305,13 +333,20 @@ export async function sellConsignedItem(
         memo: `Consignment sale ${saleNumber} — ${item.description} (${item.consignor.name})`,
         ctx,
         lines: [
-          {
+          ...(paidNow.greaterThan(0) ? [{
             accountId: await accountId(fundsCode),
-            debit: total,
+            debit: paidNow,
             entityId: entity.id,
             customerId,
             description: `Taken for ${saleNumber}`,
-          },
+          }] : []),
+          ...(stillOwed.greaterThan(0) ? [{
+            accountId: await accountId(ACC.RECEIVABLE),
+            debit: stillOwed,
+            entityId: entity.id,
+            customerId,
+            description: `Customer owes on ${saleNumber}`,
+          }] : []),
           {
             // The only part that is income.
             accountId: await accountId(ACC.COMMISSION),
@@ -345,6 +380,8 @@ export async function sellConsignedItem(
           locationId: item.locationId,
           posSessionId: input.posSessionId ?? null,
           paymentMethod: input.paymentMethod,
+          paidAtSale: paidNow.toString(),
+          dueDate,
           saleDate,
           soldByUserId: ctx.userId,
         },
@@ -352,12 +389,12 @@ export async function sellConsignedItem(
 
       // A consignor's garment sold for cash puts cash in the same drawer as
       // the shop's own; the till count used to leave it out.
-      if (input.paymentMethod === "CASH") {
+      if (input.paymentMethod === "CASH" && paidNow.greaterThan(0)) {
         await recordTillCash(tx, {
           posSessionId: input.posSessionId ?? null,
           locationId: item.locationId,
           kind: "CONSIGNMENT_SALE",
-          amount: total,
+          amount: paidNow,
           reference: saleNumber,
         });
       }
@@ -372,6 +409,8 @@ export async function sellConsignedItem(
           consignor: item.consignor.name,
           quantity: input.quantity,
           total: total.toString(),
+          paidNow: paidNow.toString(),
+          stillOwed: stillOwed.toString(),
           commission: commission.toString(),
           owedToOwner: owner.toString(),
           journal: entry.id,
@@ -384,7 +423,79 @@ export async function sellConsignedItem(
         commission: commission.toString(),
         owedToOwner: owner.toString(),
         total: total.toString(),
+        paidNow: paidNow.toString(),
+        stillOwed: stillOwed.toString(),
       };
+    });
+  });
+}
+
+/** Collect a later instalment against one specific consignment sale. */
+export async function collectConsignmentPayment(
+  input: {
+    saleId: string;
+    amount: string;
+    method: "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY";
+    collectedOn: Date;
+    reference?: string | null;
+  },
+  ctx: AuditContext,
+): Promise<{ collected: string; stillOwed: string; orderNumber: string }> {
+  return command("consignment.collectPayment", input, ctx, async () => {
+    const amount = roundMoney(dec(input.amount));
+    if (!amount.isFinite() || amount.lessThanOrEqualTo(0)) {
+      throw new ConsignmentError("A collection must be more than zero.");
+    }
+    const sale = await db.consignmentSale.findUnique({
+      where: { id: input.saleId },
+      include: { collections: { select: { amount: true } } },
+    });
+    if (!sale) throw new ConsignmentError("Consignment sale not found.");
+    if (!sale.customerId) throw new ConsignmentError("This sale has no customer account.");
+    const owed = outstandingOnConsignment(sale);
+    if (owed.lessThanOrEqualTo(0)) throw new ConsignmentError(`${sale.saleNumber} is paid in full.`);
+    if (amount.greaterThan(owed)) {
+      throw new ConsignmentError(`${sale.saleNumber} only has ${owed.toFixed(2)} outstanding.`);
+    }
+    const fundsCode = FUNDS_ACCOUNT[input.method];
+    if (!["CASH", "CARD", "BANK_TRANSFER", "INSTAPAY"].includes(input.method) || !fundsCode) {
+      throw new ConsignmentError(`Cannot collect by ${input.method}.`);
+    }
+    return db.$transaction(async (tx) => {
+      await tx.consignmentCollection.create({
+        data: { saleId: sale.id, amount: amount.toString(), method: input.method,
+          collectedOn: asDay(input.collectedOn), reference: input.reference ?? null },
+      });
+      const [funds, receivable] = await Promise.all([
+        tx.account.findUniqueOrThrow({ where: { code: fundsCode }, select: { id: true } }),
+        tx.account.findUniqueOrThrow({ where: { code: ACC.RECEIVABLE }, select: { id: true } }),
+      ]);
+      await postEntry(tx, {
+        entityId: sale.entityId,
+        postingDate: asDay(input.collectedOn),
+        sourceType: "PAYMENT",
+        sourceId: sale.id,
+        memo: `Collected against consignment sale ${sale.saleNumber}`,
+        ctx,
+        lines: [
+          { accountId: funds.id, debit: amount, entityId: sale.entityId,
+            customerId: sale.customerId, description: `Collected for ${sale.saleNumber}` },
+          { accountId: receivable.id, credit: amount, entityId: sale.entityId,
+            customerId: sale.customerId, description: `Settles ${sale.saleNumber}` },
+        ],
+      });
+      if (input.method === "CASH") {
+        await recordTillCash(tx, { locationId: sale.locationId, kind: "COLLECTION",
+          amount, reference: sale.saleNumber, occurredAt: input.collectedOn });
+      }
+      const stillOwed = owed.minus(amount);
+      await writeAudit(tx, {
+        action: "PAYMENT_COLLECTED", entityName: "ConsignmentSale", entityId: sale.id,
+        after: { saleNumber: sale.saleNumber, amount: amount.toString(),
+          method: input.method, stillOwed: stillOwed.toString() }, ctx,
+      });
+      return { collected: amount.toString(), stillOwed: stillOwed.toString(),
+        orderNumber: sale.saleNumber };
     });
   });
 }
@@ -694,6 +805,7 @@ export async function recentConsignmentSales(limit = 50) {
       item: { include: { consignor: true } },
       customer: true,
       settlement: true,
+      collections: { select: { amount: true } },
     },
     orderBy: [{ saleDate: "desc" }, { createdAt: "desc" }],
     take: limit,
@@ -707,6 +819,10 @@ export async function recentConsignmentSales(limit = 50) {
     consignorName: s.item.consignor.name,
     quantity: s.quantity,
     total: dec(s.soldPrice).times(s.quantity).toString(),
+    paid: (s.paidAtSale == null
+      ? dec(s.soldPrice).times(s.quantity)
+      : dec(s.paidAtSale).plus(s.collections.reduce((sum, p) => sum.plus(dec(p.amount)), dec(0)))).toString(),
+    stillOwed: outstandingOnConsignment(s).toString(),
     commission: dec(s.commissionAmount).toString(),
     owedToOwner: dec(s.ownerAmount).toString(),
     commissionPct: dec(s.commissionRate).times(100).toFixed(1),
@@ -718,7 +834,7 @@ export async function recentConsignmentSales(limit = 50) {
   }));
 }
 
-/** Everything the shop is holding for other people, in total. */
+/** Everything the shop owes consignors, collected from customers or not. */
 export async function totalOwedToConsignors(): Promise<Decimal> {
   const sales = await db.consignmentSale.findMany({
     where: { settlementId: null },

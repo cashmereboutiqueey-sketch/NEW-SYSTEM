@@ -6,6 +6,7 @@ import {
   createConsignor,
   receiveConsignment,
   sellConsignedItem,
+  collectConsignmentPayment,
   returnToConsignor,
   settleConsignor,
   owedTo,
@@ -16,6 +17,7 @@ import {
   ConsignmentError,
 } from "./consignment";
 import { dec } from "./money";
+import { customerBalances, customerStatement, openOrdersForCustomer, outstandingForCustomer } from "./receivables";
 
 /**
  * Selling somebody else's goods for a share of the price.
@@ -50,6 +52,7 @@ async function wipe() {
   await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" DISABLE TRIGGER USER`);
   await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" DISABLE TRIGGER USER`);
   try {
+    await db.consignmentCollection.deleteMany({});
     await db.consignmentSale.deleteMany({});
     await db.consignorSettlement.deleteMany({});
     await db.consignmentItem.deleteMany({});
@@ -69,6 +72,7 @@ async function wipe() {
     await db.journalLine.deleteMany({});
     await db.journalEntry.deleteMany({});
     await db.documentSequence.deleteMany({});
+    await db.customer.deleteMany({ where: { code: "CS-CREDIT" } });
   } finally {
     await db.$executeRawUnsafe(`ALTER TABLE "journal_entries" ENABLE TRIGGER USER`);
     await db.$executeRawUnsafe(`ALTER TABLE "journal_lines" ENABLE TRIGGER USER`);
@@ -124,6 +128,13 @@ function goods(quantity = 3, price = "2000", rate?: string) {
   );
 }
 
+async function creditCustomer(limit = "5000") {
+  return db.customer.create({
+    data: { code: "CS-CREDIT", name: "Consignment credit customer",
+      creditLimit: limit, creditDays: 30 },
+  });
+}
+
 describe("goods that are not the shop's", () => {
   it("never become inventory", async () => {
     const lotsBefore = await db.inventoryLot.count();
@@ -156,6 +167,55 @@ describe("goods that are not the shop's", () => {
 });
 
 describe("when one sells", () => {
+  it("takes a deposit and tracks the rest on the customer account", async () => {
+    const customer = await creditCustomer();
+    const item = await goods(1, "2000");
+    const sale = await sellConsignedItem({ itemId: item.id, quantity: 1,
+      customerId: customer.id, paymentMethod: "CASH", paidNow: "500", saleDate: day }, ctx);
+
+    expect(sale.paidNow).toBe("500");
+    expect(sale.stillOwed).toBe("1500");
+    expect(await accountBalance("1115")).toBeCloseTo(500, 2);
+    expect(await accountBalance("1210")).toBeCloseTo(1500, 2);
+    expect(await accountBalance("2500")).toBeCloseTo(-1500, 2);
+    expect(await accountBalance("4160")).toBeCloseTo(-500, 2);
+    expect((await outstandingForCustomer(customer.id)).toNumber()).toBe(1500);
+    expect(Number((await customerBalances(day))[0].outstanding)).toBe(1500);
+    expect((await openOrdersForCustomer(customer.id))[0].kind).toBe("CONSIGNMENT");
+    expect(Number((await customerStatement(customer.id)).totals.outstanding)).toBe(1500);
+    expect(await ledgerGap()).toBeCloseTo(0, 6);
+  });
+
+  it("collects the remainder later without changing the consignor's share", async () => {
+    const customer = await creditCustomer();
+    const item = await goods(1, "2000");
+    const sale = await sellConsignedItem({ itemId: item.id, quantity: 1,
+      customerId: customer.id, paymentMethod: "CASH", paidNow: "500", saleDate: day }, ctx);
+    const stored = await db.consignmentSale.findUniqueOrThrow({ where: { saleNumber: sale.saleNumber } });
+    const collected = await collectConsignmentPayment({ saleId: stored.id,
+      amount: "1500", method: "CARD", collectedOn: day }, ctx);
+    expect(collected.stillOwed).toBe("0");
+    expect((await outstandingForCustomer(customer.id)).toNumber()).toBe(0);
+    expect(await accountBalance("1210")).toBeCloseTo(0, 2);
+    expect(await accountBalance("1120")).toBeCloseTo(1500, 2);
+    expect(await accountBalance("2500")).toBeCloseTo(-1500, 2);
+    await expect(collectConsignmentPayment({ saleId: stored.id, amount: "1",
+      method: "CARD", collectedOn: day }, ctx)).rejects.toThrow(/paid in full/i);
+    expect(await ledgerGap()).toBeCloseTo(0, 6);
+  });
+
+  it("requires a named customer and enforces their total credit limit", async () => {
+    const item = await goods(2, "2000");
+    await expect(sellConsignedItem({ itemId: item.id, quantity: 1,
+      paymentMethod: "CASH", paidNow: "500", saleDate: day }, ctx))
+      .rejects.toThrow(/choose a customer/i);
+    const customer = await creditCustomer("1000");
+    await expect(sellConsignedItem({ itemId: item.id, quantity: 1,
+      customerId: customer.id, paymentMethod: "CASH", paidNow: "500", saleDate: day }, ctx))
+      .rejects.toThrow(/limit/i);
+    expect(await db.consignmentSale.count()).toBe(0);
+    expect(await accountBalance("1210")).toBe(0);
+  });
   it("books the commission as revenue and the rest as a debt", async () => {
     const item = await goods(3, "2000");
     const sale = await sellConsignedItem(

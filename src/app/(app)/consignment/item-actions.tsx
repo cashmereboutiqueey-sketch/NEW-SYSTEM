@@ -24,6 +24,7 @@ export function ItemActions({
   item,
   customers,
   maySell,
+  mayGiveCredit,
   mayReturn,
   seeValue,
 }: {
@@ -37,6 +38,7 @@ export function ItemActions({
   };
   customers: { id: string; name: string; phone: string | null }[];
   maySell: boolean;
+  mayGiveCredit: boolean;
   mayReturn: boolean;
   /** Whether the split behind the sale may be shown, or only its total. */
   seeValue: boolean;
@@ -46,6 +48,9 @@ export function ItemActions({
   const [returnState, giveBack, returning] = useActionState(returnConsignmentAction, empty);
   const [price, setPrice] = useState(item.retailPrice);
   const [quantity, setQuantity] = useState("1");
+  const [paidNow, setPaidNow] = useState("");
+  const [partPayment, setPartPayment] = useState(false);
+  const [customerId, setCustomerId] = useState("");
 
   const today = cairoDateKey();
   const total = Number(price || 0) * Number(quantity || 0);
@@ -90,7 +95,7 @@ export function ItemActions({
           <option value="BANK_TRANSFER">{ar ? "تحويل" : "Transfer"}</option>
         </select>
 
-        <select name="customerId" className={small}>
+        <select name="customerId" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={small}>
           <option value="">{ar ? "بدون عميل" : "No customer"}</option>
           {customers.map((c) => (
             <option key={c.id} value={c.id}>
@@ -98,6 +103,24 @@ export function ItemActions({
             </option>
           ))}
         </select>
+
+        {mayGiveCredit && (
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={partPayment} onChange={(e) => setPartPayment(e.target.checked)} />
+            {ar ? "العربون دلوقتي والباقي على العميل" : "Deposit now, balance on customer"}
+          </label>
+        )}
+        {partPayment && (
+          <div className="space-y-1">
+            <input name="paidNow" type="number" min="0.01" max={total} step="0.01" required
+              value={paidNow} onChange={(e) => setPaidNow(e.target.value)}
+              placeholder={ar ? "المدفوع الآن" : "Paid now"} dir="ltr" className={small} />
+            <p className="text-xs text-ink-500">
+              {ar ? "الباقي عليه" : "Still owed"}: {Math.max(0, total - Number(paidNow || 0)).toFixed(2)}
+            </p>
+            {!customerId && <p className="text-xs text-bad">{ar ? "اختار العميل الأول" : "Choose a customer"}</p>}
+          </div>
+        )}
 
         <p className="rounded-lg bg-ink-100 px-2 py-1.5 text-[11px]">
           {ar ? "إجمالي" : "Total"} <span className="num">{total.toFixed(2)}</span>
@@ -118,7 +141,7 @@ export function ItemActions({
         <div className="flex items-center gap-2">
           <button
             type="submit"
-            disabled={selling}
+            disabled={selling || (partPayment && (!customerId || !paidNow))}
             className="rounded-lg bg-ink-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
           >
             {selling ? "…" : ar ? "بيع" : "Sell"}

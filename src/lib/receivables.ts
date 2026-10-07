@@ -66,18 +66,35 @@ export function outstandingOnOrder(order: {
   return roundMoney(due.minus(paid));
 }
 
-/** The total one customer owes across every order. */
+export function outstandingOnConsignment(sale: {
+  soldPrice: Decimal | string;
+  quantity: number;
+  paidAtSale: Decimal | string | null;
+  collections: { amount: Decimal | string }[];
+}): Decimal {
+  const total = roundMoney(dec(sale.soldPrice).times(sale.quantity));
+  const paidAtSale = sale.paidAtSale == null ? total : dec(sale.paidAtSale);
+  const later = sale.collections.reduce((sum, p) => sum.plus(dec(p.amount)), dec(0));
+  return roundMoney(total.minus(paidAtSale).minus(later));
+}
+
+/** The total one customer owes across shop orders and consignment sales. */
 export async function outstandingForCustomer(customerId: string): Promise<Decimal> {
-  const orders = await db.salesOrder.findMany({
+  const [orders, consignment] = await Promise.all([db.salesOrder.findMany({
     where: { customerId, status: { not: "CANCELLED" } },
     select: {
       netAmount: true,
       shippingAmount: true,
       payments: { select: { amount: true } },
     },
-  });
+  }), db.consignmentSale.findMany({
+    where: { customerId },
+    select: { soldPrice: true, quantity: true, paidAtSale: true,
+      collections: { select: { amount: true } } },
+  })]);
 
-  return orders.reduce((s, o) => s.plus(outstandingOnOrder(o)), dec(0));
+  return orders.reduce((s, o) => s.plus(outstandingOnOrder(o)), dec(0))
+    .plus(consignment.reduce((s, sale) => s.plus(outstandingOnConsignment(sale)), dec(0)));
 }
 
 /**
@@ -88,7 +105,7 @@ export async function outstandingForCustomer(customerId: string): Promise<Decima
  * chased as though they were.
  */
 export async function customerBalances(asOf: Date = new Date()) {
-  const orders = await db.salesOrder.findMany({
+  const [orders, consignment] = await Promise.all([db.salesOrder.findMany({
     where: {
       status: { not: "CANCELLED" },
       customerId: { not: null },
@@ -98,7 +115,11 @@ export async function customerBalances(asOf: Date = new Date()) {
       payments: { select: { amount: true } },
     },
     orderBy: { orderDate: "asc" },
-  });
+  }), db.consignmentSale.findMany({
+    where: { customerId: { not: null }, paidAtSale: { not: null } },
+    include: { customer: true, collections: { select: { amount: true } } },
+    orderBy: { saleDate: "asc" },
+  })]);
 
   type Row = {
     customerId: string;
@@ -145,6 +166,27 @@ export async function customerBalances(asOf: Date = new Date()) {
     rows.set(order.customer.id, row);
   }
 
+  for (const sale of consignment) {
+    const owed = outstandingOnConsignment(sale);
+    if (owed.lessThanOrEqualTo(0) || !sale.customer) continue;
+    const row = rows.get(sale.customer.id) ?? {
+      customerId: sale.customer.id,
+      name: sale.customer.name,
+      phone: sale.customer.phone,
+      creditLimit: dec(sale.customer.creditLimit),
+      creditDays: sale.customer.creditDays,
+      outstanding: dec(0), notYetDue: dec(0), overdue: dec(0),
+      oldestDue: null, orders: 0,
+    };
+    const due = sale.dueDate ?? sale.saleDate;
+    row.outstanding = row.outstanding.plus(owed);
+    if (due < asOf) row.overdue = row.overdue.plus(owed);
+    else row.notYetDue = row.notYetDue.plus(owed);
+    row.orders += 1;
+    if (!row.oldestDue || due < row.oldestDue) row.oldestDue = due;
+    rows.set(sale.customer.id, row);
+  }
+
   return [...rows.values()]
     .sort((a, b) => {
       // The people who are late come first, and among them the longest wait.
@@ -174,14 +216,18 @@ export async function customerStatement(customerId: string) {
   const customer = await db.customer.findUnique({ where: { id: customerId } });
   if (!customer) throw new ReceivableError("Customer not found.");
 
-  const orders = await db.salesOrder.findMany({
+  const [orders, consignment] = await Promise.all([db.salesOrder.findMany({
     where: { customerId, status: { not: "CANCELLED" } },
     include: {
       payments: { orderBy: { createdAt: "asc" } },
       lines: { include: { variant: true } },
     },
     orderBy: { orderDate: "desc" },
-  });
+  }), db.consignmentSale.findMany({
+    where: { customerId },
+    include: { collections: { orderBy: { createdAt: "asc" } } },
+    orderBy: { saleDate: "desc" },
+  })]);
 
   const lines = orders.map((o) => {
     const due = dec(o.netAmount).plus(dec(o.shippingAmount));
@@ -205,6 +251,31 @@ export async function customerStatement(customerId: string) {
       })),
     };
   });
+
+  for (const sale of consignment) {
+    const total = roundMoney(dec(sale.soldPrice).times(sale.quantity));
+    const paidAtSale = sale.paidAtSale == null ? total : dec(sale.paidAtSale);
+    const later = sale.collections.reduce((sum, p) => sum.plus(dec(p.amount)), dec(0));
+    lines.push({
+      orderId: sale.id,
+      orderNumber: sale.saleNumber,
+      orderDate: sale.saleDate,
+      dueDate: sale.dueDate,
+      total: total.toString(),
+      paid: paidAtSale.plus(later).toString(),
+      outstanding: outstandingOnConsignment(sale).toString(),
+      units: sale.quantity,
+      payments: [
+        ...(paidAtSale.greaterThan(0) ? [{ id: sale.id, method: sale.paymentMethod,
+          amount: paidAtSale.toString(), status: "COLLECTED" as const,
+          collectedAt: sale.saleDate, reference: null }] : []),
+        ...sale.collections.map((p) => ({ id: p.id, method: p.method,
+          amount: dec(p.amount).toString(), status: "COLLECTED" as const,
+          collectedAt: p.collectedOn, reference: p.reference })),
+      ],
+    });
+  }
+  lines.sort((a, b) => b.orderDate.getTime() - a.orderDate.getTime());
 
   const outstanding = lines.reduce((s, l) => s.plus(dec(l.outstanding)), dec(0));
 
@@ -426,19 +497,33 @@ export async function setCreditTerms(
 
 /** Orders with money still on them, for the collection screen. */
 export async function openOrdersForCustomer(customerId: string) {
-  const orders = await db.salesOrder.findMany({
+  const [orders, consignment] = await Promise.all([db.salesOrder.findMany({
     where: { customerId, status: { not: "CANCELLED" } },
     include: { payments: { select: { amount: true } } },
     orderBy: { orderDate: "asc" },
-  });
+  }), db.consignmentSale.findMany({
+    where: { customerId, paidAtSale: { not: null } },
+    include: { collections: { select: { amount: true } } },
+    orderBy: { saleDate: "asc" },
+  })]);
 
-  return orders
+  return [...orders
     .map((o) => ({
       id: o.id,
+      kind: "SALES" as const,
       orderNumber: o.orderNumber,
       orderDate: o.orderDate,
       dueDate: o.dueDate,
       outstanding: outstandingOnOrder(o).toString(),
     }))
-    .filter((o) => dec(o.outstanding).greaterThan(0));
+    .filter((o) => dec(o.outstanding).greaterThan(0)),
+    ...consignment.map((sale) => ({
+      id: sale.id,
+      kind: "CONSIGNMENT" as const,
+      orderNumber: sale.saleNumber,
+      orderDate: sale.saleDate,
+      dueDate: sale.dueDate,
+      outstanding: outstandingOnConsignment(sale).toString(),
+    })).filter((sale) => dec(sale.outstanding).greaterThan(0))]
+    .sort((a, b) => a.orderDate.getTime() - b.orderDate.getTime());
 }

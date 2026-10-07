@@ -3200,7 +3200,7 @@ model ConsignmentSale {
   item   ConsignmentItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
 
   quantity   Int
-  /// What the customer actually paid, which may be under the ticket price.
+  /// Agreed unit price, which may be under the ticket price.
   soldPrice  Decimal @db.Decimal(18, 4)
   /// Frozen at the sale: a rate change later must not rewrite what was owed.
   commissionRate   Decimal @db.Decimal(9, 6)
@@ -3221,6 +3221,10 @@ model ConsignmentSale {
 
   paymentMethod PaymentMethod
   saleDate      DateTime @db.Date
+  /// Null on legacy sales, which were always paid in full at the counter.
+  paidAtSale    Decimal? @db.Decimal(18, 4)
+  dueDate       DateTime? @db.Date
+  collections   ConsignmentCollection[]
 
   /// Set once the owner has been paid for this sale.
   settlementId String?
@@ -3237,7 +3241,22 @@ model ConsignmentSale {
   @@map("consignment_sales")
 }
 
-/// Paying a consignor what the shop has collected on their behalf.
+/// Money received after a consignment sale was made on customer credit.
+model ConsignmentCollection {
+  id          String @id @default(cuid())
+  saleId      String
+  sale        ConsignmentSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  amount      Decimal @db.Decimal(18, 4)
+  method      PaymentMethod
+  collectedOn DateTime @db.Date
+  reference   String?
+  createdAt   DateTime @default(now())
+
+  @@index([saleId])
+  @@map("consignment_collections")
+}
+
+/// Paying a consignor their share of sold goods, whether the customer has settled yet or not.
 model ConsignorSettlement {
   id               String @id @default(cuid())
   settlementNumber String @unique

@@ -144,6 +144,10 @@ export async function sellConsignedAction(
     const itemId = String(formData.get("itemId") ?? "");
     const quantity = Number(formData.get("quantity") ?? 1);
     const price = String(formData.get("soldPrice") ?? "").trim();
+    const paidNow = String(formData.get("paidNow") ?? "").trim();
+    if (paidNow && !can(session.role, "sales_order:credit")) {
+      return { error: "You do not have permission to let a customer pay later." };
+    }
 
     const result = await formCommand("consignment.sell", formData, { userId: session.userId }, async () => {
       // Under the ticket is a discount, whoever's garment it is — and a
@@ -159,6 +163,7 @@ export async function sellConsignedAction(
           itemId,
           quantity,
           soldPrice: price || null,
+          paidNow: paidNow || null,
           paymentMethod: String(formData.get("paymentMethod") ?? "CASH") as
             | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY" | "COD",
           customerId: String(formData.get("customerId") ?? "") || null,
@@ -170,13 +175,14 @@ export async function sellConsignedAction(
 
     refresh();
     if (!canViewInventoryValue(session.role)) {
-      return { success: `${result.saleNumber}: ${Number(result.total).toFixed(2)}` };
+      return { success: `${result.saleNumber}: ${Number(result.total).toFixed(2)}${Number(result.stillOwed) > 0 ? ` — على العميل ${Number(result.stillOwed).toFixed(2)}` : ""}` };
     }
     return {
       success:
         `${result.saleNumber}: اتباعت بـ ${Number(result.total).toFixed(2)} — ` +
         `عمولتك ${Number(result.commission).toFixed(2)}، ` +
-        `وعليك ${Number(result.owedToOwner).toFixed(2)} لصاحبها.`,
+        `وعليك ${Number(result.owedToOwner).toFixed(2)} لصاحبها.` +
+        (Number(result.stillOwed) > 0 ? ` العميل عليه ${Number(result.stillOwed).toFixed(2)}.` : ""),
     };
   } catch (error) {
     return { error: toMessage(error) };

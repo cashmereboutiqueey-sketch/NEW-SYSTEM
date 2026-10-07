@@ -314,26 +314,11 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     if (!paidNow.isFinite() || paidNow.isNegative()) {
       return { error: "The amount paid is not a number." };
     }
+    if (paidNow.greaterThan(total)) {
+      return { error: "The payment cannot be more than the sale total." };
+    }
     if (paidNow.lessThan(total) && !can(session.role, "sales_order:credit")) {
       return { error: "You do not have permission to let a customer pay later." };
-    }
-
-    // Goods belonging to somebody else are paid for in full. Their owner is
-    // owed a share the moment the piece leaves the shop, so a customer who
-    // pays later leaves the business owing real money against a debt it has
-    // not collected — and if that customer never pays, the shop pays the
-    // owner anyway, out of its own pocket.
-    //
-    // The till does not offer the option at all when such a line is in the
-    // basket. This is here because a screen that hides a control has not
-    // prevented anything: the request can still arrive, and a basket that had
-    // the box ticked before a consigned piece was added would otherwise carry
-    // a stale part payment straight past it.
-    if (consignedCart.length > 0 && paidNow.lessThan(total)) {
-      return {
-        error:
-          "بضاعة الأمانة لازم تتدفع كاملة — انت مدين لصاحبها من ساعة ما تخرج من المحل.",
-      };
     }
 
     const locationId = String(formData.get("locationId") ?? "");
@@ -412,13 +397,16 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
 
         const consignedSales: string[] = [];
         let commission = dec(0);
+        let consignedPaid = Decimal.max(0, paidNow.minus(ownTotal));
         for (const line of consignedCart) {
+          const linePaid = Decimal.min(consignedPaid, dec(line.retailPrice).times(line.quantity));
           const sale = await sellConsignedItem(
             {
               itemId: line.itemId,
               quantity: line.quantity,
               soldPrice: String(line.retailPrice),
               paymentMethod: method,
+              paidNow: linePaid.toFixed(2),
               customerId,
               posSessionId,
               saleDate: now,
@@ -427,6 +415,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
           );
           consignedSales.push(sale.saleNumber);
           commission = commission.plus(sale.commission);
+          consignedPaid = consignedPaid.minus(linePaid);
         }
 
         return { orderNumber, salesOrderId, consignedSales, commission: commission.toFixed(2) };
@@ -436,7 +425,7 @@ export async function checkoutAction(_prev: PosState, formData: FormData): Promi
     revalidatePath("/pos");
     revalidatePath("/consignment");
 
-    const change = Decimal.max(0, dec(Number.isFinite(tendered) ? tendered : 0).minus(total));
+    const change = Decimal.max(0, dec(Number.isFinite(tendered) ? tendered : 0).minus(paidNow));
     const reference = result.orderNumber ?? result.consignedSales[0] ?? "";
 
     return {

@@ -9,6 +9,7 @@ const empty: ReceivableState = {};
 
 type Order = {
   id: string;
+  kind: "SALES" | "CONSIGNMENT";
   orderNumber: string;
   outstanding: string;
   dueDate: string | null;
@@ -61,6 +62,7 @@ export function CollectForm({
 
       <RequestIdField state={state} />
       <input type="hidden" name="collectedOn" value={today} />
+      <input type="hidden" name="kind" value={selected?.kind ?? "SALES"} />
 
       <label className="mb-2 block text-xs">
         <span className="mb-1 block text-ink-500">{ar ? "على أي طلب" : "Against"}</span>

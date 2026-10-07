@@ -227,6 +227,7 @@ export default async function ConsignmentPage() {
                   }}
                   customers={customers}
                   maySell={maySell}
+                  mayGiveCredit={can(session.role, "sales_order:credit")}
                   mayReturn={mayHandle}
                   seeValue={seeFinancials}
                 />,
@@ -240,8 +241,8 @@ export default async function ConsignmentPage() {
           title={ar ? "أصحاب البضاعة" : "Consignors"}
           description={
             ar
-              ? "«مستحق ليه» هي فلوس في درجك مش بتاعتك."
-              : "What is owed is money in your drawer that is not yours."
+              ? "«مستحق ليه» بيتحسب من وقت البيع، حتى لو العميل لسه عليه باقي."
+              : "The owner's share is owed from the sale, even if the customer still has a balance."
           }
         >
           <DataTable
@@ -310,8 +311,11 @@ export default async function ConsignmentPage() {
           headers={[
             ar ? "البيعة" : "Sale",
             ar ? "الصنف" : "Item",
+            ar ? "العميل" : "Customer",
             ar ? "صاحبها" : "Owner",
             ar ? "اتباعت بـ" : "Sold for",
+            ar ? "المدفوع" : "Paid",
+            ar ? "على العميل" : "Customer owes",
             ...(seeFinancials
               ? [ar ? "عمولتك" : "Your share", ar ? "لصاحبها" : "Their share"]
               : []),
@@ -321,8 +325,11 @@ export default async function ConsignmentPage() {
           rows={sales.map((s) => [
             <span key="n" className="num text-xs" dir="ltr">{s.saleNumber}</span>,
             <span key="i" className="text-xs">{s.description} ×{s.quantity}</span>,
+            <span key="customer" className="text-xs">{s.customerName ?? "—"}</span>,
             s.consignorName,
             <span key="t" className="num">{formatMoney(s.total)}</span>,
+            <span key="paid" className="num">{formatMoney(s.paid)}</span>,
+            <span key="due" className="num text-warn">{dec(s.stillOwed).greaterThan(0) ? formatMoney(s.stillOwed) : "—"}</span>,
             <span key="c" className="num text-good">{seeFinancials ? formatMoney(s.commission) : "—"}</span>,
             <span key="o" className="num">{seeFinancials ? formatMoney(s.owedToOwner) : "—"}</span>,
             s.settled ? (

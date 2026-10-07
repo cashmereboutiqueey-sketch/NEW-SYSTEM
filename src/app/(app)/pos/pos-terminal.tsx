@@ -442,28 +442,14 @@ export function PosTerminal({
     }
   }
 
-  const change = Math.max(0, money(Number(tendered || 0) - total));
-
-  /*
-   * Whether part of the price may be left owing at all.
-   *
-   * Never where somebody else's goods are in the basket: their owner is owed
-   * a share the moment the piece leaves, so the shop would be lending its own
-   * money against a debt it has not collected.
-   *
-   * Read from the basket rather than from the tick, because the tick can go
-   * on while the basket holds only the shop's own stock and a consigned piece
-   * be added afterwards — and a stale tick would otherwise send a part
-   * payment for a basket that may not have one.
-   */
-  const creditAllowed = consignedLines.length === 0;
-  const onAccountNow = onAccount && creditAllowed;
+  const onAccountNow = onAccount;
 
   // What the customer is actually handing over. A blank box while "part now"
   // is ticked means nothing yet, not the whole price.
   const collectedNow = onAccountNow
     ? Math.min(total, Math.max(0, money(Number(paidNow || 0))))
     : total;
+  const change = Math.max(0, money(Number(tendered || 0) - collectedNow));
   const owed = money(total - collectedNow);
   // A debt has to have a name on it, so the sale is blocked here rather than
   // letting the server refuse it after the cashier has taken the money.
@@ -1322,15 +1308,7 @@ export function PosTerminal({
           )}
 
           {/* ----------------------------------------------- part payment */}
-          {mayGiveCredit && !creditAllowed && (
-            <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
-              {ar
-                ? `في الفاتورة دي بضاعة أمانة بـ ${consignedTotal.toFixed(2)} — دي بتتدفع كاملة. صاحبها مستحق نصيبه من ساعة ما تخرج من المحل، فلو العميل مادفعش انت اللي هتدفعله من جيبك.`
-                : `This basket holds ${consignedTotal.toFixed(2)} of somebody else's goods, and those are paid for in full. Their owner is owed their share the moment the piece leaves, so if this customer never pays, the shop pays them anyway.`}
-            </p>
-          )}
-
-          {mayGiveCredit && creditAllowed && (
+          {mayGiveCredit && (
             <div className="mb-2 rounded-lg border border-ink-200 p-2">
               <label className="flex items-center gap-2 text-xs text-ink-700">
                 <input
@@ -1396,14 +1374,6 @@ export function PosTerminal({
                 </div>
               )}
             </div>
-          )}
-
-          {consignedLines.length > 0 && (
-            <p className="mb-2 rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">
-              {ar
-                ? "في بضاعة أمانة في السلة — لازم تتدفع كاملة، مفيش آجل عليها."
-                : "Consigned goods in the basket must be paid in full — no credit on them."}
-            </p>
           )}
 
           {!priced && cart.length > 0 && (

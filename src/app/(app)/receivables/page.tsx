@@ -133,6 +133,7 @@ export default async function ReceivablesPage() {
                   customerName={b.name}
                   orders={ordersFor(b.customerId).map((o) => ({
                     id: o.id,
+                    kind: o.kind,
                     orderNumber: o.orderNumber,
                     outstanding: o.outstanding,
                     dueDate: o.dueDate ? dateText(o.dueDate) : null,

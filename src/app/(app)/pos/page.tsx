@@ -8,6 +8,7 @@ import { formatMoney, formatNumber } from "@/lib/money";
 import { sellableStock, openTillFor, tillTotals } from "@/lib/pos";
 import { shiftFor, locationsFree } from "@/core/till";
 import { sellableConsignedStock } from "@/lib/consignment";
+import { outstandingOnConsignment } from "@/lib/receivables";
 import { PosTerminal } from "./pos-terminal";
 import { OpenTillForm, CloseTillForm, SharedTillForm } from "./till-forms";
 
@@ -109,6 +110,16 @@ export default async function PosPage({
       order.customerId,
       (owedByCustomer.get(order.customerId) ?? 0) + Math.max(0, billed - paid),
     );
+  }
+  const consignedDebts = await db.consignmentSale.findMany({
+    where: { customerId: { in: customers.map((c) => c.id) }, paidAtSale: { not: null } },
+    select: { customerId: true, soldPrice: true, quantity: true, paidAtSale: true,
+      collections: { select: { amount: true } } },
+  });
+  for (const sale of consignedDebts) {
+    if (!sale.customerId) continue;
+    owedByCustomer.set(sale.customerId,
+      (owedByCustomer.get(sale.customerId) ?? 0) + outstandingOnConsignment(sale).toNumber());
   }
 
   if (!till) {

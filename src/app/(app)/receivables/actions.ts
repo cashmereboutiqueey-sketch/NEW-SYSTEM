@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { authorize, ForbiddenError } from "@/lib/auth";
 import { LedgerError } from "@/lib/ledger";
 import { collectPayment, setCreditTerms, ReceivableError } from "@/lib/receivables";
+import { collectConsignmentPayment, ConsignmentError } from "@/lib/consignment";
 import { formCommand, CommandError } from "@/lib/command";
 
 export type ReceivableState = { error?: string; success?: string };
@@ -11,6 +12,7 @@ export type ReceivableState = { error?: string; success?: string };
 function toMessage(error: unknown): string {
   if (
     error instanceof ReceivableError ||
+    error instanceof ConsignmentError ||
     error instanceof LedgerError ||
     error instanceof CommandError
   ) {
@@ -36,19 +38,20 @@ export async function collectPaymentAction(
 
     // A second press after a lost response returns this collection rather
     // than taking the money twice.
-    const result = await formCommand("receivables.collect", formData, { userId: session.userId }, () =>
-      collectPayment(
-        {
-          salesOrderId: String(formData.get("salesOrderId") ?? ""),
-          method: String(formData.get("method") ?? "CASH") as
-            | "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
-          amount: String(formData.get("amount") ?? "0"),
-          collectedOn: day(formData.get("collectedOn")),
-          reference: String(formData.get("reference") ?? "") || null,
-        },
-        { userId: session.userId, reason: null },
-      ),
-    );
+    const result = await formCommand("receivables.collect", formData, { userId: session.userId }, () => {
+      const payment = {
+        method: String(formData.get("method") ?? "CASH") as
+          "CASH" | "CARD" | "BANK_TRANSFER" | "INSTAPAY",
+        amount: String(formData.get("amount") ?? "0"),
+        collectedOn: day(formData.get("collectedOn")),
+        reference: String(formData.get("reference") ?? "") || null,
+      };
+      const id = String(formData.get("salesOrderId") ?? "");
+      const ctx = { userId: session.userId, reason: null };
+      return formData.get("kind") === "CONSIGNMENT"
+        ? collectConsignmentPayment({ ...payment, saleId: id }, ctx)
+        : collectPayment({ ...payment, salesOrderId: id }, ctx);
+    });
 
     revalidatePath("/receivables");
     revalidatePath("/customers");
