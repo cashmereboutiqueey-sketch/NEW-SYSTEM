@@ -100,9 +100,7 @@ if (wip.lessThan(-0.05)) {
   ok(`work in progress is clear: ${wip.toFixed(2)}`);
 }
 
-// Payables: the account carries two different debts. Expenses put one there,
-// and so do goods receipts — a delivery of cloth is owed to the supplier
-// without ever being an expense, because the value went into stock.
+// Payables are the unpaid parts of expenses, received goods, and opening debts.
 const openExpenses = await db.expense.findMany({
   where: { status: { in: ["UNPAID", "PARTIALLY_PAID"] } },
 });
@@ -111,24 +109,28 @@ const owedOnExpenses = openExpenses.reduce(
   dec(0),
 );
 
-const receiptRows = await db.$queryRaw<{ b: string }[]>`
-  SELECT COALESCE(SUM(l."credit") - SUM(l."debit"), 0)::text AS b
-  FROM "journal_lines" l
-  JOIN "journal_entries" e ON e."id" = l."journalEntryId"
-  JOIN "accounts" a ON a."id" = l."accountId"
-  WHERE a."code" = '2110' AND e."status" = 'POSTED'
-    AND e."sourceType" = 'GOODS_RECEIPT'`;
-const owedOnDeliveries = dec(receiptRows[0]?.b ?? 0);
+const receipts = await db.goodsReceipt.findMany({
+  select: { payableAmount: true, paidAmount: true },
+});
+const owedOnDeliveries = receipts.reduce(
+  (s, r) => s.plus(dec(r.payableAmount).minus(dec(r.paidAmount))), dec(0),
+);
+const supplierOpenings = await db.supplierOpeningBalance.findMany({
+  select: { amount: true, paidAmount: true },
+});
+const owedOnOpening = supplierOpenings.reduce(
+  (s, o) => s.plus(dec(o.amount).minus(dec(o.paidAmount))), dec(0),
+);
 
 const payablesLedger = (await balanceOf("2110")).negated();
-const owed = owedOnExpenses.plus(owedOnDeliveries);
+const owed = owedOnExpenses.plus(owedOnDeliveries).plus(owedOnOpening);
 if (payablesLedger.minus(owed).abs().greaterThan(0.05)) {
   bad(
     `payables: ledger ${payablesLedger.toFixed(2)} vs ${owedOnExpenses.toFixed(2)} of expenses ` +
-      `plus ${owedOnDeliveries.toFixed(2)} of deliveries = ${owed.toFixed(2)}`,
+      `plus ${owedOnDeliveries.toFixed(2)} of deliveries and ${owedOnOpening.toFixed(2)} opening = ${owed.toFixed(2)}`,
   );
 } else {
-  ok(`payables match: ${owedOnExpenses.toFixed(2)} expenses + ${owedOnDeliveries.toFixed(2)} deliveries`);
+  ok(`payables match: ${owedOnExpenses.toFixed(2)} expenses + ${owedOnDeliveries.toFixed(2)} deliveries + ${owedOnOpening.toFixed(2)} opening`);
 }
 
 // Cost of sales: what the order lines relieved, less what came back.

@@ -233,6 +233,7 @@ model Entity {
   moderatorCommissions ModeratorCommission[]
   moderatorSettlements ModeratorSettlement[]
   openingBalanceBatches OpeningBalanceBatch[]
+  supplierOpeningBalances SupplierOpeningBalance[]
 }
 
 enum PeriodStatus {
@@ -880,8 +881,42 @@ model Supplier {
   expenses        Expense[]
   scorecards      SupplierScorecard[]
   journalLines    JournalLine[]
+  openingBalances SupplierOpeningBalance[]
 
   @@map("suppliers")
+}
+
+/// Old supplier debt carried into these books, without inventing a stock receipt or expense.
+model SupplierOpeningBalance {
+  id         String @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  entityId   String
+  entity     Entity @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  amount     Decimal @db.Decimal(18, 4)
+  paidAmount Decimal @default(0) @db.Decimal(18, 4)
+  asOfDate   DateTime @db.Date
+  dueDate    DateTime @db.Date
+  note       String?
+  createdAt  DateTime @default(now())
+  payments   SupplierOpeningPayment[]
+
+  @@unique([supplierId, entityId])
+  @@map("supplier_opening_balances")
+}
+
+model SupplierOpeningPayment {
+  id               String @id @default(cuid())
+  openingBalanceId String
+  openingBalance   SupplierOpeningBalance @relation(fields: [openingBalanceId], references: [id], onDelete: Restrict)
+  amount           Decimal @db.Decimal(18, 4)
+  method           PaymentMethod
+  paidDate         DateTime @db.Date
+  reference        String?
+  createdAt        DateTime @default(now())
+
+  @@index([openingBalanceId])
+  @@map("supplier_opening_payments")
 }
 
 /// Rated per period so a supplier's record is a trend, not an opinion.

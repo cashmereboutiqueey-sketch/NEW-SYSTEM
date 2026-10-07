@@ -7,7 +7,7 @@ import { dec, type Decimal } from "./money";
  *
  * Four things move money, and all four are already recorded somewhere:
  *
- *   - unpaid expenses, which have a due date
+ *   - unpaid expenses, received goods, and supplier opening debts
  *   - purchase orders raised and not yet received, which will be invoiced
  *   - payments still pending — chiefly cash on delivery the courier holds
  *   - scheduled items like payroll and rent, which have no invoice yet but
@@ -29,6 +29,8 @@ export type CashWeek = {
   lines: {
     kind:
       | "EXPENSE"
+      | "DELIVERY_PAYABLE"
+      | "OPENING_PAYABLE"
       | "PURCHASE_COMMITMENT"
       /**
        * Ordered and waiting on a signature. Money that goes out if somebody
@@ -75,6 +77,8 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
 
   const [
     expenses,
+    receipts,
+    supplierOpenings,
     purchaseOrders,
     awaitingApproval,
     pendingPayments,
@@ -86,6 +90,16 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
         status: { in: ["UNPAID", "PARTIALLY_PAID"] },
         ...(entityId ? { entityId } : {}),
       },
+      include: { supplier: true },
+    }),
+    db.goodsReceipt.findMany({
+      where: { paidAmount: { lt: db.goodsReceipt.fields.payableAmount },
+        ...(entityId ? { entityId } : {}) },
+      include: { purchaseOrder: { include: { supplier: true } } },
+    }),
+    db.supplierOpeningBalance.findMany({
+      where: { paidAmount: { lt: db.supplierOpeningBalance.fields.amount },
+        ...(entityId ? { entityId } : {}) },
       include: { supplier: true },
     }),
     db.purchaseOrder.findMany({
@@ -131,6 +145,33 @@ export async function cashForecast(entityId: string | null, weeks = 13) {
       date: due,
       amount: outstanding,
       direction: "OUT",
+    });
+  }
+
+  for (const receipt of receipts) {
+    const outstanding = dec(receipt.payableAmount).minus(dec(receipt.paidAmount));
+    if (outstanding.lessThanOrEqualTo(0)) continue;
+    const due = receipt.dueDate ?? receipt.receivedDate;
+    const scheduled = due < today ? today : due;
+    if (scheduled > horizon) continue;
+    lines.push({
+      kind: "DELIVERY_PAYABLE",
+      labelEn: `${receipt.receiptNumber} — ${receipt.purchaseOrder.supplier.nameEn}`,
+      labelAr: `${receipt.receiptNumber} — ${receipt.purchaseOrder.supplier.nameAr}`,
+      date: scheduled, amount: outstanding, direction: "OUT",
+    });
+  }
+
+  for (const openingDebt of supplierOpenings) {
+    const outstanding = dec(openingDebt.amount).minus(dec(openingDebt.paidAmount));
+    if (outstanding.lessThanOrEqualTo(0)) continue;
+    const scheduled = openingDebt.dueDate < today ? today : openingDebt.dueDate;
+    if (scheduled > horizon) continue;
+    lines.push({
+      kind: "OPENING_PAYABLE",
+      labelEn: `Opening balance — ${openingDebt.supplier.nameEn}`,
+      labelAr: `رصيد افتتاحي — ${openingDebt.supplier.nameAr}`,
+      date: scheduled, amount: outstanding, direction: "OUT",
     });
   }
 

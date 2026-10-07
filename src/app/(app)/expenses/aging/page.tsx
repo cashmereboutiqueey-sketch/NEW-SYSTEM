@@ -144,13 +144,14 @@ export default async function ApAgingPage() {
               <span key={`${r.id}-o`} className="num font-medium">
                 {formatMoney(r.outstanding, locale)}
               </span>,
-              // Deliveries are paid here; expenses from the expenses screen,
-              // where their approval is also shown.
-              mayPay && r.kind === "DELIVERY" ? (
+              // Expenses are paid on their approval screen. Deliveries and
+              // opening debts can be settled directly from the aging list.
+              mayPay && (r.kind === "DELIVERY" || r.kind === "OPENING") ? (
                 <PayForm
                   key={`${r.id}-p`}
                   ar={ar}
-                  goodsReceiptId={r.id}
+                  goodsReceiptId={r.kind === "DELIVERY" ? r.id : undefined}
+                  openingBalanceId={r.kind === "OPENING" ? r.id : undefined}
                   description={r.description}
                   outstanding={Number(r.outstanding)}
                 />

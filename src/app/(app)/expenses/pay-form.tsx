@@ -4,6 +4,7 @@ import { cairoDateKey } from "@/lib/cairo-date";
 import { useActionState, useState } from "react";
 import { payExpenseAction } from "./actions";
 import { payGoodsReceiptAction } from "../purchasing/actions";
+import { paySupplierOpeningAction } from "../suppliers/actions";
 import type { FormState } from "@/components/entity-form";
 import { RequestIdField } from "@/components/request-id";
 
@@ -31,17 +32,19 @@ export function PayForm({
   ar,
   expenseId,
   goodsReceiptId,
+  openingBalanceId,
   description,
   outstanding,
 }: {
   ar: boolean;
   expenseId?: string;
   goodsReceiptId?: string;
+  openingBalanceId?: string;
   description: string;
   outstanding: number;
 }) {
   const [state, action, pending] = useActionState(
-    goodsReceiptId ? payGoodsReceiptAction : payExpenseAction,
+    openingBalanceId ? paySupplierOpeningAction : goodsReceiptId ? payGoodsReceiptAction : payExpenseAction,
     empty,
   );
   const [open, setOpen] = useState(false);
@@ -66,7 +69,9 @@ export function PayForm({
   return (
     <form action={action} className="min-w-[15rem] space-y-2">
       <RequestIdField state={state} />
-      {goodsReceiptId ? (
+      {openingBalanceId ? (
+        <input type="hidden" name="openingBalanceId" value={openingBalanceId} />
+      ) : goodsReceiptId ? (
         <input type="hidden" name="goodsReceiptId" value={goodsReceiptId} />
       ) : (
         <input type="hidden" name="expenseId" value={expenseId} />

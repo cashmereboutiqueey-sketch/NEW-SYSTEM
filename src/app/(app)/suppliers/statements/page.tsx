@@ -90,7 +90,7 @@ export default async function SupplierStatementsPage() {
               ar ? "المورد" : "Supplier",
               ar ? "تليفون" : "Phone",
               ar ? "الأجل" : "Terms",
-              ar ? "فواتير" : "Invoices",
+              ar ? "بنود" : "Items",
               ar ? "المستحق" : "Owed",
               ar ? "منه متأخر" : "Overdue",
               ar ? "أقدم استحقاق" : "Oldest due",
@@ -132,8 +132,8 @@ export default async function SupplierStatementsPage() {
             title={`${ar ? s.nameAr : s.nameEn} — ${formatMoney(s.outstanding)}`}
             description={
               ar
-                ? `${s.invoices.length} فاتورة مفتوحة · أجل ${s.creditDays} يوم`
-                : `${s.invoices.length} open invoice(s) · ${s.creditDays}-day terms`
+                ? `${s.invoices.length} بند مفتوح · أجل ${s.creditDays} يوم`
+                : `${s.invoices.length} open item(s) · ${s.creditDays}-day terms`
             }
           >
             <DataTable
@@ -141,7 +141,7 @@ export default async function SupplierStatementsPage() {
                 ar ? "البيان" : "What",
                 ar ? "الكيان" : "Entity",
                 ar ? "البند" : "Category",
-                ar ? "الفاتورة" : "Invoiced",
+                ar ? "المبلغ" : "Amount",
                 ar ? "اتدفع" : "Paid",
                 ar ? "المتبقي" : "Outstanding",
                 ar ? "الاستحقاق" : "Due",

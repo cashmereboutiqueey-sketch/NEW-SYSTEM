@@ -5,8 +5,10 @@ import { t } from "@/lib/i18n";
 import { can } from "@/core/permissions";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { EntityForm } from "@/components/entity-form";
-import { formatNumber } from "@/lib/money";
+import { formatNumber, formatMoney, dec } from "@/lib/money";
 import { createSupplierAction, toggleSupplierAction } from "./actions";
+import { SupplierOpeningBalanceForm } from "./opening-balance-form";
+import { PayForm } from "../expenses/pay-form";
 
 /**
  * الموردون — suppliers.
@@ -20,6 +22,8 @@ export default async function SuppliersPage() {
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const mayEdit = can(session.role, "purchase_order:create");
+  const mayOpenBalance = can(session.role, "journal:create");
+  const mayPay = can(session.role, "payment:create");
 
   const suppliers = await db.supplier.findMany({
     include: {
@@ -27,6 +31,12 @@ export default async function SuppliersPage() {
     },
     orderBy: [{ isActive: "desc" }, { code: "asc" }],
   });
+  const [entities, openingBalances] = await Promise.all([
+    db.entity.findMany({ orderBy: { kind: "asc" } }),
+    db.supplierOpeningBalance.findMany({
+      include: { supplier: true, entity: true }, orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
   const active = suppliers.filter((s) => s.isActive);
   const avgCredit =
@@ -63,6 +73,37 @@ export default async function SuppliersPage() {
           )}
         />
       </div>
+
+      {mayOpenBalance && (
+        <Card className="mb-4" title={ar ? "رصيد افتتاحي للموردين" : "Supplier opening balances"}
+          description={ar ? "اكتب المبلغ القديم اللي عليك للمورد من غير إدخال قماش سابق." : "Record old supplier debt without entering historical fabric."}>
+          <SupplierOpeningBalanceForm ar={ar}
+            suppliers={suppliers.map((s) => ({ id: s.id, name: ar ? s.nameAr : s.nameEn }))}
+            entities={entities.map((e) => ({ id: e.id, name: ar ? e.nameAr : e.nameEn }))} />
+        </Card>
+      )}
+
+      {openingBalances.length > 0 && (
+        <Card className="mb-4" title={ar ? "الأرصدة الافتتاحية المسجلة" : "Recorded opening balances"}>
+          <DataTable
+            headers={[ar ? "المورد" : "Supplier", ar ? "الشركة" : "Company",
+              ar ? "الأصل" : "Original", ar ? "اتدفع" : "Paid",
+              ar ? "الباقي" : "Remaining", ""]}
+            rows={openingBalances.map((b) => [
+              ar ? b.supplier.nameAr : b.supplier.nameEn,
+              ar ? b.entity.nameAr : b.entity.nameEn,
+              <span key="amount" className="num">{formatMoney(b.amount.toString(), locale)}</span>,
+              <span key="paid" className="num">{formatMoney(b.paidAmount.toString(), locale)}</span>,
+              <span key="remaining" className="num font-medium">{formatMoney(dec(b.amount).minus(dec(b.paidAmount)).toString(), locale)}</span>,
+              mayPay && dec(b.amount).greaterThan(dec(b.paidAmount))
+                ? <PayForm key="pay" ar={ar} openingBalanceId={b.id}
+                    description={ar ? "رصيد افتتاحي" : "Opening balance"}
+                    outstanding={dec(b.amount).minus(dec(b.paidAmount)).toNumber()} />
+                : <span key="pay" />,
+            ])}
+          />
+        </Card>
+      )}
 
       {mayEdit && (
         <Card className="mb-4" title={ar ? "إضافة مورد" : "Add a supplier"}>

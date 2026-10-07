@@ -143,14 +143,14 @@ export async function trialBalance(
 }
 
 /**
- * Every open supplier item: expenses, and deliveries not yet paid for.
+ * Every open supplier item: expenses, deliveries, and opening debts.
  *
  * Both are credits to accounts payable, so both belong on any list of what
  * is owed. Deliveries used to be missing from it, and a payables figure of
  * zero sat beside a ledger owing suppliers for every roll of fabric received.
  */
 async function openPayables(entityId: string | null) {
-  const [expenses, receipts, entities] = await Promise.all([
+  const [expenses, receipts, openings, entities] = await Promise.all([
     db.expense.findMany({
       where: {
         status: { in: ["UNPAID", "PARTIALLY_PAID"] },
@@ -164,6 +164,11 @@ async function openPayables(entityId: string | null) {
         ...(entityId ? { entityId } : {}),
       },
       include: { purchaseOrder: { include: { supplier: true } } },
+    }),
+    db.supplierOpeningBalance.findMany({
+      where: { paidAmount: { lt: db.supplierOpeningBalance.fields.amount },
+        ...(entityId ? { entityId } : {}) },
+      include: { supplier: true, entity: true },
     }),
     db.entity.findMany({ select: { id: true, nameEn: true, nameAr: true } }),
   ]);
@@ -182,6 +187,19 @@ async function openPayables(entityId: string | null) {
       amount: dec(e.amount),
       paid: dec(e.paidAmount),
       dueDate: e.dueDate,
+    })),
+    ...openings.map((o) => ({
+      kind: "OPENING" as const,
+      id: o.id,
+      description: o.note || "Opening supplier balance",
+      supplier: o.supplier,
+      entityEn: o.entity.nameEn,
+      entityAr: o.entity.nameAr,
+      categoryEn: "Opening balance",
+      categoryAr: "رصيد افتتاحي",
+      amount: dec(o.amount),
+      paid: dec(o.paidAmount),
+      dueDate: o.dueDate,
     })),
     ...receipts.map((r) => {
       const entity = r.entityId ? entityById.get(r.entityId) : undefined;
@@ -303,7 +321,7 @@ export async function supplierStatements(
     notYetDue: Decimal;
     oldestDue: Date | null;
     invoices: {
-      kind: "EXPENSE" | "DELIVERY";
+      kind: "EXPENSE" | "DELIVERY" | "OPENING";
       id: string;
       description: string;
       entity: string;
