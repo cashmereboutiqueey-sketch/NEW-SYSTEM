@@ -22,6 +22,9 @@ export async function prepareFlextockOrder(salesOrderId: string) {
     },
   });
   if (!order) throw new ShippingError("Order not found.");
+  if (order.source === "WHOLESALE") {
+    throw new ShippingError(`${order.orderNumber} is wholesale; Flextock's agreed parcel service covers retail orders only.`);
+  }
   if (order.status !== "CONFIRMED" || order.customOrder?.status === "DELIVERED" || order.shipments.length) {
     throw new ShippingError(`${order.orderNumber} is not waiting for Flextock shipping.`);
   }

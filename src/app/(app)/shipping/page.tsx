@@ -79,10 +79,12 @@ export default async function ShippingPage() {
           value={formatNumber(attention.length, locale)} tone={attention.length > 0 ? "bad" : "good"} />
         <StatTile label={ar ? "اتسلّمت" : "Delivered"}
           value={formatNumber(owed.parcels, locale)}
-          hint={ar ? `اتحصّل ${formatMoney(owed.collected, locale)}` : `${formatMoney(owed.collected, locale)} collected`} />
-        <StatTile label={ar ? "مستحق لنا عند Flextock" : "Flextock owes us"}
+          hint={ar ? `تحصيل مؤكد ${formatMoney(owed.collected, locale)}` : `${formatMoney(owed.collected, locale)} confirmed collected`} />
+        <StatTile label={ar ? "مستحق مؤكد عند Flextock" : "Confirmed due from Flextock"}
           value={formatMoney(owed.outstanding, locale)}
-          hint={ar ? `بعد شحن ${formatMoney(owed.fees, locale)}` : `after ${formatMoney(owed.fees, locale)} in fees`}
+          hint={owed.unreconciled > 0
+            ? (ar ? `${owed.unreconciled} شحنة مستنية كشف تحصيل` : `${owed.unreconciled} parcels await a collection report`)
+            : ar ? `بعد شحن ${formatMoney(owed.fees, locale)}` : `after ${formatMoney(owed.fees, locale)} in fees`}
           tone={Number(owed.outstanding) > 0 ? "warn" : "neutral"} />
       </div>
 

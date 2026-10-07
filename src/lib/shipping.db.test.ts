@@ -10,7 +10,7 @@ import {
   updateDestination, courierOwesUs, FLEXTOCK, ShippingError,
 } from "./shipping";
 import { createFlextockClient } from "./flextock-api";
-import { submitFlextockOrder, refreshFlextockShipment } from "./flextock-shipping";
+import { prepareFlextockOrder, submitFlextockOrder, refreshFlextockShipment } from "./flextock-shipping";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 let brandId: string;
@@ -68,9 +68,9 @@ async function zone() {
   return createCourierZone({ governorate: "الإسكندرية", region: "سموحة", price: "32" }, ctx());
 }
 
-async function order(courierZoneId: string | null, address: string | null = "12 Test Street") {
+async function order(courierZoneId: string | null, address: string | null = "12 Test Street", source: "MODERATOR" | "WHOLESALE" = "MODERATOR") {
   return createSale({
-    source: "MODERATOR", channelId, entityId: brandId, locationId, orderDate: day,
+    source, channelId, entityId: brandId, locationId, orderDate: day,
     shippingAmount: 45,
     lines: [{ variantId, quantity: 2, retailPrice: 880, discountPct: 0 }],
     payments: [{ method: "COD", amount: 1805, fee: 0, collected: false }],
@@ -82,6 +82,12 @@ async function order(courierZoneId: string | null, address: string | null = "12 
 }
 
 describe("Flextock handoff", () => {
+  it("keeps wholesale orders outside the retail parcel contract", async () => {
+    const area = await zone();
+    const sale = await order(area.id, "12 Test Street", "WHOLESALE");
+    expect((await readyToShip()).some((item) => item.id === sale.salesOrderId)).toBe(false);
+    await expect(prepareFlextockOrder(sale.salesOrderId)).rejects.toThrow(/wholesale/);
+  });
   it("submits an order before recording handoff and keeps COD delivery under review", async () => {
     const area = await zone();
     const sale = await order(area.id);
@@ -168,5 +174,16 @@ describe("Flextock handoff", () => {
     expect((await recordFlextockStatus(update, ctx())).changed).toBe(false);
     expect((await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } })).status).toBe("DELIVERED");
     expect((await courierOwesUs()).outstanding).toBe("1773");
+  });
+
+  it("does not call expected COD collected without collection figures", async () => {
+    const area = await zone();
+    const sale = await order(area.id);
+    await createShipmentBatches({ salesOrderIds: [sale.salesOrderId], acceptedByFlextock: true }, ctx());
+    await recordFlextockStatus({ reference: sale.orderNumber, status: "DELIVERED", providerStatus: "delivered" }, ctx());
+    const shipment = await db.shipment.findFirstOrThrow({ where: { salesOrderId: sale.salesOrderId } });
+    expect(shipment.status).toBe("NEEDS_REVIEW");
+    expect((await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } })).status).toBe("SHIPPED");
+    expect((await courierOwesUs()).collected).toBe("0");
   });
 });

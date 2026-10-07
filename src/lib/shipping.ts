@@ -179,7 +179,8 @@ export async function readyToShip(courier = FLEXTOCK) {
   const orders = await db.salesOrder.findMany({
     where: {
       status: "CONFIRMED",
-      source: { in: ["MODERATOR", "SHOPIFY", "MANUAL", "WHOLESALE"] },
+      // Flextock's agreed parcel tariff covers retail, not wholesale freight.
+      source: { in: ["MODERATOR", "SHOPIFY", "MANUAL"] },
       shipments: { none: { status: { notIn: ["RETURNED", "FAILED"] } } },
     },
     orderBy: { orderDate: "asc" },
@@ -418,7 +419,9 @@ export async function recordFlextockStatus(
     const remittedToUs = money(input.remittedToUs, shipment.remittedToUs);
     const prepaidMismatch = dec(shipment.codAmount).isZero() &&
       [collectedAmount, dueToUs, remittedToUs].some((value) => dec(value ?? 0).greaterThan(0));
-    const status: ShipmentStatus = prepaidMismatch ? "NEEDS_REVIEW" : input.status;
+    const missingCodProof = input.status === "DELIVERED" && dec(shipment.codAmount).greaterThan(0)
+      && (collectedAmount === null || dueToUs === null);
+    const status: ShipmentStatus = prepaidMismatch || missingCodProof ? "NEEDS_REVIEW" : input.status;
     const next = {
       status,
       courierStatus: input.providerStatus || input.status,
@@ -430,6 +433,7 @@ export async function recordFlextockStatus(
       dueToUs,
       remittedToUs,
       followUp: prepaidMismatch ? "Flextock reports collection on a prepaid parcel; verify it." :
+        missingCodProof ? "Confirm COD collection and the net amount due before closing this delivery." :
         input.followUp === undefined ? shipment.followUp : input.followUp || null,
     };
     const changed = shipment.status !== next.status || shipment.courierStatus !== next.courierStatus ||
@@ -553,11 +557,13 @@ export async function courierOwesUs(courier = FLEXTOCK) {
   let fees = dec(0);
   let due = dec(0);
   let remitted = dec(0);
+  let unreconciled = 0;
   for (const s of shipments) {
-    collected = collected.plus(dec(s.collectedAmount ?? s.codAmount));
+    collected = collected.plus(dec(s.collectedAmount ?? 0));
     fees = fees.plus(dec(s.courierFee ?? 0));
     due = due.plus(dec(s.dueToUs ?? 0));
     remitted = remitted.plus(dec(s.remittedToUs ?? 0));
+    if (dec(s.codAmount).greaterThan(0) && (s.collectedAmount == null || s.dueToUs == null)) unreconciled++;
   }
   return {
     parcels: shipments.length,
@@ -566,5 +572,6 @@ export async function courierOwesUs(courier = FLEXTOCK) {
     due: due.toString(),
     remitted: remitted.toString(),
     outstanding: due.minus(remitted).toString(),
+    unreconciled,
   };
 }
