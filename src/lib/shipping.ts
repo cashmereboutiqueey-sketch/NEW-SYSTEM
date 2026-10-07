@@ -10,9 +10,8 @@ import { EGYPT_GOVERNORATES } from "./egypt-governorates";
 /**
  * Handing parcels to the courier, and hearing back from it.
  *
- * Cashmere prepares the parcel and Flextock handles delivery. Until Flextock
- * supplies its API contract, a user records handoff only after Flextock has
- * accepted the order. Shipment status updates await that integration.
+ * Cashmere prepares the parcel and Flextock handles delivery. Manual handoffs
+ * require confirmation; API handoffs are recorded only after a create response.
  */
 
 export class ShippingError extends Error {
@@ -286,11 +285,11 @@ export async function updateDestination(
  * because the list the screen showed may be minutes old.
  */
 export async function createShipmentBatches(
-  input: { courier?: string; salesOrderIds: string[]; acceptedByFlextock: boolean },
+  input: { courier?: string; salesOrderIds: string[]; acceptedByFlextock: boolean; submittedByApi?: boolean },
   ctx: AuditContext,
 ): Promise<{ batches: { batchId: string; batchNumber: string; branch: string; shipments: number }[] }> {
   const courier = input.courier ?? FLEXTOCK;
-  return command("shipping.createShipmentBatches", { courier, salesOrderIds: [...input.salesOrderIds].sort() }, ctx, async () => {
+  return command("shipping.createShipmentBatches", { courier, salesOrderIds: [...input.salesOrderIds].sort(), submittedByApi: input.submittedByApi ?? false }, ctx, async () => {
     if (!input.acceptedByFlextock || courier !== FLEXTOCK) {
       throw new ShippingError("Confirm Flextock accepted these orders before recording a handoff.");
     }
@@ -353,6 +352,7 @@ export async function createShipmentBatches(
               courier,
               branch,
               reference: o.orderNumber,
+              apiSubmittedAt: input.submittedByApi ? today : null,
               codAmount: codOf(o.payments).toString(),
             },
           });
@@ -389,6 +389,8 @@ export async function recordFlextockStatus(
     reference: string;
     status: ShipmentStatus;
     providerStatus?: string | null;
+    trackingNumber?: string | null;
+    trackingUrl?: string | null;
     collectedAmount?: string | null;
     courierFee?: string | null;
     dueToUs?: string | null;
@@ -420,6 +422,9 @@ export async function recordFlextockStatus(
     const next = {
       status,
       courierStatus: input.providerStatus || input.status,
+      trackingNumber: input.trackingNumber === undefined ? shipment.trackingNumber : input.trackingNumber?.slice(0, 200) || null,
+      trackingUrl: input.trackingUrl === undefined ? shipment.trackingUrl :
+        input.trackingUrl?.startsWith("https://") ? input.trackingUrl.slice(0, 1000) : null,
       collectedAmount,
       courierFee,
       dueToUs,
@@ -428,6 +433,7 @@ export async function recordFlextockStatus(
         input.followUp === undefined ? shipment.followUp : input.followUp || null,
     };
     const changed = shipment.status !== next.status || shipment.courierStatus !== next.courierStatus ||
+      shipment.trackingNumber !== next.trackingNumber || shipment.trackingUrl !== next.trackingUrl ||
       String(shipment.collectedAmount ?? "") !== String(next.collectedAmount ?? "") ||
       String(shipment.courierFee ?? "") !== String(next.courierFee ?? "") ||
       String(shipment.dueToUs ?? "") !== String(next.dueToUs ?? "") ||
@@ -477,6 +483,19 @@ export async function shipmentBatches(limit = 30) {
     delivered: b.shipments.filter((s) => s.status === "DELIVERED").length,
     open: b.shipments.filter((s) => ["SENT", "IN_TRANSIT", "POSTPONED"].includes(s.status)).length,
   }));
+}
+
+export async function recentFlextockApiShipments(limit = 50) {
+  const shipments = await db.shipment.findMany({
+    where: { courier: FLEXTOCK, apiSubmittedAt: { not: null } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true, reference: true, status: true, courierStatus: true,
+      trackingNumber: true, trackingUrl: true, lastReportAt: true,
+    },
+  });
+  return shipments;
 }
 
 /**

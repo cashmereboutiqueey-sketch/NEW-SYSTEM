@@ -6,10 +6,11 @@ import { db } from "@/lib/db";
 import { PageHeader, Card, DataTable, Badge, StatTile } from "@/components/ui";
 import { formatMoney, formatNumber } from "@/lib/money";
 import {
-  readyToShip, shipmentBatches, shipmentsNeedingAttention, courierOwesUs, courierZones, FLEXTOCK,
+  readyToShip, shipmentBatches, recentFlextockApiShipments, shipmentsNeedingAttention, courierOwesUs, courierZones, FLEXTOCK,
 } from "@/lib/shipping";
-import { ReadyToShipForm, DestinationForm } from "./shipping-forms";
+import { ReadyToShipForm, DestinationForm, RefreshFlextockButton } from "./shipping-forms";
 import { CourierZoneCreate } from "@/components/courier-zone-create";
+import { flextockApiEnabled } from "@/lib/flextock-api";
 
 /** Flextock delivery desk. Cashmere keeps stock and prepares each parcel. */
 export default async function ShippingPage() {
@@ -17,14 +18,16 @@ export default async function ShippingPage() {
   const { locale } = await getPrefs();
   const ar = locale === "ar";
   const mayShip = can(session.role, "sales_order:create");
+  const apiEnabled = flextockApiEnabled();
 
-  const [ready, batches, attention, owed, zones, zoneGroups] = await Promise.all([
+  const [ready, batches, attention, owed, zones, zoneGroups, apiShipments] = await Promise.all([
     readyToShip(),
     shipmentBatches(),
     shipmentsNeedingAttention(),
     courierOwesUs(),
     db.courierZone.count({ where: { courier: FLEXTOCK, isActive: true } }),
     courierZones(),
+    apiEnabled ? recentFlextockApiShipments() : Promise.resolve([]),
   ]);
 
   const shippable = ready.filter((o) => o.problems.length === 0);
@@ -44,8 +47,12 @@ export default async function ShippingPage() {
 
       <div className="mb-4 rounded-lg border border-warn/30 bg-warn/5 p-3 text-sm text-ink-700">
         {ar
-          ? "الربط التلقائي مع Flextock مستني مواصفات الـ API. النظام لا يرسل الأوردرات لها من هذه الصفحة؛ سجّل التسليم فقط بعد تأكيد قبولها للأوردر."
-          : "Automatic Flextock integration awaits its API specification. This page does not send orders; record a handoff only after Flextock confirms acceptance."}
+          ? apiEnabled
+            ? "الربط مع Flextock مفعل للشحن فقط. النظام يرسل بيانات المنتجات المطلوبة للشحنة من غير مزامنة المخزون، ويسجل التسليم بعد قبول الأوردر."
+            : "كود الربط مع Flextock جاهز، لكنه غير مفعل لحد وصول بيانات الحساب والمناطق المعتمدة. سجّل التسليم يدويًا فقط بعد تأكيد Flextock قبول الأوردر."
+          : apiEnabled
+            ? "Flextock delivery API is enabled. Required SKU details are sent without inventory sync; handoff is recorded after order acceptance."
+            : "The Flextock API connector is prepared but disabled until account credentials and approved areas arrive. Record a manual handoff only after Flextock accepts the order."}
       </div>
 
       {zones === 0 && (
@@ -82,11 +89,31 @@ export default async function ShippingPage() {
       {mayShip && (
         <Card className="mb-4" title={ar ? "أوردرات جاهزة" : "Orders ready for handoff"}
           description={ar
-            ? "اختار الأوردرات اللي Flextock قبلتها بالفعل، ثم سجّل التسليم. تسجيل التسليم لا يرسل بيانات للشركة."
-            : "Select orders Flextock has already accepted, then record the handoff. Recording does not send data to Flextock."}>
+            ? apiEnabled
+              ? "اختار لحد 10 أوردرات لإرسالها لـ Flextock. الطلبات المدفوعة جزئيًا هتتبعت برصيد التحصيل الصحيح."
+              : "اختار الأوردرات اللي Flextock قبلتها بالفعل، ثم سجّل التسليم. تسجيل التسليم لا يرسل بيانات للشركة."
+            : apiEnabled
+              ? "Select up to 10 orders to send to Flextock. Part-paid orders include the correct COD balance."
+              : "Select orders Flextock has already accepted, then record the handoff. Recording does not send data to Flextock."}>
           {ready.length === 0
             ? <p className="py-6 text-center text-sm text-ink-400">{ar ? "مفيش أوردرات مستنية." : "Nothing is waiting to ship."}</p>
-            : <ReadyToShipForm ar={ar} orders={ready} />}
+            : <ReadyToShipForm ar={ar} orders={ready} apiEnabled={apiEnabled} />}
+        </Card>
+      )}
+
+      {mayShip && apiEnabled && <RefreshFlextockButton ar={ar} />}
+
+      {apiEnabled && apiShipments.length > 0 && (
+        <Card className="mb-4" title={ar ? "شحنات Flextock عبر الـAPI" : "Flextock API shipments"}>
+          <DataTable headers={[ar ? "الأوردر" : "Order", ar ? "الحالة" : "Status", ar ? "التتبع" : "Tracking"]}
+            rows={apiShipments.map((shipment) => [
+              <span key="order" className="num text-xs" dir="ltr">{shipment.reference}</span>,
+              <span key="status" className="text-xs">{shipment.courierStatus || shipment.status}</span>,
+              shipment.trackingUrl
+                ? <a key="tracking" href={shipment.trackingUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-rose-deep underline" dir="ltr">{shipment.trackingNumber || (ar ? "رابط التتبع" : "Track parcel")}</a>
+                : <span key="tracking" className="num text-xs" dir="ltr">{shipment.trackingNumber || "—"}</span>,
+            ])} />
         </Card>
       )}
 

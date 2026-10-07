@@ -3860,6 +3860,11 @@ model Shipment {
   branch       String
   /// Internal order number used to match a provider status update.
   reference    String
+  /// Set only after the delivery-only API accepts the order; manual handoffs
+  /// are not polled because they may use a different Flextock reference.
+  apiSubmittedAt DateTime?
+  trackingNumber String?
+  trackingUrl String?
   /// What the driver collects: goods and shipping, less anything already paid.
   codAmount    Decimal        @db.Decimal(18, 4)
 

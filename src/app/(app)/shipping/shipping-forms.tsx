@@ -2,7 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import {
-  createBatchesAction, updateDestinationAction, type BatchState,
+  createBatchesAction, sendFlextockAction, refreshFlextockAction, updateDestinationAction, type BatchState,
 } from "./actions";
 import type { FormState } from "@/components/entity-form";
 import { RequestIdField } from "@/components/request-id";
@@ -36,10 +36,10 @@ const PROBLEM_AR: Record<string, string> = {
  * Orders that cannot go yet are shown, greyed, with what is missing — so the
  * address gets fixed before the parcel is handed over.
  */
-export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrder[] }) {
-  const [state, action, pending] = useActionState<BatchState, FormData>(createBatchesAction, {});
+export function ReadyToShipForm({ ar, orders, apiEnabled }: { ar: boolean; orders: ReadyOrder[]; apiEnabled: boolean }) {
+  const [state, action, pending] = useActionState<BatchState, FormData>(apiEnabled ? sendFlextockAction : createBatchesAction, {});
   const shippable = useMemo(() => orders.filter((o) => o.problems.length === 0), [orders]);
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(shippable.map((o) => o.id)));
+  const [picked, setPicked] = useState<Set<string>>(() => new Set((apiEnabled ? shippable.slice(0, 10) : shippable).map((o) => o.id)));
 
   const toggle = (id: string) =>
     setPicked((prev) => {
@@ -67,9 +67,9 @@ export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrde
                 <input
                   type="checkbox"
                   aria-label={ar ? "الكل" : "All"}
-                  checked={chosen.length === shippable.length && shippable.length > 0}
+                  checked={chosen.length === (apiEnabled ? Math.min(shippable.length, 10) : shippable.length) && shippable.length > 0}
                   onChange={(e) =>
-                    setPicked(e.target.checked ? new Set(shippable.map((o) => o.id)) : new Set())
+                    setPicked(e.target.checked ? new Set((apiEnabled ? shippable.slice(0, 10) : shippable).map((o) => o.id)) : new Set())
                   }
                 />
               </th>
@@ -136,10 +136,10 @@ export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrde
         </div>
       )}
 
-      <label className="flex items-start gap-2 text-sm text-ink-700">
+      {!apiEnabled && <label className="flex items-start gap-2 text-sm text-ink-700">
         <input type="checkbox" name="acceptedByFlextock" value="yes" required className="mt-1" />
         {ar ? "أؤكد أن Flextock قبلت الأوردرات دي بالفعل" : "I confirm Flextock has accepted these orders"}
-      </label>
+      </label>}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-600">
@@ -149,14 +149,27 @@ export function ReadyToShipForm({ ar, orders }: { ar: boolean; orders: ReadyOrde
         </p>
         <button
           type="submit"
-          disabled={pending || chosen.length === 0}
+          disabled={pending || chosen.length === 0 || (apiEnabled && chosen.length > 10)}
           className="rounded-lg bg-ink-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
-          {pending ? (ar ? "بيتسجل…" : "Recording…") : ar ? "سجّل التسليم لـ Flextock" : "Record Flextock handoff"}
+          {pending ? (ar ? "بيتسجل…" : "Recording…") : apiEnabled
+            ? (ar ? "ابعت الأوردرات لـ Flextock" : "Send to Flextock")
+            : (ar ? "سجّل التسليم لـ Flextock" : "Record Flextock handoff")}
         </button>
       </div>
     </form>
   );
+}
+
+export function RefreshFlextockButton({ ar }: { ar: boolean }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(refreshFlextockAction, {});
+  return <form action={action} className="mb-4 flex flex-wrap items-center gap-3">
+    <button type="submit" disabled={pending} className="rounded-lg border border-ink-200 px-3 py-2 text-sm text-ink-700 disabled:opacity-50">
+      {pending ? (ar ? "بيتحدث…" : "Refreshing…") : ar ? "حدّث حالات الشحن من Flextock" : "Refresh Flextock shipment statuses"}
+    </button>
+    {state.error && <span className="text-sm text-bad">{state.error}</span>}
+    {state.success && <span className="text-sm text-good">{state.success}</span>}
+  </form>;
 }
 
 export type ZoneGroup = { governorate: string; regions: { id: string; region: string; price: string }[] };

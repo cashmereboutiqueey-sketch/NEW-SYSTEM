@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { receiveFinishedGoods } from "./inventory";
@@ -9,6 +9,8 @@ import {
   createCourierZone, readyToShip, createShipmentBatches, recordFlextockStatus,
   updateDestination, courierOwesUs, FLEXTOCK, ShippingError,
 } from "./shipping";
+import { createFlextockClient } from "./flextock-api";
+import { submitFlextockOrder, refreshFlextockShipment } from "./flextock-shipping";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 let brandId: string;
@@ -80,6 +82,28 @@ async function order(courierZoneId: string | null, address: string | null = "12 
 }
 
 describe("Flextock handoff", () => {
+  it("submits an order before recording handoff and keeps COD delivery under review", async () => {
+    const area = await zone();
+    const sale = await order(area.id);
+    const sku = (await db.variant.findUniqueOrThrow({ where: { id: variantId } })).sku;
+    const request = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ access: "test-access" }))
+      .mockResolvedValueOnce(Response.json({ response: [{ sku_code: sku, message: "SKU code created successfully." }] }))
+      .mockResolvedValueOnce(Response.json({ message: "Order created successfully." }))
+      .mockResolvedValueOnce(Response.json({ order_status: "delivered", tracking_number: "FT-123", tracking_url: "https://flextock.com/track/123" }));
+    const client = createFlextockClient({ username: "test", password: "test", apiKey: "test" }, request);
+    await submitFlextockOrder(sale.salesOrderId, ctx(), client);
+    const shipment = await db.shipment.findFirstOrThrow({ where: { salesOrderId: sale.salesOrderId } });
+    expect(shipment.apiSubmittedAt).not.toBeNull();
+    expect(Number(shipment.codAmount)).toBe(1805);
+    expect((await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } })).status).toBe("SHIPPED");
+    await refreshFlextockShipment(sale.orderNumber, ctx(), client);
+    const refreshed = await db.shipment.findUniqueOrThrow({ where: { id: shipment.id } });
+    expect(refreshed.status).toBe("NEEDS_REVIEW");
+    expect(refreshed.trackingNumber).toBe("FT-123");
+    expect((await db.salesOrder.findUniqueOrThrow({ where: { id: sale.salesOrderId } })).status).toBe("SHIPPED");
+    expect(request).toHaveBeenCalledTimes(4);
+  });
   it("adds a confirmed area under Flextock", async () => {
     const created = await zone();
     const saved = await db.courierZone.findUniqueOrThrow({ where: { id: created.id } });
